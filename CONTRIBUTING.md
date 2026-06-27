@@ -1,16 +1,14 @@
 # 协作规范
 
-本仓库采用 PR 协作方式。普通成员必须使用个人 fork；有且只有仓库主可以在
-主仓库内创建独立分支。所有代码、文档和配置修改都必须通过 Pull Request
-合入主仓库的 `develop` 分支。
+本仓库采用 fork + PR 的协作方式。所有代码、文档和配置修改都必须通过
+Pull Request 合入主仓库的 `develop` 分支。
 
 ## 基本原则
 
 - 主仓库日常集成分支是 `develop`。
 - 禁止向 `main` 发起日常开发 PR。
 - 禁止直接向 `develop` 或 `main` push 功能、修复或文档修改。
-- 普通成员必须从主仓库最新 `develop` 创建个人 fork 中的独立分支。
-- 有且只有仓库主 `Sakayori-Iroha-168` 可以在主仓库内创建独立分支发 PR。
+- 必须从主仓库最新 `develop` 创建个人 fork 中的独立分支。
 - PR 必须指向主仓库 `develop`。
 - `main` 只用于发布，由维护者从 `develop` 做发布合并。
 
@@ -106,8 +104,6 @@ final
 
 详细命令见 [docs/git-workflow.md](docs/git-workflow.md)。
 
-普通成员：
-
 1. Fork 主仓库到个人账号。
 2. 本地配置 `upstream` 指向主仓库，`origin` 指向个人 fork。
 3. 拉取主仓库最新 `develop`。
@@ -118,24 +114,13 @@ final
 8. 可选添加对应小组 label。
 9. 等待 CI、PR Guard、Commitlint 和 review 通过后合并。
 
-仓库主：
-
-1. 拉取主仓库最新 `develop`。
-2. 从 `origin/develop` 创建主仓库内的独立分支。
-3. 推送该分支到主仓库。
-4. 使用 `gh pr create` 向主仓库 `develop` 发起 PR。
-5. 可选添加对应小组 label。
-6. 等待 CI、PR Guard、Commitlint 和 review 通过后合并。
-
 ## PR 前检查
 
 提交 PR 前必须确认：
 
-- 普通成员当前分支来自最新 `upstream/develop`。
-- 仓库主当前分支来自最新 `origin/develop`。
+- 当前分支来自最新 `upstream/develop`。
 - PR base 是 `develop`，不是 `main`。
-- 普通成员 PR head 是个人 fork 的分支。
-- 只有仓库主 `Sakayori-Iroha-168` 的 PR head 可以是主仓库分支。
+- PR head 是个人 fork 的分支。
 - Commit message 符合 Conventional Commits。
 - 已运行相关 lint、type-check、test 或 build。
 
@@ -161,6 +146,6 @@ final
 ## 维护者职责
 
 - 不合并目标分支不是 `develop` 的日常开发 PR。
-- 不合并非仓库主发起的主仓库分支 PR。
+- 不合并来自主仓库分支的成员 PR。
 - 发现 commit 不规范时要求 contributor rebase 或 squash 后重提。
 - 发布时由维护者将 `develop` 合并到 `main`。

@@ -81,8 +81,7 @@ check 名称补入 `contexts`。
 [.github/workflows/pr-guard.yml](../.github/workflows/pr-guard.yml) 会检查：
 
 - PR base 必须是 `develop`
-- 普通成员 PR head 必须来自个人 fork
-- 有且只有仓库主 `Sakayori-Iroha-168` 可以使用主仓库内的独立分支发 PR
+- PR head 必须来自个人 fork
 - PR 分支必须包含当前最新 `develop`
 
 ## Commitlint 规则
@@ -108,5 +107,5 @@ gh pr checks <PR_NUMBER> --repo Sakayori-Iroha-168/Software_Teamwork
 gh pr view <PR_NUMBER> --repo Sakayori-Iroha-168/Software_Teamwork --json baseRefName,headRepositoryOwner,headRefName,labels
 ```
 
-发现 PR 目标分支、来源仓库、PR 发起人或 commit 不符合规范时，不要合并。
-要求 contributor 修正后再 review。
+发现 PR 目标分支、来源仓库或 commit 不符合规范时，不要合并。要求
+contributor 修正后再 review。

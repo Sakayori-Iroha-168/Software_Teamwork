@@ -10,8 +10,8 @@ A full-stack project managed with [Trellis](https://github.com/trellis-workflow)
 
 ### Collaboration
 
-- Work in a personal fork unless you are repository owner `Sakayori-Iroha-168`.
-- Create a dedicated branch from the latest `upstream/develop`, or `origin/develop` if you are the repository owner.
+- Work in a personal fork, not directly in the main repository.
+- Create a dedicated branch from the latest `upstream/develop`.
 - Open PRs to `develop` only.
 - Keep `main` for release merges from `develop`.
 
