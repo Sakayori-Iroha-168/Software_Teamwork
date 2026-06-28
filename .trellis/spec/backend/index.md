@@ -41,6 +41,7 @@ Infrastructure dependencies:
 | [Error Handling](./error-handling.md) | Go error propagation and HTTP error responses | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Build, test, lint, review expectations | Active |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging and sensitive-data rules | Active |
+| [Conversation History Contract](./conversation-history-contract.md) | QA multi-turn context and structured history contract | Active |
 
 ---
 
@@ -55,6 +56,7 @@ Before changing backend code:
 - [ ] Read [Error Handling](./error-handling.md) if handlers, service calls, or client responses are touched.
 - [ ] Read [Logging Guidelines](./logging-guidelines.md) before adding logs or changing error logging.
 - [ ] Read [Quality Guidelines](./quality-guidelines.md) before declaring implementation complete.
+- [ ] Read [Conversation History Contract](./conversation-history-contract.md) when changing QA chat history, context construction, or `/api/chat/stream`.
 - [ ] Run service-local checks from the service directory, at minimum `go test ./...`.
 
 ---
