@@ -66,6 +66,7 @@ profile.cov
 # Go workspace files are local unless the team explicitly adopts a shared workspace.
 go.work
 go.work.sum
+.gocache/
 
 # Docker Compose and infrastructure data
 data/

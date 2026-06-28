@@ -1,0 +1,25 @@
+# 智能问答系统 — 本地 PostgreSQL（首次启动自动执行 init/*.sql）
+# 用法: docker compose up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: qa-system-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qa_app
+      POSTGRES_PASSWORD: qa_app_dev
+      POSTGRES_DB: qa_system
+      TZ: Asia/Shanghai
+    ports:
+      - "5432:5432"
+    volumes:
+      - qa_pg_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qa_app -d qa_system"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  qa_pg_data:
