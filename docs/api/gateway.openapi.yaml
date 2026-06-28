@@ -6,12 +6,12 @@ info:
     name: Unspecified
     url: https://github.com/Sakayori-Iroha-168/Software_Teamwork
   description: |
-    Frontend-facing API contract for the gateway service.
+    Public caller-facing API contract for the gateway service.
     All stable public and service-to-service HTTP APIs must use RESTful resource-oriented paths.
-    This revision only treats gateway health checks, user/session, and file-owned routes
-    as active contracts. Downstream knowledge, QA, document/report, and admin
-    aggregation interfaces are intentionally marked under x-missing-contracts
-    until their frontend/backend contracts are finalized.
+    This revision treats gateway health checks, user/session, file-owned routes,
+    and document-owned report generation routes as active contracts. Downstream
+    knowledge, QA, and admin aggregation interfaces are intentionally marked
+    under x-missing-contracts until their frontend/backend contracts are finalized.
 x-api-style:
   required: RESTful resource-oriented HTTP APIs
   appliesTo:
@@ -37,6 +37,8 @@ tags:
   description: User and session APIs owned by auth service.
 - name: documents
   description: File-owned document upload, metadata, deletion, and content APIs.
+- name: report-generation
+  description: Document-owned report records, templates, jobs, generated files, statistics, and logs.
 paths:
   /healthz:
     get:
@@ -240,6 +242,878 @@ paths:
         '404':
           $ref: '#/components/responses/Error'
       description: Return the original file content from the file service through gateway.
+  /api/v1/report-types:
+    get:
+      tags:
+      - report-generation
+      summary: List report types
+      operationId: listReportTypes
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report types.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTypeListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-templates:
+    get:
+      tags:
+      - report-generation
+      summary: List report templates
+      operationId: listReportTemplates
+      x-owner-service: document
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PageSize'
+      - name: reportType
+        in: query
+        schema:
+          type: string
+      - name: enabled
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Report templates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report template
+      operationId: createReportTemplate
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateReportTemplateRequest'
+      responses:
+        '201':
+          description: Report template created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-templates/{reportTemplateId}:
+    parameters:
+    - $ref: '#/components/parameters/ReportTemplateId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report template
+      operationId: getReportTemplate
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report template.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags:
+      - report-generation
+      summary: Update report template
+      operationId: updateReportTemplate
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReportTemplateRequest'
+      responses:
+        '200':
+          description: Report template updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags:
+      - report-generation
+      summary: Delete report template
+      operationId: deleteReportTemplate
+      x-owner-service: document
+      description: Prefer disabling or soft deleting templates that have been used by reports.
+      responses:
+        '204':
+          description: Report template deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-templates/{reportTemplateId}/structure:
+    parameters:
+    - $ref: '#/components/parameters/ReportTemplateId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report template structure
+      operationId: getReportTemplateStructure
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report template structure.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateStructureResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags:
+      - report-generation
+      summary: Update report template structure
+      operationId: updateReportTemplateStructure
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReportTemplateStructureRequest'
+      responses:
+        '200':
+          description: Report template structure updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateStructureResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-materials:
+    get:
+      tags:
+      - report-generation
+      summary: List report materials
+      operationId: listReportMaterials
+      x-owner-service: document
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PageSize'
+      - name: category
+        in: query
+        schema:
+          type: string
+      - name: enabled
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: Report materials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportMaterialListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report material
+      operationId: createReportMaterial
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateReportMaterialRequest'
+      responses:
+        '201':
+          description: Report material created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportMaterialResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-materials/{materialId}:
+    parameters:
+    - $ref: '#/components/parameters/MaterialId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report material
+      operationId: getReportMaterial
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report material.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportMaterialResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags:
+      - report-generation
+      summary: Delete report material
+      operationId: deleteReportMaterial
+      x-owner-service: document
+      description: Prefer soft deletion when material has been referenced by generation jobs.
+      responses:
+        '204':
+          description: Report material deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports:
+    get:
+      tags:
+      - report-generation
+      summary: List reports
+      operationId: listReports
+      x-owner-service: document
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PageSize'
+      - name: reportType
+        in: query
+        schema:
+          type: string
+      - name: status
+        in: query
+        schema:
+          type: string
+      - name: keyword
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Reports.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report
+      operationId: createReport
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportRequest'
+      responses:
+        '201':
+          description: Report created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report
+      operationId: getReport
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags:
+      - report-generation
+      summary: Update report
+      operationId: updateReport
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReportRequest'
+      responses:
+        '200':
+          description: Report updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags:
+      - report-generation
+      summary: Delete report
+      operationId: deleteReport
+      x-owner-service: document
+      description: Prefer soft deletion so historical jobs and generated files remain auditable.
+      responses:
+        '204':
+          description: Report deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/outlines:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    get:
+      tags:
+      - report-generation
+      summary: List report outlines
+      operationId: listReportOutlines
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report outlines.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportOutlineListResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report outline
+      operationId: createReportOutline
+      x-owner-service: document
+      description: Manual outline saves create a new outline version. AI-created outlines are produced by report jobs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportOutlineRequest'
+      responses:
+        '201':
+          description: Report outline created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportOutlineResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/outlines/{outlineId}:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    - $ref: '#/components/parameters/OutlineId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report outline
+      operationId: getReportOutline
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report outline.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportOutlineResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags:
+      - report-generation
+      summary: Update report outline
+      operationId: updateReportOutline
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReportOutlineRequest'
+      responses:
+        '200':
+          description: Report outline updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportOutlineResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/outlines/{outlineId}/sections/{sectionId}:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    - $ref: '#/components/parameters/OutlineId'
+    - $ref: '#/components/parameters/SectionId'
+    delete:
+      tags:
+      - report-generation
+      summary: Delete report outline section
+      operationId: deleteReportOutlineSection
+      x-owner-service: document
+      responses:
+        '204':
+          description: Report outline section deleted.
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/sections:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    get:
+      tags:
+      - report-generation
+      summary: List report sections
+      operationId: listReportSections
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report sections.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSectionListResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report section
+      operationId: createReportSection
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportSectionRequest'
+      responses:
+        '201':
+          description: Report section created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSectionResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/sections/{sectionId}:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    - $ref: '#/components/parameters/SectionId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report section
+      operationId: getReportSection
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report section.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSectionResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags:
+      - report-generation
+      summary: Update report section
+      operationId: updateReportSection
+      x-owner-service: document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateReportSectionRequest'
+      responses:
+        '200':
+          description: Report section updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSectionResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/sections/{sectionId}/versions:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    - $ref: '#/components/parameters/SectionId'
+    get:
+      tags:
+      - report-generation
+      summary: List report section versions
+      operationId: listReportSectionVersions
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report section versions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSectionVersionListResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report section version
+      operationId: createReportSectionVersion
+      x-owner-service: document
+      description: Creates a new section content version, including versions produced by AI regeneration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportSectionVersionRequest'
+      responses:
+        '201':
+          description: Report section version created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportSectionVersionResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/jobs:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    get:
+      tags:
+      - report-generation
+      summary: List report jobs
+      operationId: listReportJobs
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report jobs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJobListResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report job
+      operationId: createReportJob
+      x-owner-service: document
+      description: Creates long-running work for outline creation, content creation, section regeneration, or report file creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportJobRequest'
+      responses:
+        '202':
+          description: Report job accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJobResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-jobs/{jobId}:
+    parameters:
+    - $ref: '#/components/parameters/JobId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report job
+      operationId: getReportJob
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report job.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJobResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-jobs/{jobId}/attempts:
+    parameters:
+    - $ref: '#/components/parameters/JobId'
+    get:
+      tags:
+      - report-generation
+      summary: List report job attempts
+      operationId: listReportJobAttempts
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report job attempts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJobAttemptListResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report job attempt
+      operationId: createReportJobAttempt
+      x-owner-service: document
+      description: Creates a new attempt for an existing failed or interrupted report job.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportJobAttemptRequest'
+      responses:
+        '202':
+          description: Report job attempt accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportJobAttemptResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/reports/{reportId}/events:
+    parameters:
+    - $ref: '#/components/parameters/ReportId'
+    get:
+      tags:
+      - report-generation
+      summary: List report events
+      operationId: listReportEvents
+      x-owner-service: document
+      description: Returns report workflow events for polling. A future SSE contract must be added explicitly before streaming clients rely on it.
+      responses:
+        '200':
+          description: Report events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportEventListResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-files:
+    get:
+      tags:
+      - report-generation
+      summary: List report files
+      operationId: listReportFiles
+      x-owner-service: document
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PageSize'
+      - name: reportId
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Report files.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportFileListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+    post:
+      tags:
+      - report-generation
+      summary: Create report file
+      operationId: createReportFile
+      x-owner-service: document
+      description: Creates generated report files such as DOCX without exposing MinIO object keys to frontend clients.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateReportFileRequest'
+      responses:
+        '202':
+          description: Report file accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportFileResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-files/{reportFileId}:
+    parameters:
+    - $ref: '#/components/parameters/ReportFileId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report file
+      operationId: getReportFile
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report file metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportFileResponse'
+        '404':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-files/{reportFileId}/content:
+    parameters:
+    - $ref: '#/components/parameters/ReportFileId'
+    get:
+      tags:
+      - report-generation
+      summary: Get report file content
+      operationId: getReportFileContent
+      x-owner-service: document
+      description: Returns generated file content. Error responses still use the standard gateway error envelope.
+      responses:
+        '200':
+          description: Generated report file stream.
+          content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-statistics/overview:
+    get:
+      tags:
+      - report-generation
+      summary: Get report statistics overview
+      operationId: getReportStatisticsOverview
+      x-owner-service: document
+      responses:
+        '200':
+          description: Report statistics overview.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportStatisticsOverviewResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-statistics/daily:
+    get:
+      tags:
+      - report-generation
+      summary: List daily report statistics
+      operationId: listDailyReportStatistics
+      x-owner-service: document
+      parameters:
+      - name: days
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 366
+          default: 30
+      responses:
+        '200':
+          description: Daily report statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportDailyStatisticsResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+  /api/v1/report-operation-logs:
+    get:
+      tags:
+      - report-generation
+      summary: List report operation logs
+      operationId: listReportOperationLogs
+      x-owner-service: document
+      parameters:
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PageSize'
+      - name: targetType
+        in: query
+        schema:
+          type: string
+      - name: targetId
+        in: query
+        schema:
+          type: string
+      - name: operationType
+        in: query
+        schema:
+          type: string
+      - name: requestId
+        in: query
+        schema:
+          type: string
+      - name: requestSource
+        in: query
+        schema:
+          type: string
+      - name: toolName
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Report operation logs.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportOperationLogListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
 components:
   securitySchemes:
     bearerAuth:
@@ -259,6 +1133,63 @@ components:
       required: true
       schema:
         type: string
+    ReportId:
+      name: reportId
+      in: path
+      required: true
+      schema:
+        type: string
+    ReportTemplateId:
+      name: reportTemplateId
+      in: path
+      required: true
+      schema:
+        type: string
+    MaterialId:
+      name: materialId
+      in: path
+      required: true
+      schema:
+        type: string
+    OutlineId:
+      name: outlineId
+      in: path
+      required: true
+      schema:
+        type: string
+    SectionId:
+      name: sectionId
+      in: path
+      required: true
+      schema:
+        type: string
+    JobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+    ReportFileId:
+      name: reportFileId
+      in: path
+      required: true
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
   responses:
     Error:
       description: Error response.
@@ -461,6 +1392,1083 @@ components:
           $ref: '#/components/schemas/DocumentSummary'
         requestId:
           type: string
+    PageMeta:
+      type: object
+      required:
+      - page
+      - pageSize
+      - total
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+        total:
+          type: integer
+          minimum: 0
+    ReportType:
+      type: object
+      required:
+      - code
+      - name
+      - enabled
+      properties:
+        code:
+          type: string
+          example: summer_peak_inspection
+        name:
+          type: string
+          example: 迎峰度夏检查报告
+        description:
+          type: string
+        enabled:
+          type: boolean
+        defaultTemplateId:
+          type: string
+    ReportTypeListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportType'
+        requestId:
+          type: string
+    CreateReportTemplateRequest:
+      type: object
+      required:
+      - file
+      - templateName
+      - reportType
+      properties:
+        file:
+          type: string
+          format: binary
+        templateName:
+          type: string
+        reportType:
+          type: string
+        description:
+          type: string
+    UpdateReportTemplateRequest:
+      type: object
+      properties:
+        templateName:
+          type: string
+        description:
+          type: string
+        enabled:
+          type: boolean
+    ReportTemplate:
+      type: object
+      required:
+      - id
+      - templateName
+      - reportType
+      - version
+      - enabled
+      - createdAt
+      properties:
+        id:
+          type: string
+        templateName:
+          type: string
+        reportType:
+          type: string
+        version:
+          type: integer
+        description:
+          type: string
+        enabled:
+          type: boolean
+        fileName:
+          type: string
+        fileSize:
+          type: integer
+          format: int64
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReportTemplateResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportTemplate'
+        requestId:
+          type: string
+    ReportTemplateListResponse:
+      type: object
+      required:
+      - data
+      - page
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportTemplate'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+        requestId:
+          type: string
+    ReportTemplateStructure:
+      type: object
+      properties:
+        outlineSchema:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOutlineNode'
+        styleConfig:
+          type: object
+          additionalProperties: true
+    ReportTemplateStructureRequest:
+      $ref: '#/components/schemas/ReportTemplateStructure'
+    ReportTemplateStructureResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportTemplateStructure'
+        requestId:
+          type: string
+    CreateReportMaterialRequest:
+      type: object
+      required:
+      - file
+      - materialName
+      properties:
+        file:
+          type: string
+          format: binary
+        materialName:
+          type: string
+        materialType:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    ReportMaterial:
+      type: object
+      required:
+      - id
+      - materialName
+      - enabled
+      - createdAt
+      properties:
+        id:
+          type: string
+        materialName:
+          type: string
+        materialType:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
+        fileName:
+          type: string
+        fileSize:
+          type: integer
+          format: int64
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReportMaterialResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportMaterial'
+        requestId:
+          type: string
+    ReportMaterialListResponse:
+      type: object
+      required:
+      - data
+      - page
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportMaterial'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+        requestId:
+          type: string
+    ReportStatus:
+      type: string
+      enum:
+      - draft
+      - outline_generating
+      - outline_generated
+      - content_generating
+      - generated
+      - exporting
+      - exported
+      - failed
+      - deleted
+    CreateReportRequest:
+      type: object
+      required:
+      - name
+      - reportType
+      - templateId
+      - topic
+      properties:
+        name:
+          type: string
+        reportType:
+          type: string
+        templateId:
+          type: string
+        topic:
+          type: string
+        specialty:
+          type: string
+        businessObject:
+          type: string
+        year:
+          type: integer
+        extraContext:
+          type: object
+          additionalProperties: true
+        source:
+          type: string
+          enum:
+          - frontend
+          - admin
+          - mcp
+          - backend
+    UpdateReportRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        templateId:
+          type: string
+        topic:
+          type: string
+        specialty:
+          type: string
+        businessObject:
+          type: string
+        year:
+          type: integer
+        extraContext:
+          type: object
+          additionalProperties: true
+    Report:
+      type: object
+      required:
+      - id
+      - name
+      - reportType
+      - status
+      - createdAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        reportType:
+          type: string
+        templateId:
+          type: string
+        topic:
+          type: string
+        specialty:
+          type: string
+        businessObject:
+          type: string
+        year:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ReportStatus'
+        extraContext:
+          type: object
+          additionalProperties: true
+        creatorId:
+          type: string
+        creatorName:
+          type: string
+        source:
+          type: string
+        latestJobId:
+          type: string
+        latestReportFileId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        exportedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReportResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/Report'
+        requestId:
+          type: string
+    ReportListResponse:
+      type: object
+      required:
+      - data
+      - page
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Report'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+        requestId:
+          type: string
+    ReportOutlineNode:
+      type: object
+      required:
+      - title
+      - level
+      properties:
+        id:
+          type: string
+        clientSectionId:
+          type: string
+        title:
+          type: string
+        level:
+          type: integer
+        numbering:
+          type: string
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOutlineNode'
+    CreateReportOutlineRequest:
+      type: object
+      required:
+      - source
+      - sections
+      properties:
+        source:
+          type: string
+          enum:
+          - manual
+          - ai
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOutlineNode'
+    UpdateReportOutlineRequest:
+      type: object
+      properties:
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOutlineNode'
+        manualEdited:
+          type: boolean
+    ReportOutline:
+      type: object
+      required:
+      - id
+      - reportId
+      - version
+      - sections
+      - createdAt
+      properties:
+        id:
+          type: string
+        reportId:
+          type: string
+        version:
+          type: integer
+        sections:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOutlineNode'
+        sourceJobId:
+          type: string
+        manualEdited:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReportOutlineResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportOutline'
+        requestId:
+          type: string
+    ReportOutlineListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOutline'
+        requestId:
+          type: string
+    CreateReportSectionRequest:
+      type: object
+      required:
+      - title
+      properties:
+        outlineNodeId:
+          type: string
+        parentId:
+          type: string
+        title:
+          type: string
+        level:
+          type: integer
+        numbering:
+          type: string
+        content:
+          type: string
+        tables:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    UpdateReportSectionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        content:
+          type: string
+        tables:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        manualEdited:
+          type: boolean
+    ReportSection:
+      type: object
+      required:
+      - id
+      - reportId
+      - title
+      - level
+      - generationStatus
+      properties:
+        id:
+          type: string
+        reportId:
+          type: string
+        parentId:
+          type: string
+        outlineNodeId:
+          type: string
+        title:
+          type: string
+        level:
+          type: integer
+        sortOrder:
+          type: integer
+        numbering:
+          type: string
+        sectionType:
+          type: string
+          enum:
+          - text
+          - table
+          - image
+          - mixed
+        content:
+          type: string
+        tables:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        generationStatus:
+          $ref: '#/components/schemas/ReportJobStatus'
+        contentSource:
+          type: string
+          enum:
+          - ai
+          - manual
+          - mixed
+        manualEdited:
+          type: boolean
+        version:
+          type: integer
+        lastJobId:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ReportSectionResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportSection'
+        requestId:
+          type: string
+    ReportSectionListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportSection'
+        requestId:
+          type: string
+    CreateReportSectionVersionRequest:
+      type: object
+      required:
+      - source
+      properties:
+        source:
+          type: string
+          enum:
+          - manual
+          - ai
+        requirements:
+          type: string
+        materialIds:
+          type: array
+          items:
+            type: string
+        preserveManualEdits:
+          type: boolean
+    ReportSectionVersion:
+      type: object
+      required:
+      - id
+      - reportId
+      - sectionId
+      - version
+      - source
+      - createdAt
+      properties:
+        id:
+          type: string
+        reportId:
+          type: string
+        sectionId:
+          type: string
+        version:
+          type: integer
+        source:
+          type: string
+          enum:
+          - manual
+          - ai
+        content:
+          type: string
+        tables:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        jobId:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    ReportSectionVersionResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportSectionVersion'
+        requestId:
+          type: string
+    ReportSectionVersionListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportSectionVersion'
+        requestId:
+          type: string
+    ReportJobStatus:
+      type: string
+      enum:
+      - pending
+      - running
+      - succeeded
+      - partial_succeeded
+      - failed
+      - canceled
+    ReportJobType:
+      type: string
+      enum:
+      - outline_generation
+      - outline_regeneration
+      - content_generation
+      - content_regeneration
+      - section_regeneration
+      - report_file_creation
+    CreateReportJobRequest:
+      type: object
+      required:
+      - jobType
+      properties:
+        jobType:
+          $ref: '#/components/schemas/ReportJobType'
+        target:
+          type: object
+          properties:
+            scope:
+              type: string
+              enum:
+              - report
+              - outline
+              - section
+              - file
+            sectionId:
+              type: string
+        requirements:
+          type: string
+        materialIds:
+          type: array
+          items:
+            type: string
+        options:
+          type: object
+          additionalProperties: true
+    ReportJob:
+      type: object
+      required:
+      - id
+      - reportId
+      - jobType
+      - status
+      - createdAt
+      properties:
+        id:
+          type: string
+        reportId:
+          type: string
+        templateId:
+          type: string
+        jobType:
+          $ref: '#/components/schemas/ReportJobType'
+        targetType:
+          type: string
+        targetId:
+          type: string
+        status:
+          $ref: '#/components/schemas/ReportJobStatus'
+        progress:
+          type: object
+          additionalProperties: true
+        resultSummary:
+          type: string
+        error:
+          $ref: '#/components/schemas/ReportJobError'
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ReportJobError:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+    ReportJobResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportJob'
+        requestId:
+          type: string
+    ReportJobListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportJob'
+        requestId:
+          type: string
+    CreateReportJobAttemptRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+        options:
+          type: object
+          additionalProperties: true
+    ReportJobAttempt:
+      type: object
+      required:
+      - id
+      - jobId
+      - status
+      - createdAt
+      properties:
+        id:
+          type: string
+        jobId:
+          type: string
+        attemptNumber:
+          type: integer
+        status:
+          $ref: '#/components/schemas/ReportJobStatus'
+        error:
+          $ref: '#/components/schemas/ReportJobError'
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    ReportJobAttemptResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportJobAttempt'
+        requestId:
+          type: string
+    ReportJobAttemptListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportJobAttempt'
+        requestId:
+          type: string
+    ReportEvent:
+      type: object
+      required:
+      - id
+      - reportId
+      - eventType
+      - createdAt
+      properties:
+        id:
+          type: string
+        reportId:
+          type: string
+        jobId:
+          type: string
+        eventType:
+          type: string
+        message:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+    ReportEventListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportEvent'
+        requestId:
+          type: string
+    CreateReportFileRequest:
+      type: object
+      required:
+      - reportId
+      - format
+      properties:
+        reportId:
+          type: string
+        format:
+          type: string
+          enum:
+          - docx
+        templateId:
+          type: string
+        styleOptions:
+          type: object
+          additionalProperties: true
+    ReportFile:
+      type: object
+      required:
+      - id
+      - reportId
+      - format
+      - status
+      - createdAt
+      properties:
+        id:
+          type: string
+        reportId:
+          type: string
+        jobId:
+          type: string
+        fileName:
+          type: string
+        format:
+          type: string
+          enum:
+          - docx
+        fileSize:
+          type: integer
+          format: int64
+        status:
+          $ref: '#/components/schemas/ReportJobStatus'
+        contentPath:
+          type: string
+          example: /api/v1/report-files/rf_123/content
+        createdBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    ReportFileResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportFile'
+        requestId:
+          type: string
+    ReportFileListResponse:
+      type: object
+      required:
+      - data
+      - page
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportFile'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+        requestId:
+          type: string
+    ReportStatisticsOverview:
+      type: object
+      required:
+      - reportCount
+      - templateCount
+      - materialCount
+      properties:
+        reportCount:
+          type: integer
+          minimum: 0
+        templateCount:
+          type: integer
+          minimum: 0
+        materialCount:
+          type: integer
+          minimum: 0
+        jobStatusCounts:
+          type: object
+          additionalProperties:
+            type: integer
+        recentDays:
+          type: integer
+    ReportStatisticsOverviewResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/ReportStatisticsOverview'
+        requestId:
+          type: string
+    ReportDailyStatistic:
+      type: object
+      required:
+      - date
+      - createdCount
+      - generatedCount
+      - failedCount
+      - exportedCount
+      properties:
+        date:
+          type: string
+          format: date
+        reportType:
+          type: string
+        createdCount:
+          type: integer
+          minimum: 0
+        generatedCount:
+          type: integer
+          minimum: 0
+        failedCount:
+          type: integer
+          minimum: 0
+        exportedCount:
+          type: integer
+          minimum: 0
+    ReportDailyStatisticsResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportDailyStatistic'
+        requestId:
+          type: string
+    ReportOperationLog:
+      type: object
+      required:
+      - id
+      - operationType
+      - targetType
+      - targetId
+      - operationResult
+      - createdAt
+      properties:
+        id:
+          type: string
+        operatorId:
+          type: string
+        operatorName:
+          type: string
+        operationType:
+          type: string
+        targetType:
+          type: string
+        targetId:
+          type: string
+        requestId:
+          type: string
+        requestSource:
+          type: string
+        toolName:
+          type: string
+        parameterSummary:
+          type: object
+          additionalProperties: true
+          description: Sanitized parameter summary for MCP or API calls. Must not contain secrets, prompts, MinIO object keys, or full document content.
+        operationResult:
+          type: string
+        errorMessage:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Sanitized audit metadata for troubleshooting and filtering.
+        createdAt:
+          type: string
+          format: date-time
+    ReportOperationLogListResponse:
+      type: object
+      required:
+      - data
+      - page
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReportOperationLog'
+        page:
+          $ref: '#/components/schemas/PageMeta'
+        requestId:
+          type: string
 x-missing-contracts:
 - service: knowledge
   status: missing
@@ -481,18 +2489,6 @@ x-missing-contracts:
   - GET/DELETE /api/v1/qa-sessions/{sessionId}
   - GET/POST /api/v1/qa-sessions/{sessionId}/messages
   - GET /api/v1/qa-sessions/{sessionId}/events
-- service: document
-  status: missing
-  reason: Frontend/backend report-generation contract is not finalized yet.
-  placeholderOperations:
-  - GET/POST /api/v1/reports
-  - GET/PATCH/DELETE /api/v1/reports/{reportId}
-  - GET/POST /api/v1/reports/{reportId}/outlines
-  - GET/POST /api/v1/reports/{reportId}/sections
-  - GET /api/v1/reports/{reportId}/events
-  - POST /api/v1/report-files
-  - GET /api/v1/report-files/{reportFileId}
-  - GET /api/v1/report-files/{reportFileId}/content
 - service: admin
   status: missing
   reason: Administration aggregation contract is not finalized yet.

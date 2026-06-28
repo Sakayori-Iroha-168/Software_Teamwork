@@ -4,8 +4,8 @@
 
 ## 设计原则
 
-- `gateway` 是面向前端的后端统一入口，不是业务大单体。
-- 前端只调用 `gateway` 暴露的 `/api/v1/**` 接口，不直接调用内部服务。
+- `gateway` 是面向前端、管理端、其他后端模块和工具调用方的后端统一入口，不是业务大单体。
+- 所有公开业务请求都必须先进入 `gateway` 暴露的 `/api/v1/**` 接口，不直接调用内部服务。
 - `gateway` 通过 HTTP/REST 调用内部服务，不 import 其他服务的 Go `internal/` 包。
 - 所有稳定公开 API 和服务间 HTTP API 必须使用 RESTful 资源路径，由 HTTP method 表达动作；除 `/healthz`、`/readyz` 外，不在 path 中使用 `login`、`logout`、`register`、`download`、`search`、`generate`、`export`、`retry`、`revoke` 等动作词。
 - 领域业务规则尽量留在拥有该领域数据和流程的服务中。
@@ -16,14 +16,14 @@
 
 | 能力 | 说明 |
 | --- | --- |
-| Public API surface | 暴露前端使用的 `/api/v1/**` HTTP API。 |
-| Routing | 将已确定的公开请求转发到 `auth`、`file` 等内部服务；未定下游服务只保留缺失占位。 |
+| Public API surface | 暴露前端、管理端、其他后端模块和工具调用方使用的 `/api/v1/**` HTTP API。 |
+| Routing | 将已确定的公开请求转发到 `auth`、`file`、`document` 等内部服务；未定下游服务只保留缺失占位。 |
 | Auth context | 基于 Redis 会话缓存读取用户身份，并向下游传递用户、角色、权限和 request id。 |
 | Session cache | 用户或会话创建成功后缓存 auth 返回的会话身份信息，后续请求优先从 Redis 获取会话上下文。 |
 | Response contract | 对前端保持统一成功响应、分页响应和错误响应结构。 |
 | Request correlation | 生成或透传 `X-Request-Id`，并要求下游服务保留该 request id。 |
 | Cross-service aggregation | 仅在前后端契约明确后提供聚合读接口；本轮管理后台概览暂标缺失。 |
-| Streaming entrypoint | 问答和报告生成的 SSE/流式入口暂未确定，本轮只记录缺失状态。 |
+| Streaming entrypoint | 问答和报告生成的 SSE/流式入口暂未确定；报告生成当前提供事件列表资源，后续如需 SSE 需先补 OpenAPI 契约。 |
 | Edge policy | 集中处理 CORS、基础请求头、请求大小原则、健康检查和公开 API 命名。 |
 
 ## Gateway 不应负责
@@ -65,6 +65,17 @@
 | `/api/v1/knowledge-bases/{knowledgeBaseId}/documents` | `file` | 文件上传入口。知识库存在性校验和 ingestion handoff 契约暂未确定。 |
 | `/api/v1/documents/{documentId}` | `file` | 更新 file-owned 文档元数据、删除原始文件记录。 |
 | `/api/v1/documents/{documentId}/content` | `file` | 获取原始文件内容。 |
+| `/api/v1/report-types` | `document` | 查询报告类型。 |
+| `/api/v1/report-templates`、`/api/v1/report-templates/{reportTemplateId}`、`/api/v1/report-templates/{reportTemplateId}/structure` | `document` | 报告模板上传、查询、更新、删除和结构配置。 |
+| `/api/v1/report-materials`、`/api/v1/report-materials/{materialId}` | `document` | 报告素材上传、查询和删除。 |
+| `/api/v1/reports`、`/api/v1/reports/{reportId}` | `document` | 报告草稿、记录、详情、基础信息更新和删除。 |
+| `/api/v1/reports/{reportId}/outlines`、`/api/v1/reports/{reportId}/outlines/{outlineId}`、`/api/v1/reports/{reportId}/outlines/{outlineId}/sections/{sectionId}` | `document` | 报告大纲版本查询、保存、编辑和章节删除。 |
+| `/api/v1/reports/{reportId}/sections`、`/api/v1/reports/{reportId}/sections/{sectionId}`、`/api/v1/reports/{reportId}/sections/{sectionId}/versions` | `document` | 报告章节查询、编辑和章节版本创建。 |
+| `/api/v1/reports/{reportId}/jobs`、`/api/v1/report-jobs/{jobId}`、`/api/v1/report-jobs/{jobId}/attempts` | `document` | 报告生成、重新生成、文件创建等长任务资源及任务尝试记录。 |
+| `/api/v1/reports/{reportId}/events` | `document` | 报告生成事件列表，用于轮询进度或审计。 |
+| `/api/v1/report-files`、`/api/v1/report-files/{reportFileId}`、`/api/v1/report-files/{reportFileId}/content` | `document` | 报告文件创建、元数据查询和生成文件内容读取。 |
+| `/api/v1/report-statistics/overview`、`/api/v1/report-statistics/daily` | `document` | 报告统计概览和每日趋势。 |
+| `/api/v1/report-operation-logs` | `document` | 报告相关操作日志查询。 |
 
 暂缺的下游接口：
 
@@ -74,7 +85,6 @@
 | `GET /api/v1/knowledge-bases/{knowledgeBaseId}/documents`、`GET /api/v1/documents/{documentId}`、`GET /api/v1/documents/{documentId}/chunks` | `knowledge` | 缺失：知识库内文档列表、文档详情和 chunks 契约未定。 |
 | `POST /api/v1/knowledge-queries` | `knowledge` | 缺失：检索请求、过滤、排序、返回引用格式未定。 |
 | `GET/POST /api/v1/qa-sessions`、`GET/DELETE /api/v1/qa-sessions/{sessionId}`、`GET/POST /api/v1/qa-sessions/{sessionId}/messages`、`GET /api/v1/qa-sessions/{sessionId}/events` | `qa` | 缺失：会话、消息、非流式/流式回答、引用事件格式未定。 |
-| `GET/POST /api/v1/reports`、`GET/PATCH/DELETE /api/v1/reports/{reportId}`、`GET/POST /api/v1/reports/{reportId}/outlines`、`GET/POST /api/v1/reports/{reportId}/sections`、`GET /api/v1/reports/{reportId}/events`、`GET/POST /api/v1/report-files` | `document` | 缺失：报告记录、大纲、章节、报告文件和内容契约未定。 |
 | `GET /api/v1/admin-overview`、`GET /api/v1/admin-metrics` | `gateway` + domain services | 缺失：聚合指标来源和展示字段未定。 |
 
 当某个 endpoint 涉及两个服务时，文档必须显式标注 workflow owner。默认规则是：拥有核心业务状态的服务拥有流程，gateway 只做入口和上下文传递。
@@ -226,7 +236,7 @@ Gateway 必须只把 `data.session.accessToken` 返回给前端，不得把 Redi
 
 ## 缺失下游接口
 
-知识库、问答、报告生成和管理后台聚合的前后端接口尚未完全确定。当前 OpenAPI 只在顶层 `x-missing-contracts` 标记缺失范围，不把这些 endpoint 作为可依赖的公开契约。
+知识库、问答和管理后台聚合的前后端接口尚未完全确定。当前 OpenAPI 只在顶层 `x-missing-contracts` 标记这些缺失范围，不把这些 endpoint 作为可依赖的公开契约。
 
 后续补齐任一缺失接口时，需要同步更新：
 

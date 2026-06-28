@@ -22,8 +22,10 @@
 
 本功能应定位为大项目中的一个后端报告生成服务模块。它不拆成多个内部微服务，但对外提供两类能力：
 
-- 后端业务接口：供大项目前端、其他后端模块或管理后台调用。
-- MCP 工具接口：供其他小组、智能体或自动化流程调用。
+- 后端业务接口：通过 gateway 的 `/api/v1` 公开资源型 HTTP API，供大项目前端、管理后台、其他后端模块或工具调用方使用。
+- MCP 工具接口：供其他小组、智能体或自动化流程调用；工具执行过程中如需访问报告生成 HTTP 能力，也必须调用 gateway `/api/v1` 公共接口，不直接调用 `document` 服务内部地址。
+
+公开 HTTP API 必须遵循主仓库最新接口规范：先更新 `docs/api/gateway.openapi.yaml`，再作为稳定前端契约使用；路径使用 RESTful 资源名，不在 path 中出现 `generate`、`regenerate`、`export`、`retry`、`download` 等动作词。报告生成公开接口已升级为 gateway OpenAPI active paths，owner service 为 `document`。
 
 ### 2.2 不做的内容
 
@@ -37,7 +39,7 @@
 - 管理后台页面。
 - 模型 API 地址、密钥、模型名称、超时时间等模型服务配置。
 
-如果调用方需要鉴权、菜单、角色或页面展示，应由大项目其他模块负责。本模块只提供可被调用的后端接口。
+如果调用方需要鉴权、菜单、角色或页面展示，应由大项目其他模块负责。本模块只提供经 gateway 暴露的后端接口能力。
 
 ### 2.3 本模块负责的内容
 
@@ -64,13 +66,13 @@
 
 | 调用方 | 使用方式 |
 |---|---|
-| 大项目业务前端 | 调用后端接口完成报告创建、编辑、导出、记录查询等操作 |
-| 大项目管理端 | 调用管理类接口维护模板、素材、统计数据和生成任务 |
-| 其他后端模块 | 调用报告生成服务接口生成报告或获取报告记录 |
-| MCP 调用方 | 通过 MCP 工具生成大纲、生成正文、查询任务状态、查询模板结构、触发导出 |
+| 大项目业务前端 | 通过 gateway 调用报告创建、编辑、导出、记录查询等公开接口 |
+| 大项目管理端 | 通过 gateway 调用模板、素材、统计数据和生成任务等管理类公开接口 |
+| 其他后端模块 | 通过 gateway 调用报告生成公开接口生成报告或获取报告记录 |
+| MCP 调用方 | 通过 MCP 工具生成大纲、生成正文、查询任务状态、查询模板结构、触发导出；工具内部 HTTP 调用仍走 gateway |
 | 项目评审人员 | 通过大项目已有展示方式查看最终报告效果 |
 
-本模块可以接收调用方传入的 `operator_id`、`operator_name`、`operator_type` 等字段用于记录创建人和操作来源，但不校验身份合法性。
+本模块可以接收 gateway 注入或 MCP 工具上下文传递的 `operator_id`、`operator_name`、`operator_type` 等字段用于记录创建人和操作来源，但不负责校验身份合法性。
 
 ## 4. 范围说明
 
@@ -114,23 +116,23 @@
 
 ### 5.1 后端接口调用流程
 
-1. 调用方选择报告类型：迎峰度夏检查报告或煤库存审计报告。
-2. 调用方查询或选择报告模板。
-3. 调用方提交报告主题和基础信息。
+1. 调用方通过 gateway 选择报告类型：迎峰度夏检查报告或煤库存审计报告。
+2. 调用方通过 gateway 查询或选择报告模板。
+3. 调用方通过 gateway 提交报告主题和基础信息。
 4. 本模块创建报告草稿并保存到数据库。
-5. 调用方请求生成大纲。
-6. 本模块根据报告类型、模板、主题和上下文生成多级大纲。
+5. 调用方创建报告生成任务资源，请求生成大纲。
+6. 本模块根据报告类型、模板、主题和上下文生成多级大纲，并产出新的大纲资源版本。
 7. 调用方通过接口编辑大纲，包括修改标题、删除章节、调整顺序和重新编号。
-8. 调用方可请求 AI 重新生成完整大纲，重新生成应基于最新报告信息、模板和要求。
-9. 调用方请求生成正文。
+8. 调用方可创建新的报告生成任务资源，请求 AI 重新生成完整大纲；重新生成应基于最新报告信息、模板和要求。
+9. 调用方创建正文生成任务资源。
 10. 本模块根据当前大纲逐章节生成正文内容。
-11. 调用方可请求 AI 重新生成完整正文或指定章节正文。
+11. 调用方可创建新的任务或章节版本，请求 AI 重新生成完整正文或指定章节正文。
 12. 调用方查询生成任务进度和章节生成结果。
 13. 调用方通过接口编辑章节正文和表格内容。
 14. 本模块保存最终报告数据。
 15. 调用方请求导出 DOCX Word 文档。
 16. 本模块生成 DOCX 文件并保存到 MinIO。
-17. 调用方获取导出文件引用或下载地址。
+17. 调用方获取报告文件 ID、`contentPath` 或通过文件内容接口读取导出文件。
 18. 本模块记录报告、生成任务、导出文件和操作日志。
 
 ### 5.2 MCP 调用流程
@@ -142,7 +144,7 @@
 5. 本模块按调用目标生成大纲或正文。
 6. 本模块返回结构化结果、任务状态、警告信息和错误信息。
 7. 若生成耗时较长，调用方可通过状态查询工具获取进度。
-8. 若调用方请求保存结果，本模块将报告数据写入数据库，将相关文件写入 MinIO。
+8. 若调用方请求保存结果，MCP 工具应通过 gateway 公开接口进入报告生成流程；本模块将报告数据写入数据库，将相关文件写入 MinIO。
 
 ## 6. 功能需求
 
@@ -177,7 +179,7 @@
 - 支持填写年份。
 - 支持填写补充说明。
 - 支持保存草稿。
-- 支持记录调用方传入的创建人或来源标识。
+- 支持记录 gateway 注入或 MCP 工具上下文传递的创建人或来源标识。
 
 验收标准：
 
@@ -315,7 +317,7 @@
 - 样式至少包括字体、字号、标题层级、段落间距、表格样式、页眉页脚。
 - 支持基于已保存报告数据重新生成 Word 文档。
 - 重新导出时不需要重新执行 AI 生成。
-- 支持返回导出文件标识、MinIO 对象引用或下载地址。
+- 支持返回导出文件标识和 `contentPath`；不得向公开调用方返回 MinIO 对象引用、内部 URL 或完整下载签名。
 
 验收标准：
 
@@ -447,7 +449,7 @@
 说明：
 
 - 本模块只提供接口，不提供管理页面。
-- 本模块不做管理员身份校验，调用方应在进入接口前完成权限控制。
+- 本模块不做管理员身份校验；权限控制由 gateway 或上层系统完成，本模块只消费已传递的调用上下文并记录审计信息。
 - 本模块不提供模型服务配置接口。
 
 验收标准：
@@ -556,7 +558,8 @@
 
 输出应至少包含：
 
-- request_id
+- requestId
+- jobId
 - status
 - outline
 - warnings
@@ -578,7 +581,8 @@
 
 输出应至少包含：
 
-- request_id
+- requestId
+- jobId
 - status
 - outline
 - warnings
@@ -601,7 +605,8 @@
 
 输出应至少包含：
 
-- request_id
+- requestId
+- jobId
 - status
 - sections
 - warnings
@@ -623,7 +628,8 @@
 
 输出应至少包含：
 
-- request_id
+- requestId
+- jobId
 - status
 - sections
 - warnings
@@ -646,7 +652,8 @@
 
 输出应至少包含：
 
-- request_id
+- requestId
+- jobId
 - status
 - section
 - warnings
@@ -658,11 +665,12 @@
 
 输入应至少包含：
 
-- request_id
+- jobId
 
 输出应至少包含：
 
-- request_id
+- requestId
+- jobId
 - status
 - progress
 - result_summary
@@ -680,9 +688,9 @@
 
 输出应至少包含：
 
-- export_file_id
+- reportFileId
 - status
-- download_url 或 file_reference
+- contentPath
 - error
 
 ## 8. 后端接口清单
@@ -693,10 +701,10 @@
 |---|---|
 | 报告类型 | 查询报告类型列表、查询类型可用模板 |
 | 报告草稿 | 创建报告、查询报告、更新基础信息、删除报告 |
-| 大纲 | 生成大纲、重新生成大纲、查询大纲、保存大纲、编辑章节、删除章节、排序章节、重新编号 |
-| 正文 | 生成正文、重新生成正文、重新生成指定章节、查询章节内容、保存章节正文、保存表格内容 |
-| 生成任务 | 创建任务、查询任务状态、查询失败原因、重试任务 |
-| 导出 | 创建导出任务、查询导出状态、获取导出文件引用、重新导出 |
+| 大纲 | 创建大纲版本、通过任务生成或重新生成大纲、查询大纲、保存大纲、编辑章节、删除章节、排序章节、重新编号 |
+| 正文 | 创建章节资源或章节版本、通过任务生成或重新生成正文、查询章节内容、保存章节正文、保存表格内容 |
+| 生成任务 | 创建任务资源、查询任务状态、查询失败原因、创建任务尝试记录 |
+| 报告文件 | 创建报告文件资源、查询文件状态、获取文件内容、基于历史报告创建新的文件资源 |
 | 记录 | 分页查询报告记录、筛选记录、查看详情、删除记录 |
 | 模板 | 上传模板、查询模板、更新模板、删除模板、启停模板、配置模板结构 |
 | 素材 | 上传素材、查询素材、删除素材、关联模板或报告类型 |
@@ -721,9 +729,9 @@
 - creator_id
 - creator_name
 - source
-- generation_time
-- latest_generation_task_id
-- latest_export_file_id
+- generated_at
+- latest_job_id
+- latest_report_file_id
 - created_at
 - updated_at
 
@@ -752,10 +760,30 @@
 - content
 - tables_json
 - generation_status
+- content_source
+- manual_edited
+- version
+- last_job_id
 - created_at
 - updated_at
 
-### 9.4 报告模板 ReportTemplate
+### 9.4 报告章节版本 ReportSectionVersion
+
+建议包含：
+
+- id
+- report_id
+- section_id
+- version
+- source
+- content
+- tables_json
+- job_id
+- requirements
+- created_by
+- created_at
+
+### 9.5 报告模板 ReportTemplate
 
 建议包含：
 
@@ -764,6 +792,8 @@
 - report_type
 - version
 - file_object_key
+- file_name
+- file_size
 - structure_json
 - style_config_json
 - enabled
@@ -771,7 +801,7 @@
 - created_at
 - updated_at
 
-### 9.5 素材 Material
+### 9.6 素材 ReportMaterial
 
 建议包含：
 
@@ -780,20 +810,24 @@
 - material_type
 - category
 - file_object_key
+- file_name
+- file_size
 - description
 - enabled
 - created_by
 - created_at
 - updated_at
 
-### 9.6 生成任务 GenerationTask
+### 9.7 报告任务 ReportJob
 
 建议包含：
 
 - id
 - request_id
 - source
-- task_type
+- job_type
+- target_type
+- target_id
 - report_id
 - template_id
 - request_payload_json
@@ -806,21 +840,51 @@
 - finished_at
 - created_at
 
-### 9.7 导出文件 ExportFile
+### 9.8 任务尝试 ReportJobAttempt
+
+建议包含：
+
+- id
+- job_id
+- attempt_number
+- trigger_source
+- reason
+- request_payload_json
+- status
+- error_code
+- error_message
+- started_at
+- finished_at
+- created_at
+
+### 9.9 报告事件 ReportEvent
 
 建议包含：
 
 - id
 - report_id
+- job_id
+- event_type
+- message
+- payload_json
+- created_at
+
+### 9.10 报告文件 ReportFile
+
+建议包含：
+
+- id
+- report_id
+- job_id
 - file_name
 - file_type
 - object_key
 - file_size
-- export_status
+- file_status
 - created_by
 - created_at
 
-### 9.8 操作日志 OperationLog
+### 9.11 操作日志 OperationLog
 
 建议包含：
 
@@ -830,9 +894,13 @@
 - operation_type
 - target_type
 - target_id
+- request_id
 - request_source
+- tool_name
+- parameter_summary_json
 - operation_result
 - error_message
+- metadata_json
 - created_at
 
 ## 10. 非功能需求
@@ -855,8 +923,9 @@
 
 ### 10.3 安全边界
 
-- 本模块不做用户认证和权限校验。
-- 调用方应在调用本模块前完成认证和权限控制。
+- 本模块不做用户登录、会话创建和权限系统。
+- 公开 HTTP API 由 gateway 完成 bearer token 认证，并向 `document` 服务传递用户上下文；前端、管理端、其他后端模块和 MCP 工具的 HTTP 请求都不得绕过 gateway 直连 `document`。
+- `document` 服务应使用 gateway 注入的 `X-User-Id`、`X-User-Roles`、`X-User-Permissions` 和 `X-Request-Id` 做审计、追踪和必要的服务边界校验。
 - MCP 工具不应暴露系统密钥。
 - MCP 工具不应返回 MinIO 内部敏感地址。
 - 日志中应避免记录敏感信息。
@@ -883,17 +952,17 @@
 - 两种固定报告类型。
 - 报告创建接口。
 - 模板选择接口。
-- 大纲生成接口。
-- 大纲重新生成接口。
+- 创建报告生成任务资源，用于大纲生成。
+- 创建报告生成任务资源，用于大纲重新生成。
 - 大纲编辑接口。
-- 正文逐章节生成接口。
-- 正文重新生成接口。
-- 指定章节重新生成接口。
+- 创建报告生成任务资源，用于正文逐章节生成。
+- 创建报告生成任务资源，用于正文重新生成。
+- 创建章节版本或生成任务资源，用于指定章节重新生成。
 - 生成进度查询接口。
 - 正文和表格编辑接口。
 - 报告保存到数据库。
 - 文件保存到 MinIO。
-- DOCX 导出和下载。
+- 创建报告文件资源和读取文件内容。
 - 报告记录列表接口。
 - 模板上传和管理接口。
 - 素材上传和管理接口。
@@ -936,18 +1005,17 @@
 
 ## 13. 待确认问题
 
-1. 后端接口采用 REST、RPC，还是同时提供 OpenAPI 文档？
-2. MCP 工具是否必须独立部署，还是作为报告生成服务的一部分暴露？
-3. 两类报告的标准模板文件是否已经存在？
-4. 报告主题之外还必须填写哪些结构化字段？
-5. “电厂”字段是否固定，还是应抽象为业务对象？
-6. 素材是否必须参与生成，还是只作为附件和人工参考？
-7. 表格数据来源是人工录入、素材解析、数据库查询，还是生成能力自动生成？
-8. DOCX 样式第一阶段是否只要求统一默认样式？
-9. 删除报告记录采用软删除还是物理删除？
-10. 导出文件下载链接是否需要有效期？
-11. 是否需要支持 PDF 导出？
-12. AI 重新生成是否需要保留历史版本或差异对比？
+1. MCP 工具是否必须独立部署，还是作为报告生成服务的一部分暴露？无论哪种部署方式，对外 HTTP 访问边界都应保持为 gateway `/api/v1`。
+2. 两类报告的标准模板文件是否已经存在？
+3. 报告主题之外还必须填写哪些结构化字段？
+4. “电厂”字段是否固定，还是应抽象为业务对象？
+5. 素材是否必须参与生成，还是只作为附件和人工参考？
+6. 表格数据来源是人工录入、素材解析、数据库查询，还是生成能力自动生成？
+7. DOCX 样式第一阶段是否只要求统一默认样式？
+8. 删除报告记录采用软删除还是物理删除？
+9. 导出文件下载链接是否需要有效期？
+10. 是否需要支持 PDF 导出？
+11. AI 重新生成是否需要保留历史版本或差异对比？
 
 ## 14. 验收清单
 
@@ -988,7 +1056,7 @@
 - [ ] 可以触发 DOCX 导出。
 - [ ] DOCX 保留最终编辑内容。
 - [ ] DOCX 符合统一样式。
-- [ ] 可以获取导出文件引用或下载地址。
+- [ ] 可以获取报告文件 ID、`contentPath` 或通过文件内容接口读取导出文件。
 - [ ] 可以基于历史报告重新导出。
 - [ ] 报告记录包含名称、类型、专业、电厂或业务对象、年份、生成时间和状态。
 

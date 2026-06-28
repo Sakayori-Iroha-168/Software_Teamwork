@@ -12,6 +12,8 @@
 
 前端不得直接调用 `auth`、`file`、`knowledge`、`qa`、`document` 的内部地址。内部服务地址只应存在于 gateway 或部署配置中。
 
+管理端、其他后端模块和 MCP 工具等 HTTP 调用方同样必须通过 gateway `/api/v1` 访问公开业务接口，不得绕过 gateway 直连内部服务。
+
 ## OpenAPI 作为协作源
 
 - `docs/api/gateway.openapi.yaml` 是前端与 gateway 的第一版契约源。
@@ -19,7 +21,7 @@
 - 后端实现 endpoint 前，应先更新 OpenAPI。
 - 破坏性字段变更必须同步更新 OpenAPI 和本契约文档。
 - 所有前端到 gateway、gateway 到下游服务的 HTTP API 必须使用 RESTful 资源路径，由 HTTP method 表达动作；健康检查是唯一已允许的非 `/api/v1` 例外。
-- 本轮只把 gateway 健康检查、auth 和 file-owned 接口列为已确定契约；`knowledge`、`qa`、`document` 和管理后台聚合接口暂缺，见 OpenAPI 顶层 `x-missing-contracts`。
+- 本轮把 gateway 健康检查、auth、file-owned 接口和 `document` 拥有的报告生成接口列为已确定契约；`knowledge`、`qa` 和管理后台聚合接口暂缺，见 OpenAPI 顶层 `x-missing-contracts`。
 
 ## 认证约定
 
@@ -118,11 +120,11 @@
 - `keyword` 表示模糊查询关键词。
 - 多值过滤可使用逗号分隔字符串，具体字段由 OpenAPI endpoint 定义。
 - 排序参数后续统一为 `sort`，例如 `sort=-createdAt`，本轮只保留扩展空间。
-- 在对应 OpenAPI path 补齐前，前端不得依赖知识库列表、检索、聊天、报告或管理后台聚合接口。
+- 在对应 OpenAPI path 补齐前，前端不得依赖知识库列表、检索、聊天或管理后台聚合接口。报告生成接口以当前 OpenAPI active paths 为准。
 
 ## SSE 与流式 UI
 
-问答和报告生成的流式接口暂缺，当前 OpenAPI 不提供稳定 SSE endpoint。后续补齐时，前端处理原则如下：
+问答和报告生成的流式接口暂缺，当前 OpenAPI 不提供稳定 SSE endpoint。报告生成当前可使用 `GET /api/v1/reports/{reportId}/events` 轮询事件列表；后续补齐 SSE 时，前端处理原则如下：
 
 - 根据 `Content-Type: text/event-stream` 进入流式读取。
 - `message` 事件用于文本增量。
@@ -139,7 +141,7 @@
 - 上传 endpoint 由 gateway 暴露，实际文件对象归 `file` 服务管理。
 - 文档处理状态、知识库列表和 ingestion handoff 归 `knowledge` 服务后续契约补齐；当前只稳定 file-owned 上传返回和原文件内容读取。
 - 前端读取原文件内容时，只使用 gateway 提供的 `GET /api/v1/documents/{documentId}/content`。
-- 生成报告和报告文件内容接口暂缺，后续由 `document` 契约补齐。
+- 生成报告和报告文件内容接口由 `document` 契约提供；前端只通过 `POST /api/v1/reports/{reportId}/jobs` 创建生成类任务，通过 `GET /api/v1/report-files/{reportFileId}/content` 获取生成文件内容。
 - 前端不得依赖 MinIO object key 或内部存储路径。
 
 ## Request ID
