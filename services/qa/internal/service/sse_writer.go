@@ -59,7 +59,7 @@ func (s *SSEWriter) EmitIntent(status string, label string, intent *string, conf
 }
 
 func (s *SSEWriter) EmitStep(_ context.Context, step domain.ThinkingStep) error {
-	return s.writeEvent("step", map[string]any{"step": step})
+	return s.writeEvent("thinking_step", map[string]any{"step": step})
 }
 
 func (s *SSEWriter) EmitToken(text string, index int) error {

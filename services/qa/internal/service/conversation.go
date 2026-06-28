@@ -38,15 +38,21 @@ type ListConversationsResult struct {
 type ConversationService struct {
 	conversations *repository.ConversationRepository
 	messages      *repository.MessageRepository
+	responseRuns  *repository.ResponseRunRepository
+	processSteps  *repository.ProcessStepRepository
 }
 
 func NewConversationService(
 	conversations *repository.ConversationRepository,
 	messages *repository.MessageRepository,
+	responseRuns *repository.ResponseRunRepository,
+	processSteps *repository.ProcessStepRepository,
 ) *ConversationService {
 	return &ConversationService{
 		conversations: conversations,
 		messages:      messages,
+		responseRuns:  responseRuns,
+		processSteps:  processSteps,
 	}
 }
 
@@ -77,9 +83,31 @@ func (s *ConversationService) GetByID(ctx context.Context, id string) (Conversat
 		return ConversationResult{}, fmt.Errorf("get messages: %w", err)
 	}
 
+	assistantMsgToThinking := make(map[string][]map[string]any)
+	for _, msg := range msgsWithContent {
+		if msg.Role == "assistant" {
+			run, err := s.responseRuns.GetByAssistantMessageID(ctx, msg.ID)
+			if err == nil {
+				steps, err := s.processSteps.ListByResponseRunID(ctx, run.ID)
+				if err == nil {
+					thinking := make([]map[string]any, 0, len(steps))
+					for _, step := range steps {
+						thinking = append(thinking, map[string]any{
+							"type":   step.Type,
+							"label":  step.Label,
+							"status": step.Status,
+							"detail": step.Detail,
+						})
+					}
+					assistantMsgToThinking[msg.ID] = thinking
+				}
+			}
+		}
+	}
+
 	messages := make([]map[string]any, 0, len(msgsWithContent))
 	for _, msg := range msgsWithContent {
-		messages = append(messages, map[string]any{
+		messageData := map[string]any{
 			"id":            msg.ID,
 			"role":          msg.Role,
 			"sequence_no":   msg.SequenceNo,
@@ -90,7 +118,11 @@ func (s *ConversationService) GetByID(ctx context.Context, id string) (Conversat
 			"error_message": msg.ErrorMessage,
 			"created_at":    msg.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 			"completed_at":  formatTimePtr(msg.CompletedAt),
-		})
+		}
+		if thinking, ok := assistantMsgToThinking[msg.ID]; ok {
+			messageData["thinking"] = thinking
+		}
+		messages = append(messages, messageData)
 	}
 
 	return ConversationResult{

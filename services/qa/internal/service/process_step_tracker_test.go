@@ -24,7 +24,7 @@ func TestSSEWriterThinkingStepFormat(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: step") {
+	if !strings.Contains(body, "event: thinking_step") {
 		t.Fatalf("missing event type: %s", body)
 	}
 	if !strings.Contains(body, `"type":"generation"`) {

@@ -203,6 +203,40 @@ func (r *ResponseRunRepository) GetByUserMessageID(ctx context.Context, userMess
 	return run, nil
 }
 
+func (r *ResponseRunRepository) GetByAssistantMessageID(ctx context.Context, assistantMessageID string) (ResponseRun, error) {
+	const query = `
+		SELECT id, conversation_id, user_message_id, assistant_message_id,
+			qa_config_version_id, llm_config_version_id, request_id,
+			intent_type, route, confidence, status, stop_reason, retry_count,
+			prompt_tokens, completion_tokens, reasoning_tokens, latency_ms,
+			started_at, finished_at
+		FROM response_runs
+		WHERE assistant_message_id = $1
+	`
+	var run ResponseRun
+	var intentTypeStr *string
+	var confidenceVal *float64
+	err := r.db.QueryRow(ctx, query, assistantMessageID).Scan(
+		&run.ID, &run.ConversationID, &run.UserMessageID, &run.AssistantMessageID,
+		&run.QAConfigVersionID, &run.LLMConfigVersionID, &run.RequestID,
+		&intentTypeStr, &run.Route, &confidenceVal, &run.Status, &run.StopReason,
+		&run.RetryCount, &run.PromptTokens, &run.CompletionTokens, &run.ReasoningTokens,
+		&run.LatencyMs, &run.StartedAt, &run.FinishedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ResponseRun{}, pgx.ErrNoRows
+	}
+	if err != nil {
+		return ResponseRun{}, fmt.Errorf("get response run by assistant message: %w", err)
+	}
+	if intentTypeStr != nil {
+		intentType := domain.IntentType(*intentTypeStr)
+		run.IntentType = &intentType
+	}
+	run.Confidence = confidenceVal
+	return run, nil
+}
+
 func (r *ResponseRunRepository) MarkCompleted(ctx context.Context, runID string) error {
 	now := nowUTC()
 	const query = `

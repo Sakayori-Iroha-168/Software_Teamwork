@@ -42,7 +42,7 @@ func main() {
 	citations := repository.NewCitationRepository(pool)
 
 	chatService := service.NewChatStreamService(conversations, messages, responseRuns, processSteps, contentBlocks, streamEvents, citations)
-	conversationService := service.NewConversationService(conversations, messages)
+	conversationService := service.NewConversationService(conversations, messages, responseRuns, processSteps)
 	server := httpx.NewServer(chatService, conversationService)
 
 	httpServer := &http.Server{
