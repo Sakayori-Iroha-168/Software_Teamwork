@@ -1,0 +1,52 @@
+openapi: 3.0.3
+info:
+  title: QA Service API
+  version: 0.1.0
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: Service is healthy
+  /api/chat/stream:
+    post:
+      summary: Stream a chat response through Server-Sent Events
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - message
+                - conversation_id
+              properties:
+                conversation_id:
+                  type: string
+                message:
+                  type: string
+                knowledge_bases:
+                  type: array
+                  items:
+                    type: string
+                params:
+                  type: object
+                  properties:
+                    top_k:
+                      type: integer
+                    similarity_threshold:
+                      type: number
+                    use_rerank:
+                      type: boolean
+                    rerank_threshold:
+                      type: number
+      responses:
+        "200":
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          description: Invalid request
