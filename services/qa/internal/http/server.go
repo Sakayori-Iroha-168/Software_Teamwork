@@ -28,10 +28,62 @@ func (s *Server) Handler() http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	mux.HandleFunc("/api/v1/qa-sessions", s.routeQASessions)
+	mux.HandleFunc("/api/v1/qa-sessions/", s.routeQASessionByID)
+
 	mux.HandleFunc("/api/chat/stream", s.chat.Stream)
 	mux.HandleFunc("/api/conversations", s.routeConversations)
 	mux.HandleFunc("/api/conversations/", s.routeConversationByID)
+
 	return mux
+}
+
+func (s *Server) routeQASessions(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/api/v1/qa-sessions" {
+		WriteError(w, http.StatusNotFound, 40400, "not found")
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+		s.conversations.Create(w, r)
+	default:
+		WriteError(w, http.StatusMethodNotAllowed, 40000, "method not allowed")
+	}
+}
+
+func (s *Server) routeQASessionByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/qa-sessions/")
+	if path == "" {
+		WriteError(w, http.StatusNotFound, 40400, "not found")
+		return
+	}
+
+	parts := strings.SplitN(path, "/", 2)
+
+	if len(parts) == 1 {
+		if r.Method == http.MethodGet {
+			s.conversations.Get(w, r)
+			return
+		}
+		WriteError(w, http.StatusMethodNotAllowed, 40000, "method not allowed")
+		return
+	}
+
+	subPath := parts[1]
+	switch subPath {
+	case "messages":
+		if r.Method == http.MethodPost {
+			s.chat.Stream(w, r)
+			return
+		}
+	case "events":
+		if r.Method == http.MethodGet {
+			s.chat.GetEvents(w, r)
+			return
+		}
+	}
+	WriteError(w, http.StatusMethodNotAllowed, 40000, "method not allowed")
 }
 
 func (s *Server) routeConversations(w http.ResponseWriter, r *http.Request) {

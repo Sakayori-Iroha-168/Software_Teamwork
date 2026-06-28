@@ -29,7 +29,8 @@ func (r *ProcessStepRepository) UpsertStep(
 			response_run_id, step_order, step_type, label, detail, status, started_at, finished_at
 		)
 		VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8)
-		ON CONFLICT (response_run_id, step_type) DO UPDATE SET
+		ON CONFLICT (response_run_id, step_order) DO UPDATE SET
+			step_type = EXCLUDED.step_type,
 			label = EXCLUDED.label,
 			detail = COALESCE(NULLIF(EXCLUDED.detail, ''), response_process_steps.detail),
 			status = EXCLUDED.status,

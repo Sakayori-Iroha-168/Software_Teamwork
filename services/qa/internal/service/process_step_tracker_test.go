@@ -14,7 +14,7 @@ func TestSSEWriterThinkingStepFormat(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writer := service.NewSSEWriter(rec)
 
-	err := writer.EmitThinkingStep(context.Background(), domain.ThinkingStep{
+	err := writer.EmitStep(context.Background(), domain.ThinkingStep{
 		Type:   domain.StepTypeGeneration,
 		Label:  "生成回答",
 		Status: domain.StepStatusRunning,
@@ -24,7 +24,7 @@ func TestSSEWriterThinkingStepFormat(t *testing.T) {
 	}
 
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: thinking_step") {
+	if !strings.Contains(body, "event: step") {
 		t.Fatalf("missing event type: %s", body)
 	}
 	if !strings.Contains(body, `"type":"generation"`) {

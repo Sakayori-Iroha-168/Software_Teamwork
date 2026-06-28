@@ -2,125 +2,145 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"time"
 
-	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/domain"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/repository"
-	"github.com/jackc/pgx/v5"
 )
 
-type ConversationDetail struct {
-	ID        string                `json:"id"`
-	Title     string                `json:"title"`
-	Messages  []ConversationMessage `json:"messages"`
-	CreatedAt string                `json:"created_at"`
-	UpdatedAt string                `json:"updated_at"`
+type CreateConversationRequest struct {
+	ExternalUserID string
 }
 
-type ConversationMessage struct {
-	ID        string               `json:"id"`
-	Role      string               `json:"role"`
-	Content   string               `json:"content"`
-	Status    string               `json:"status"`
-	Timestamp string               `json:"timestamp"`
-	Thinking  []domain.ThinkingStep `json:"thinking,omitempty"`
+type ListConversationsRequest struct {
+	ExternalUserID string
+	Page           int
+	PageSize       int
 }
 
-type CreateConversationResult struct {
-	ID        string
-	Title     string
-	CreatedAt string
-	UpdatedAt string
+type ConversationResult struct {
+	ID             string
+	ExternalUserID string
+	Title          string
+	Status         string
+	CreatedAt      string
+	UpdatedAt      string
+	Messages       []map[string]any
+}
+
+type ListConversationsResult struct {
+	Data     []ConversationResult
+	Page     int
+	PageSize int
+	Total    int64
 }
 
 type ConversationService struct {
 	conversations *repository.ConversationRepository
 	messages      *repository.MessageRepository
-	responseRuns  *repository.ResponseRunRepository
-	processSteps  *repository.ProcessStepRepository
-	contentBlocks *repository.ContentBlockRepository
 }
 
 func NewConversationService(
 	conversations *repository.ConversationRepository,
 	messages *repository.MessageRepository,
-	responseRuns *repository.ResponseRunRepository,
-	processSteps *repository.ProcessStepRepository,
-	contentBlocks *repository.ContentBlockRepository,
 ) *ConversationService {
 	return &ConversationService{
 		conversations: conversations,
 		messages:      messages,
-		responseRuns:  responseRuns,
-		processSteps:  processSteps,
-		contentBlocks: contentBlocks,
 	}
 }
 
-func (s *ConversationService) Create(ctx context.Context, title string) (CreateConversationResult, error) {
-	conv, err := s.conversations.Create(ctx, title)
+func (s *ConversationService) Create(ctx context.Context, req CreateConversationRequest) (ConversationResult, error) {
+	conv, err := s.conversations.Create(ctx, req.ExternalUserID)
 	if err != nil {
-		return CreateConversationResult{}, fmt.Errorf("create conversation: %w", err)
+		return ConversationResult{}, fmt.Errorf("create conversation: %w", err)
 	}
-	return CreateConversationResult{
-		ID:        conv.ID,
-		Title:     conv.Title,
-		CreatedAt: conv.CreatedAt.UTC().Format(timeRFC3339),
-		UpdatedAt: conv.UpdatedAt.UTC().Format(timeRFC3339),
+
+	return ConversationResult{
+		ID:             conv.ID,
+		ExternalUserID: conv.ExternalUserID,
+		Title:          conv.Title,
+		Status:         conv.Status,
+		CreatedAt:      conv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:      conv.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}, nil
 }
 
-func (s *ConversationService) GetDetail(ctx context.Context, conversationID string) (ConversationDetail, error) {
-	conv, err := s.conversations.GetByID(ctx, conversationID)
+func (s *ConversationService) GetByID(ctx context.Context, id string) (ConversationResult, error) {
+	conv, err := s.conversations.GetByID(ctx, id)
 	if err != nil {
-		return ConversationDetail{}, fmt.Errorf("get conversation: %w", err)
+		return ConversationResult{}, fmt.Errorf("get conversation: %w", err)
 	}
 
-	msgs, err := s.messages.ListByConversation(ctx, conversationID)
+	msgsWithContent, err := s.messages.ListByConversationIDWithContent(ctx, id)
 	if err != nil {
-		return ConversationDetail{}, fmt.Errorf("list messages: %w", err)
+		return ConversationResult{}, fmt.Errorf("get messages: %w", err)
 	}
 
-	detail := ConversationDetail{
-		ID:        conv.ID,
-		Title:     conv.Title,
-		CreatedAt: conv.CreatedAt.UTC().Format(timeRFC3339),
-		UpdatedAt: conv.UpdatedAt.UTC().Format(timeRFC3339),
+	messages := make([]map[string]any, 0, len(msgsWithContent))
+	for _, msg := range msgsWithContent {
+		messages = append(messages, map[string]any{
+			"id":            msg.ID,
+			"role":          msg.Role,
+			"sequence_no":   msg.SequenceNo,
+			"content":       msg.Content,
+			"status":        msg.Status,
+			"model_name":    msg.ModelName,
+			"error_code":    msg.ErrorCode,
+			"error_message": msg.ErrorMessage,
+			"created_at":    msg.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			"completed_at":  formatTimePtr(msg.CompletedAt),
+		})
 	}
 
-	for _, msg := range msgs {
-		item := ConversationMessage{
-			ID:        msg.ID,
-			Role:      msg.Role,
-			Content:   msg.Content,
-			Status:    msg.Status,
-			Timestamp: msg.CreatedAt.UTC().Format(timeRFC3339),
-		}
-		if msg.Role == "assistant" {
-			thinking, err := s.loadThinking(ctx, msg.ID)
-			if err != nil {
-				return ConversationDetail{}, err
-			}
-			if len(thinking) > 0 {
-				item.Thinking = thinking
-			}
-		}
-		detail.Messages = append(detail.Messages, item)
-	}
-
-	return detail, nil
+	return ConversationResult{
+		ID:             conv.ID,
+		ExternalUserID: conv.ExternalUserID,
+		Title:          conv.Title,
+		Status:         conv.Status,
+		CreatedAt:      conv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		UpdatedAt:      conv.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		Messages:       messages,
+	}, nil
 }
 
-func (s *ConversationService) loadThinking(ctx context.Context, messageID string) ([]domain.ThinkingStep, error) {
-	run, err := s.responseRuns.GetByMessageID(ctx, messageID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
+func (s *ConversationService) List(ctx context.Context, req ListConversationsRequest) (ListConversationsResult, error) {
+	convs, total, err := s.conversations.List(ctx, req.ExternalUserID, req.Page, req.PageSize)
 	if err != nil {
-		return nil, fmt.Errorf("load response run: %w", err)
+		return ListConversationsResult{}, fmt.Errorf("list conversations: %w", err)
 	}
-	return s.processSteps.ListByResponseRunID(ctx, run.ID)
+
+	data := make([]ConversationResult, 0, len(convs))
+	for _, conv := range convs {
+		data = append(data, ConversationResult{
+			ID:             conv.ID,
+			ExternalUserID: conv.ExternalUserID,
+			Title:          conv.Title,
+			Status:         conv.Status,
+			CreatedAt:      conv.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+			UpdatedAt:      conv.UpdatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		})
+	}
+
+	return ListConversationsResult{
+		Data:     data,
+		Page:     req.Page,
+		PageSize: req.PageSize,
+		Total:    total,
+	}, nil
 }
 
-const timeRFC3339 = "2006-01-02T15:04:05Z"
+func (s *ConversationService) Delete(ctx context.Context, id string) error {
+	return s.conversations.SoftDelete(ctx, id)
+}
+
+func (s *ConversationService) UpdateStatus(ctx context.Context, id string, status string) error {
+	return s.conversations.UpdateStatus(ctx, id, status)
+}
+
+func formatTimePtr(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+	return t.Format("2006-01-02T15:04:05Z07:00")
+}

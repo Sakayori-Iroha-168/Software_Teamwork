@@ -20,11 +20,13 @@ type ChatStreamRequest struct {
 }
 
 type ChatStreamService struct {
-	conversations *repository.ConversationRepository
-	messages      *repository.MessageRepository
-	responseRuns  *repository.ResponseRunRepository
-	processSteps  *repository.ProcessStepRepository
-	contentBlocks *repository.ContentBlockRepository
+	conversations  *repository.ConversationRepository
+	messages       *repository.MessageRepository
+	responseRuns   *repository.ResponseRunRepository
+	processSteps   *repository.ProcessStepRepository
+	contentBlocks  *repository.ContentBlockRepository
+	streamEvents   *repository.ResponseStreamEventRepository
+	citations      *repository.CitationRepository
 }
 
 func NewChatStreamService(
@@ -33,13 +35,17 @@ func NewChatStreamService(
 	responseRuns *repository.ResponseRunRepository,
 	processSteps *repository.ProcessStepRepository,
 	contentBlocks *repository.ContentBlockRepository,
+	streamEvents *repository.ResponseStreamEventRepository,
+	citations *repository.CitationRepository,
 ) *ChatStreamService {
 	return &ChatStreamService{
-		conversations: conversations,
-		messages:      messages,
-		responseRuns:  responseRuns,
-		processSteps:  processSteps,
-		contentBlocks: contentBlocks,
+		conversations:  conversations,
+		messages:       messages,
+		responseRuns:   responseRuns,
+		processSteps:   processSteps,
+		contentBlocks:  contentBlocks,
+		streamEvents:   streamEvents,
+		citations:      citations,
 	}
 }
 
@@ -56,18 +62,30 @@ func (s *ChatStreamService) Stream(
 		return fmt.Errorf("conversation not found: %w", err)
 	}
 
-	if _, err := s.messages.Create(ctx, req.ConversationID, "user", req.Message, "completed"); err != nil {
+	userMsg, err := s.messages.Create(ctx, req.ConversationID, "user", "completed")
+	if err != nil {
 		return fmt.Errorf("create user message: %w", err)
 	}
 
-	assistant, err := s.messages.Create(ctx, req.ConversationID, "assistant", "", "streaming")
+	_, err = s.contentBlocks.Create(
+		ctx, userMsg.ID, 0, "text", req.Message, domain.ContentBlockStatusCompleted,
+	)
+	if err != nil {
+		return fmt.Errorf("create user content block: %w", err)
+	}
+
+	assistantMsg, err := s.messages.Create(ctx, req.ConversationID, "assistant", "streaming")
 	if err != nil {
 		return fmt.Errorf("create assistant message: %w", err)
 	}
 
-	run, err := s.responseRuns.Create(ctx, assistant.ID, req.ConversationID)
+	run, err := s.responseRuns.Create(ctx, req.ConversationID, userMsg.ID)
 	if err != nil {
 		return fmt.Errorf("create response run: %w", err)
+	}
+
+	if err := s.responseRuns.UpdateAssistantMessageID(ctx, run.ID, assistantMsg.ID); err != nil {
+		return fmt.Errorf("update assistant message id: %w", err)
 	}
 
 	tracker := NewProcessStepTracker(s.processSteps, run.ID, sse)
@@ -83,7 +101,7 @@ func (s *ChatStreamService) Stream(
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.Canceled) {
-				_ = s.stopStream(context.Background(), tracker, run.ID, assistant.ID)
+				_ = s.stopStream(context.Background(), tracker, run.ID, assistantMsg.ID)
 			}
 		default:
 		}
@@ -91,99 +109,186 @@ func (s *ChatStreamService) Stream(
 
 	defer func() {
 		if r := recover(); r != nil {
-			_ = s.failStream(context.Background(), tracker, run.ID, assistant.ID, fmt.Errorf("panic: %v", r))
+			_ = s.failStream(context.Background(), tracker, run.ID, assistantMsg.ID, fmt.Errorf("panic: %v", r))
 			panic(r)
 		}
 	}()
 
-	if err := sse.EmitIntentStatus(map[string]any{
-		"status": "started",
-		"label":  "正在分析问题...",
-	}); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+	intentResult := s.classifyIntent(req.Message, req.KnowledgeBases)
+
+	if err := sse.EmitIntent("started", "正在分析问题...", nil, nil); err != nil {
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
-	intentLabel := "识别为：一般对话"
-	intent := "general_chat"
-	useRetrieval := req.UseRetrieval && len(req.KnowledgeBases) > 0
-	if useRetrieval {
-		intentLabel = "识别为：知识问答"
-		intent = "knowledge_qa"
+	intentLabel := s.intentLabel(intentResult.IntentType)
+	if err := sse.EmitIntent("done", intentLabel, ptr(string(intentResult.IntentType)), &intentResult.Confidence); err != nil {
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
-	if err := sse.EmitIntentStatus(map[string]any{
-		"status":     "done",
-		"label":      intentLabel,
-		"intent":     intent,
-		"confidence": 0.95,
-	}); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+	if err := s.responseRuns.UpdateIntent(ctx, run.ID, intentResult.IntentType, intentResult.Route, intentResult.Confidence); err != nil {
+		return fmt.Errorf("update response run intent: %w", err)
 	}
 
 	if _, err := tracker.StartStep(ctx, domain.StepTypeIntent, "识别意图"); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 	if _, err := tracker.CompleteStep(ctx, domain.StepTypeIntent, intentLabel, ""); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
-	if useRetrieval {
+	if intentResult.UseRetrieval {
 		if _, err := tracker.StartStep(ctx, domain.StepTypeRetrieval, "检索知识库"); err != nil {
-			return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+			return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 		}
 		hitCount := 5
 		detail := fmt.Sprintf("命中 %d 条结果", hitCount)
 		if _, err := tracker.CompleteStep(ctx, domain.StepTypeRetrieval, "检索知识库", detail); err != nil {
-			return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+			return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 		}
 	}
 
 	if _, err := tracker.StartStep(ctx, domain.StepTypeGeneration, "生成回答"); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
-	answer := s.buildAnswer(req.Message, useRetrieval)
-	content, err := s.streamTokens(ctx, sse, answer)
+	answer := s.buildAnswer(req.Message, intentResult.UseRetrieval)
+	contentBlock, err := s.contentBlocks.Create(
+		ctx, assistantMsg.ID, 0, "text", "", domain.ContentBlockStatusStreaming,
+	)
+	if err != nil {
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
+	}
+
+	content, err := s.streamTokens(ctx, sse, answer, contentBlock.ID)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return err
 		}
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
 	if _, err := tracker.CompleteStep(ctx, domain.StepTypeGeneration, "生成回答", ""); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
-	if useRetrieval {
+	if intentResult.UseRetrieval {
 		if _, err := tracker.StartStep(ctx, domain.StepTypeVerify, "验证答案"); err != nil {
-			return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+			return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 		}
 		if _, err := tracker.CompleteStep(ctx, domain.StepTypeVerify, "验证答案", "引用校验通过"); err != nil {
-			return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+			return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 		}
 	}
 
-	if err := s.messages.UpdateContentAndStatus(ctx, assistant.ID, content, "completed"); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+	if err := s.contentBlocks.UpdateContent(ctx, contentBlock.ID, content); err != nil {
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
+	}
+	if err := s.contentBlocks.UpdateStatus(ctx, contentBlock.ID, domain.ContentBlockStatusCompleted); err != nil {
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
+	}
+
+	if err := s.messages.UpdateStatus(ctx, assistantMsg.ID, "completed"); err != nil {
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
 	if err := s.responseRuns.MarkCompleted(ctx, run.ID); err != nil {
-		return s.failStream(ctx, tracker, run.ID, assistant.ID, err)
+		return s.failStream(ctx, tracker, run.ID, assistantMsg.ID, err)
 	}
 
 	latency := time.Since(startedAt).Milliseconds()
+	promptTokens := utf8.RuneCountInString(req.Message)
+	completionTokens := utf8.RuneCountInString(content)
+	if err := s.responseRuns.UpdateMetrics(ctx, run.ID, promptTokens, completionTokens, 0, int(latency)); err != nil {
+		return fmt.Errorf("update response run metrics: %w", err)
+	}
+
 	if err := sse.EmitDone(map[string]any{
-		"message_id":         assistant.ID,
-		"total_tokens":       utf8.RuneCountInString(content),
-		"prompt_tokens":      utf8.RuneCountInString(req.Message),
-		"completion_tokens":  utf8.RuneCountInString(content),
+		"response_run_id":     run.ID,
+		"message_id":         assistantMsg.ID,
+		"total_tokens":       promptTokens + completionTokens,
+		"prompt_tokens":      promptTokens,
+		"completion_tokens":  completionTokens,
 		"latency_ms":         latency,
 	}); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+type IntentResult struct {
+	IntentType   domain.IntentType
+	Route        string
+	Confidence   float64
+	UseRetrieval bool
+}
+
+func (s *ChatStreamService) classifyIntent(message string, knowledgeBases []string) IntentResult {
+	useRetrieval := len(knowledgeBases) > 0
+
+	keywords := []string{"查询", "检索", "知识库", "文档", "规范", "标准", "手册", "指南"}
+	isKnowledge := useRetrieval
+	if !isKnowledge {
+		for _, kw := range keywords {
+			if strings.Contains(message, kw) {
+				isKnowledge = true
+				break
+			}
+		}
+	}
+
+	if isKnowledge {
+		return IntentResult{
+			IntentType:   domain.IntentKnowledgeQA,
+			Route:        "rag",
+			Confidence:   0.95,
+			UseRetrieval: true,
+		}
+	}
+
+	systemKeywords := []string{"重启", "关闭", "配置", "设置", "指令"}
+	isSystem := false
+	for _, kw := range systemKeywords {
+		if strings.Contains(message, kw) {
+			isSystem = true
+			break
+		}
+	}
+
+	if isSystem {
+		return IntentResult{
+			IntentType:   domain.IntentSystemCommand,
+			Route:        "command",
+			Confidence:   0.85,
+			UseRetrieval: false,
+		}
+	}
+
+	return IntentResult{
+		IntentType:   domain.IntentGeneralChat,
+		Route:        "direct",
+		Confidence:   0.90,
+		UseRetrieval: false,
+	}
+}
+
+func (s *ChatStreamService) intentLabel(intent domain.IntentType) string {
+	switch intent {
+	case domain.IntentKnowledgeQA:
+		return "识别为：知识问答"
+	case domain.IntentGeneralChat:
+		return "识别为：一般对话"
+	case domain.IntentDocumentQuery:
+		return "识别为：文档查询"
+	case domain.IntentSystemCommand:
+		return "识别为：系统指令"
+	default:
+		return "识别为：未知"
+	}
+}
+
+func ptr[T any](v T) *T {
+	return &v
 }
 
 func (s *ChatStreamService) failStream(
@@ -194,7 +299,7 @@ func (s *ChatStreamService) failStream(
 	cause error,
 ) error {
 	_ = tracker.MarkRunningAsFailed(ctx, domain.StepStatusFailed)
-	_ = s.messages.UpdateContentAndStatus(ctx, assistantMessageID, "", "failed")
+	_ = s.messages.UpdateStatus(ctx, assistantMessageID, "failed")
 	_ = s.responseRuns.MarkFailed(ctx, runID, cause.Error())
 	return cause
 }
@@ -206,7 +311,7 @@ func (s *ChatStreamService) stopStream(
 	assistantMessageID string,
 ) error {
 	_ = tracker.MarkRunningAsFailed(ctx, domain.StepStatusStopped)
-	_ = s.messages.UpdateContentAndStatus(ctx, assistantMessageID, "", "stopped")
+	_ = s.messages.UpdateStatus(ctx, assistantMessageID, "stopped")
 	_ = s.responseRuns.MarkStopped(ctx, runID, "client disconnected")
 	return context.Canceled
 }
@@ -218,7 +323,12 @@ func (s *ChatStreamService) buildAnswer(message string, useRetrieval bool) strin
 	return fmt.Sprintf("您好，关于「%s」，我可以继续为您提供帮助。", message)
 }
 
-func (s *ChatStreamService) streamTokens(ctx context.Context, sse *SSEWriter, answer string) (string, error) {
+func (s *ChatStreamService) streamTokens(
+	ctx context.Context,
+	sse *SSEWriter,
+	answer string,
+	contentBlockID string,
+) (string, error) {
 	runes := []rune(answer)
 	var builder strings.Builder
 	for i, r := range runes {

@@ -38,9 +38,11 @@ func main() {
 	responseRuns := repository.NewResponseRunRepository(pool)
 	processSteps := repository.NewProcessStepRepository(pool)
 	contentBlocks := repository.NewContentBlockRepository(pool)
+	streamEvents := repository.NewResponseStreamEventRepository(pool)
+	citations := repository.NewCitationRepository(pool)
 
-	chatService := service.NewChatStreamService(conversations, messages, responseRuns, processSteps, contentBlocks)
-	conversationService := service.NewConversationService(conversations, messages, responseRuns, processSteps, contentBlocks)
+	chatService := service.NewChatStreamService(conversations, messages, responseRuns, processSteps, contentBlocks, streamEvents, citations)
+	conversationService := service.NewConversationService(conversations, messages)
 	server := httpx.NewServer(chatService, conversationService)
 
 	httpServer := &http.Server{

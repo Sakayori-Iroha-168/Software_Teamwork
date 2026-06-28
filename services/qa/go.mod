@@ -3,8 +3,8 @@ module github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa
 go 1.22
 
 require (
-	github.com/jackc/pgx/v5 v5.7.4
 	github.com/google/uuid v1.6.0
+	github.com/jackc/pgx/v5 v5.7.4
 )
 
 require (

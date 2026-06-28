@@ -10,7 +10,7 @@ import (
 )
 
 type StepEmitter interface {
-	EmitThinkingStep(ctx context.Context, step domain.ThinkingStep) error
+	EmitStep(ctx context.Context, step domain.ThinkingStep) error
 }
 
 type ProcessStepTracker struct {
@@ -57,7 +57,7 @@ func (t *ProcessStepTracker) StartStep(
 	if err != nil {
 		return domain.ThinkingStep{}, err
 	}
-	if err := t.emitter.EmitThinkingStep(ctx, step); err != nil {
+	if err := t.emitter.EmitStep(ctx, step); err != nil {
 		return domain.ThinkingStep{}, fmt.Errorf("emit thinking step: %w", err)
 	}
 	return step, nil
@@ -95,7 +95,7 @@ func (t *ProcessStepTracker) CompleteStep(
 	if err != nil {
 		return domain.ThinkingStep{}, err
 	}
-	if err := t.emitter.EmitThinkingStep(ctx, step); err != nil {
+	if err := t.emitter.EmitStep(ctx, step); err != nil {
 		return domain.ThinkingStep{}, fmt.Errorf("emit thinking step: %w", err)
 	}
 	return step, nil

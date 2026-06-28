@@ -2,6 +2,15 @@ package domain
 
 import "time"
 
+type IntentType string
+
+const (
+	IntentKnowledgeQA   IntentType = "knowledge_qa"
+	IntentGeneralChat   IntentType = "general_chat"
+	IntentDocumentQuery IntentType = "document_query"
+	IntentSystemCommand IntentType = "system_command"
+)
+
 type StepType string
 
 const (
@@ -50,19 +59,61 @@ type ProcessStepRecord struct {
 	FinishedAt    *time.Time
 }
 
-type ContentBlockVisibility string
+type MessageContentBlockStatus string
 
 const (
-	ContentBlockVisibilityPublic   ContentBlockVisibility = "public"
-	ContentBlockVisibilityInternal ContentBlockVisibility = "internal"
+	ContentBlockStatusStreaming MessageContentBlockStatus = "streaming"
+	ContentBlockStatusCompleted MessageContentBlockStatus = "completed"
+	ContentBlockStatusStopped   MessageContentBlockStatus = "stopped"
 )
 
 type MessageContentBlock struct {
-	ID         int64
-	MessageID  string
-	BlockType  string
-	Content    string
-	Visibility ContentBlockVisibility
-	SortOrder  int
-	CreatedAt  time.Time
+	ID                string
+	MessageID         string
+	BlockOrder        int
+	BlockType         string
+	Content           string
+	Status            MessageContentBlockStatus
+	ProviderBlockID   string
+	ProviderMetadata  map[string]any
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type StreamEventType string
+
+const (
+	StreamEventTypeIntent    StreamEventType = "intent"
+	StreamEventTypeStep      StreamEventType = "step"
+	StreamEventTypeToken     StreamEventType = "token"
+	StreamEventTypeCitation  StreamEventType = "citation"
+	StreamEventTypeDone      StreamEventType = "done"
+	StreamEventTypeError     StreamEventType = "error"
+)
+
+type ResponseStreamEvent struct {
+	ID            int64
+	ResponseRunID string
+	EventSeq      int
+	EventType     StreamEventType
+	Payload       map[string]any
+	ExpiresAt     *time.Time
+	CreatedAt     time.Time
+}
+
+type Citation struct {
+	ID              string
+	MessageID       string
+	CitationNo      int
+	CharStart       *int
+	CharEnd         *int
+	ExternalKBID    string
+	ExternalDocID   string
+	ExternalChunkID string
+	DocName         string
+	QuoteText       string
+	Context         string
+	PageNumber      *int
+	Score           *float64
+	Metadata        map[string]any
 }
