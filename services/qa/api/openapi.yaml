@@ -1,0 +1,276 @@
+openapi: 3.0.3
+info:
+  title: QA Service API
+  version: 0.1.0
+paths:
+  /api/v1/qa-sessions:
+    post:
+      operationId: createQASession
+      tags: [qa-sessions]
+      summary: Create a QA session for the current user.
+      x-owner-service: qa
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQASessionRequest'
+      responses:
+        '201':
+          description: QA session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QASessionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      operationId: listQASessions
+      tags: [qa-sessions]
+      summary: List QA sessions owned by the current user.
+      x-owner-service: qa
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, archived]
+            default: active
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [-updatedAt, updatedAt, -createdAt, createdAt, title, -title]
+            default: -updatedAt
+      responses:
+        '200':
+          description: Current user's QA sessions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QASessionListEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/qa-sessions/{sessionId}:
+    get:
+      operationId: getQASession
+      tags: [qa-sessions]
+      summary: Get one QA session owned by the current user.
+      x-owner-service: qa
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200':
+          description: QA session detail.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QASessionEnvelope'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: updateQASession
+      tags: [qa-sessions]
+      summary: Update the title or archive status of a QA session.
+      x-owner-service: qa
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/SessionId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateQASessionRequest'
+      responses:
+        '200':
+          description: Updated QA session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QASessionEnvelope'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteQASession
+      tags: [qa-sessions]
+      summary: Soft delete a QA session.
+      x-owner-service: qa
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+        - $ref: '#/components/parameters/UserId'
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '204':
+          description: QA session deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+components:
+  parameters:
+    RequestId:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    UserId:
+      name: X-User-Id
+      in: header
+      required: true
+      schema:
+        type: string
+    SessionId:
+      name: sessionId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    ValidationError:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Unauthorized:
+      description: Authentication is missing.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    Forbidden:
+      description: The QA session belongs to another user.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+    NotFound:
+      description: The QA session was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorEnvelope'
+  schemas:
+    CreateQASessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+    UpdateQASessionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+        status:
+          type: string
+          enum: [active, archived]
+    QASession:
+      type: object
+      required: [id, status, messageCount, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [active, archived]
+        messageCount:
+          type: integer
+        lastMessagePreview:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    Page:
+      type: object
+      required: [page, pageSize, total]
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+    QASessionEnvelope:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/QASession'
+        requestId:
+          type: string
+    QASessionListEnvelope:
+      type: object
+      required: [data, page, requestId]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/QASession'
+        page:
+          $ref: '#/components/schemas/Page'
+        requestId:
+          type: string
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string
+            fields:
+              type: object
+              additionalProperties:
+                type: string

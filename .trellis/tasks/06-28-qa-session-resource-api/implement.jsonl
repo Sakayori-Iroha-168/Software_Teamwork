@@ -1,0 +1,9 @@
+{"file":"docs/services/qa.md","reason":"Defines the QA session resource endpoints, response envelopes, auth context, pagination, and acceptance criteria for this backend API task."}
+{"file":"docs/services/qa-database.md","reason":"Defines the QA-owned conversation tables and aggregation data used by the session resource implementation."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend pre-development checklist and service ownership guidance for Go service work."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Service-local Go module layout, cmd/internal/api/migrations responsibilities, and Dockerfile placement."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"REST resource naming, standard success/error envelopes, gateway context headers, and OpenAPI expectations."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Persistence and migration rules for PostgreSQL-backed backend resources."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Stable error codes, status mapping, and no-internal-leakage rules for handlers and services."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Required local tests, build checks, and implementation quality gates for backend services."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer field mapping checks from API DTOs through service and database models."}

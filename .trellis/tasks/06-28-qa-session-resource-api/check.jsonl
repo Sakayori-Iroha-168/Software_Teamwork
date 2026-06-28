@@ -1,0 +1,8 @@
+{"file":"docs/services/qa.md","reason":"Verify implemented routes, DTO casing, envelopes, pagination, auth, and error behavior match the QA API contract."}
+{"file":"docs/services/qa-database.md","reason":"Verify the migration and repository model align with the QA conversation schema and ownership boundaries."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Check RESTful route shape, OpenAPI coverage, gateway context propagation, and response envelope consistency."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check migration structure, soft-delete fields, indexes, and repository isolation assumptions."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check standard error code/status mapping and requestId propagation."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check tests, formatting, build, and service-local quality expectations."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Check logs use structured metadata and do not leak request body or user content."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check API fields, service models, and database columns stay consistent across layers."}
