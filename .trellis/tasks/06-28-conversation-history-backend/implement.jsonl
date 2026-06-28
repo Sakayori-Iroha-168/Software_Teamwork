@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend service overview and required Go microservice boundaries."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Required service-local Go layout for services/qa."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "PostgreSQL ownership, migration, and repository rules for conversation history."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Stable JSON error response rules for handlers."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Structured logging and sensitive-data constraints for request handling."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Go build/test and forbidden backend patterns."}
+{"file": ".trellis/spec/backend/conversation-history-contract.md", "reason": "Executable QA history and stream API contract for this feature."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Feature spans API, service, storage, and frontend DTO contracts."}

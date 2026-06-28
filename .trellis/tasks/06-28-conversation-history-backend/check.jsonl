@@ -1,0 +1,11 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify QA service ownership and backend boundaries."}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Verify services/qa layout follows the standard structure."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify migration and repository boundaries."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify stable error responses."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify no sensitive logging patterns."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify Go tests/build and forbidden patterns."}
+{"file": ".trellis/spec/backend/conversation-history-contract.md", "reason": "Verify QA history DTO, stream request, and migration contract."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Verify DTO and boundary consistency."}
+{"command": "D:\\Go\\bin\\gofmt.exe -w services/qa/**/*.go", "result": "passed", "reason": "Format QA Go source files after Go toolchain installation."}
+{"command": "$env:GOCACHE='D:\\agent\\.gocache'; D:\\Go\\bin\\go.exe test ./...", "result": "passed", "working_directory": "services/qa"}
+{"command": "$env:GOCACHE='D:\\agent\\.gocache'; D:\\Go\\bin\\go.exe build ./cmd/server", "result": "passed", "working_directory": "services/qa"}
