@@ -21,6 +21,8 @@
 
 凡是本文档与上表文件冲突，以上游文件为准；需要进入前端稳定契约的内容，必须先由 gateway 相关文档和 `docs/api/gateway.openapi.yaml` 接收。
 
+当前 Go 模块详细设计和实施拆分记录在 [`.trellis/tasks/06-28-knowledge-management-module/design.md`](../../.trellis/tasks/06-28-knowledge-management-module/design.md) 与 [`.trellis/tasks/06-28-knowledge-management-module/implement.md`](../../.trellis/tasks/06-28-knowledge-management-module/implement.md)。团队级文档只保留稳定概览，避免重复维护两套细节。
+
 ## 2. 当前结论
 
 Knowledge Service 已从 Python/FastAPI 原型迁回 README 规划的 Go 微服务方向，旧 Python 原型文件已从 `services/knowledge/` 移除。当前 Go 基线位于：
@@ -40,14 +42,30 @@ services/knowledge/
 └── README.md
 ```
 
-当前 Go 基线只实现服务运行骨架和运维检查：
+当前 Go 实现已超过最初运行骨架，服务本地已经具备以下内部能力：
 
 ```http
 GET /healthz
 GET /readyz
+GET /internal/v1/knowledge-bases
+POST /internal/v1/knowledge-bases
+GET /internal/v1/knowledge-bases/{knowledgeBaseId}
+PATCH /internal/v1/knowledge-bases/{knowledgeBaseId}
+DELETE /internal/v1/knowledge-bases/{knowledgeBaseId}
+GET /internal/v1/knowledge-bases/{knowledgeBaseId}/documents
+POST /internal/v1/knowledge-bases/{knowledgeBaseId}/ingestion-jobs
+GET /internal/v1/documents/{documentId}
+GET /internal/v1/documents/{documentId}/chunks
+GET /internal/v1/jobs/{jobId}
+POST /internal/v1/jobs/{jobId}/processing-runs
+POST /internal/v1/knowledge-queries
+GET /internal/v1/runtime-config
+PATCH /internal/v1/runtime-config
+POST /internal/v1/knowledge-bases/{knowledgeBaseId}/jobs
+GET /internal/v1/knowledge-stats
 ```
 
-`services/knowledge/app/`、`requirements.txt` 和 `scripts/ingest_folder.sh` 已移除。后续 ingestion、parser、embedding、Qdrant 和 retrieval 能力应按 Go vertical slice 在 `internal/` 下重新实现。
+`services/knowledge/app/`、`requirements.txt` 和 `scripts/ingest_folder.sh` 已移除。旧 Python/FastAPI 原型不再作为 runtime 或接口契约来源；后续能力继续在 Go 的 `internal/` 分层内迭代。
 
 ## 3. 服务边界
 
@@ -128,12 +146,15 @@ GET /readyz
 | `KNOWLEDGE_HTTP_ADDR` | `:8000` | HTTP listen address. |
 | `KNOWLEDGE_SERVICE_VERSION` | `0.3.0` | Service version shown by readiness. |
 | `KNOWLEDGE_ENV` | `local` | Runtime environment label. |
-| `KNOWLEDGE_STORAGE_BACKEND` | `memory` | Baseline metadata/storage backend. Only `memory` is implemented now. |
+| `KNOWLEDGE_STORAGE_BACKEND` | `memory` | Metadata backend. Supported values: `memory`, `postgres`. |
+| `DATABASE_URL` | unset | PostgreSQL connection string required when `KNOWLEDGE_STORAGE_BACKEND=postgres`. |
+| `FILE_SERVICE_BASE_URL` | unset | Optional File Service base URL used by ingestion pipeline source reads. |
 | `KNOWLEDGE_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
-| `EMBEDDING_PROVIDER` | `local_hashing` | Embedding provider label for future pipeline wiring. |
+| `EMBEDDING_PROVIDER` | `local_hashing` | Embedding provider label. |
 | `EMBEDDING_MODEL` | `local_hashing` | Embedding model label. |
 | `EMBEDDING_DIMENSION` | `384` | Embedding vector dimension. |
-| `QDRANT_COLLECTION` | `knowledge_chunks` | Qdrant collection name for future retrieval slices. |
+| `QDRANT_URL` | unset | Optional Qdrant REST base URL. When unset, service uses an in-memory vector index. |
+| `QDRANT_COLLECTION` | `knowledge_chunks` | Qdrant collection name for vector indexing and retrieval. |
 
 ## 5. RESTful 对齐原则
 
@@ -306,28 +327,19 @@ Knowledge 相关公开契约已进入 gateway OpenAPI。后续接入实现按以
 
 1. 以 `docs/api/gateway.openapi.yaml` 的 active knowledge operations 作为前端稳定契约。
 2. 明确 `POST /api/v1/knowledge-bases/{knowledgeBaseId}/documents` 的 file -> knowledge 内部 handoff。
-3. 在 `services/knowledge/api/openapi.yaml` 中逐步补充服务本地 `/internal/v1/**` 接口。
+3. `services/knowledge/api/openapi.yaml` 维护服务本地 `/internal/v1/**` 接口，不作为 browser-facing 契约。
 4. Gateway 只做路由、鉴权上下文传递和 envelope 归一化，不实现解析、切片、Qdrant 检索。
 5. 前端只消费 gateway active OpenAPI，不直接调用 `services/knowledge`。
 6. 用契约测试逐项校验 Knowledge Service 响应字段与 gateway schema 的差异。
 
 ## 12. 当前验收口径
 
-当前 Go baseline 验收：
+当前 Go service-local 验收：
 
 - `go test ./...` 通过。
 - `go build ./cmd/server` 通过。
 - Docker image 能 build。
 - `docker compose config --quiet` 通过。
-- `GET /healthz` 和 `GET /readyz` 返回统一 envelope。
-- README、service-local OpenAPI 和本实现说明不再保留 Python/FastAPI 原型运行入口。
-
-后续业务能力验收：
-
-- KnowledgeBase metadata CRUD。
-- File -> Knowledge handoff。
-- ProcessingJob 状态。
-- Document chunks。
-- Qdrant indexing。
-- `POST /api/v1/knowledge-queries` retrieval。
-- Gateway 代理实现、契约测试和前端类型生成。
+- `GET /healthz`、`GET /readyz` 和 `/internal/v1/**` 返回统一 envelope。
+- KnowledgeBase metadata CRUD、File handoff、ProcessingJob 状态、Document chunks、Qdrant/memory vector indexing、`knowledge-queries` retrieval 和内部 admin endpoints 已有 service-local tests。
+- Gateway 代理实现、契约测试和前端类型生成不属于当前 `services/knowledge` owner 范围，需由 gateway owner 接入。

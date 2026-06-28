@@ -14,24 +14,37 @@ Implemented now:
 
 - `GET /healthz`
 - `GET /readyz`
+- `GET /internal/v1/knowledge-bases`
+- `POST /internal/v1/knowledge-bases`
+- `GET /internal/v1/knowledge-bases/{knowledgeBaseId}`
+- `PATCH /internal/v1/knowledge-bases/{knowledgeBaseId}`
+- `DELETE /internal/v1/knowledge-bases/{knowledgeBaseId}`
+- `GET /internal/v1/knowledge-bases/{knowledgeBaseId}/documents`
+- `POST /internal/v1/knowledge-bases/{knowledgeBaseId}/ingestion-jobs`
+- `POST /internal/v1/knowledge-bases/{knowledgeBaseId}/jobs`
+- `GET /internal/v1/documents/{documentId}`
+- `GET /internal/v1/documents/{documentId}/chunks`
+- `GET /internal/v1/jobs/{jobId}`
+- `POST /internal/v1/jobs/{jobId}/processing-runs`
+- `POST /internal/v1/knowledge-queries`
+- `GET /internal/v1/runtime-config`
+- `PATCH /internal/v1/runtime-config`
+- `GET /internal/v1/knowledge-stats`
 - Go service-local module, HTTP server, configuration loading, response
-  envelope, error envelope, tests, Dockerfile, and service-local OpenAPI
-  baseline.
+  envelope, error envelope, memory/PostgreSQL repositories, parser/chunker,
+  embedding/vector adapters, tests, Dockerfile, and service-local OpenAPI.
 
 Next migration slices:
 
-- Knowledge base metadata and DTO alignment.
-- Document processing state, chunks, and ingestion jobs.
-- File -> Knowledge handoff.
-- Qdrant-backed `knowledge-queries` retrieval.
-- Gateway proxy and contract tests.
+- Real asynchronous worker/queue execution for ingestion and reprocessing.
+- Production embedding provider adapter and rerank provider adapter.
+- File service handoff integration after upload.
+- Gateway exposure for selected P1 admin endpoints after public OpenAPI review.
 
 Out of scope for this baseline:
 
-- PostgreSQL persistence.
-- Qdrant writes and retrieval.
 - File upload ownership.
-- Public frontend routing through gateway.
+- Public frontend exposure for internal runtime config/statistics endpoints.
 
 ## Local Run
 
@@ -56,12 +69,15 @@ curl http://localhost:8000/readyz
 | `KNOWLEDGE_HTTP_ADDR` | `:8000` | HTTP listen address. |
 | `KNOWLEDGE_SERVICE_VERSION` | `0.3.0` | Service version shown by readiness. |
 | `KNOWLEDGE_ENV` | `local` | Runtime environment label. |
-| `KNOWLEDGE_STORAGE_BACKEND` | `memory` | Baseline metadata/storage backend. Only `memory` is implemented now. |
+| `KNOWLEDGE_STORAGE_BACKEND` | `memory` | Metadata backend. Supported values: `memory`, `postgres`. |
+| `DATABASE_URL` | unset | PostgreSQL connection string required when `KNOWLEDGE_STORAGE_BACKEND=postgres`. |
+| `FILE_SERVICE_BASE_URL` | unset | Optional File Service base URL used by ingestion pipeline source reads. |
 | `KNOWLEDGE_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 | `EMBEDDING_PROVIDER` | `local_hashing` | Embedding provider label for readiness and future pipeline wiring. |
 | `EMBEDDING_MODEL` | `local_hashing` | Embedding model label. |
 | `EMBEDDING_DIMENSION` | `384` | Embedding vector dimension. |
-| `QDRANT_COLLECTION` | `knowledge_chunks` | Qdrant collection name for future retrieval slices. |
+| `QDRANT_URL` | unset | Optional Qdrant REST base URL. When unset, the service uses an in-memory vector index for local tests. |
+| `QDRANT_COLLECTION` | `knowledge_chunks` | Qdrant collection name for vector indexing and retrieval. |
 
 ## Response Shape
 
@@ -106,3 +122,28 @@ Gateway active public Knowledge operations remain:
 Service-to-service implementation routes will live under `/internal/v1/**` as
 they are migrated. Do not revive older `/api/v1/knowledge/...` or action-suffix
 paths such as `:retry` as stable public API.
+
+## Internal Knowledge Base API
+
+Business routes require gateway-injected user context:
+
+```text
+X-User-Id: usr_123
+X-Request-Id: req_123
+```
+
+Create a knowledge base:
+
+```bash
+curl -X POST http://localhost:8000/internal/v1/knowledge-bases \
+  -H 'Content-Type: application/json' \
+  -H 'X-User-Id: usr_123' \
+  -d '{"name":"General","docType":"GENERAL"}'
+```
+
+List knowledge bases:
+
+```bash
+curl 'http://localhost:8000/internal/v1/knowledge-bases?page=1&pageSize=20&keyword=general&docType=GENERAL' \
+  -H 'X-User-Id: usr_123'
+```

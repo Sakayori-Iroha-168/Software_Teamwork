@@ -13,9 +13,13 @@ const (
 	DefaultServiceVersion     = "0.3.0"
 	DefaultEnvironment        = "local"
 	DefaultStorageBackend     = "memory"
+	DefaultDatabaseURL        = ""
+	DefaultFileServiceBaseURL = ""
 	DefaultEmbeddingProvider  = "local_hashing"
 	DefaultEmbeddingModel     = "local_hashing"
 	DefaultEmbeddingDimension = 384
+	DefaultQdrantURL          = ""
+	DefaultQdrantAPIKey       = ""
 	DefaultQdrantCollection   = "knowledge_chunks"
 	DefaultShutdownTimeout    = 10 * time.Second
 )
@@ -25,9 +29,13 @@ type Config struct {
 	ServiceVersion     string
 	Environment        string
 	StorageBackend     string
+	DatabaseURL        string
+	FileServiceBaseURL string
 	EmbeddingProvider  string
 	EmbeddingModel     string
 	EmbeddingDimension int
+	QdrantURL          string
+	QdrantAPIKey       string
 	QdrantCollection   string
 	ShutdownTimeout    time.Duration
 }
@@ -38,9 +46,13 @@ func Load() (Config, error) {
 		ServiceVersion:     stringValue("KNOWLEDGE_SERVICE_VERSION", DefaultServiceVersion),
 		Environment:        stringValue("KNOWLEDGE_ENV", DefaultEnvironment),
 		StorageBackend:     stringValue("KNOWLEDGE_STORAGE_BACKEND", DefaultStorageBackend),
+		DatabaseURL:        stringValue("DATABASE_URL", DefaultDatabaseURL),
+		FileServiceBaseURL: stringValue("FILE_SERVICE_BASE_URL", DefaultFileServiceBaseURL),
 		EmbeddingProvider:  stringValue("EMBEDDING_PROVIDER", DefaultEmbeddingProvider),
 		EmbeddingModel:     stringValue("EMBEDDING_MODEL", DefaultEmbeddingModel),
 		EmbeddingDimension: DefaultEmbeddingDimension,
+		QdrantURL:          strings.TrimRight(stringValue("QDRANT_URL", DefaultQdrantURL), "/"),
+		QdrantAPIKey:       stringValue("QDRANT_API_KEY", DefaultQdrantAPIKey),
 		QdrantCollection:   stringValue("QDRANT_COLLECTION", DefaultQdrantCollection),
 		ShutdownTimeout:    DefaultShutdownTimeout,
 	}
@@ -67,8 +79,14 @@ func Load() (Config, error) {
 	if strings.TrimSpace(cfg.QdrantCollection) == "" {
 		return Config{}, fmt.Errorf("QDRANT_COLLECTION must not be empty")
 	}
-	if cfg.StorageBackend != "memory" {
-		return Config{}, fmt.Errorf("KNOWLEDGE_STORAGE_BACKEND=%q is not implemented; supported value: memory", cfg.StorageBackend)
+	switch cfg.StorageBackend {
+	case "memory":
+	case "postgres":
+		if strings.TrimSpace(cfg.DatabaseURL) == "" {
+			return Config{}, fmt.Errorf("DATABASE_URL must not be empty when KNOWLEDGE_STORAGE_BACKEND=postgres")
+		}
+	default:
+		return Config{}, fmt.Errorf("KNOWLEDGE_STORAGE_BACKEND=%q is not implemented; supported values: memory, postgres", cfg.StorageBackend)
 	}
 
 	return cfg, nil

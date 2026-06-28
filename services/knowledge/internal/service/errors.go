@@ -15,7 +15,10 @@ const (
 	CodeInternal     Code = "internal_error"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound = errors.New("not found")
+	ErrConflict = errors.New("conflict")
+)
 
 type AppError struct {
 	Code    Code
@@ -44,8 +47,20 @@ func UnauthorizedError() *AppError {
 	return &AppError{Code: CodeUnauthorized, Message: "authentication is required"}
 }
 
+func ForbiddenError(message string) *AppError {
+	return &AppError{Code: CodeForbidden, Message: message}
+}
+
 func NotFoundError(message string) *AppError {
 	return &AppError{Code: CodeNotFound, Message: message, Err: ErrNotFound}
+}
+
+func DependencyError(message string, err error) *AppError {
+	return &AppError{Code: CodeDependency, Message: message, Err: err}
+}
+
+func ConflictError(message string, err error) *AppError {
+	return &AppError{Code: CodeConflict, Message: message, Err: err}
 }
 
 func Classify(err error) (*AppError, bool) {
