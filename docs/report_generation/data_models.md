@@ -17,8 +17,10 @@
 - 报告章节内容。
 - 报告模板元数据。
 - 素材元数据。
-- 生成任务。
-- 导出文件记录。
+- 报告任务。
+- 任务尝试记录。
+- 报告事件记录。
+- 报告文件记录。
 - 操作日志。
 - 统计聚合数据或查询视图。
 
@@ -40,14 +42,18 @@ ReportType 1 ── N ReportTemplate
 ReportType 1 ── N Report
 
 ReportTemplate 1 ── N Report
-ReportTemplate N ── N Material
+ReportTemplate N ── N ReportMaterial
 
-Report 1 ── 1 ReportOutline
+Report 1 ── N ReportOutline
 Report 1 ── N ReportSection
-Report 1 ── N GenerationTask
-Report 1 ── N ExportFile
+ReportSection 1 ── N ReportSectionVersion
+Report 1 ── N ReportJob
+Report 1 ── N ReportFile
+Report 1 ── N ReportEvent
 
-GenerationTask 1 ── N OperationLog
+ReportJob 1 ── N ReportJobAttempt
+ReportJob 1 ── N ReportEvent
+ReportJob 1 ── N OperationLog
 Report 1 ── N OperationLog
 ```
 
@@ -59,10 +65,12 @@ Report 1 ── N OperationLog
 | `created_at` | 创建时间 |
 | `updated_at` | 更新时间 |
 | `deleted_at` | 软删除时间，可选 |
-| `created_by` | 创建人标识，可由调用方传入 |
-| `updated_by` | 更新人标识，可由调用方传入 |
+| `created_by` | 创建人标识，优先来自 gateway 注入的用户上下文或 MCP 调用上下文 |
+| `updated_by` | 更新人标识，优先来自 gateway 注入的用户上下文或 MCP 调用上下文 |
 
 本模块不做用户认证，用户相关字段只用于记录来源和追溯。
+数据库字段使用 snake_case；公开 API 字段映射为 camelCase，并以 `docs/api/gateway.openapi.yaml` 为准。
+当数据库内部字段和公开 API 字段不是简单大小写转换时，应在实体说明中显式写明映射关系。
 
 ## 5. 核心实体
 
@@ -104,13 +112,20 @@ Report 1 ── N OperationLog
 | `creator_id` | string | 创建人标识 |
 | `creator_name` | string | 创建人名称 |
 | `source` | string | 来源，例如 `frontend`、`admin`、`mcp`、`backend` |
-| `latest_generation_task_id` | uuid | 最新生成任务 |
-| `latest_export_file_id` | uuid | 最新导出文件 |
+| `latest_job_id` | uuid | 最新报告任务 |
+| `latest_report_file_id` | uuid | 最新报告文件 |
 | `generated_at` | datetime | 正文生成完成时间 |
 | `exported_at` | datetime | 最近导出完成时间 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
 | `deleted_at` | datetime | 软删除时间 |
+
+公开 API 字段映射：
+
+| 数据库字段 | 公开 API 字段 |
+|---|---|
+| `report_name` | `name` |
+| `plant_or_business_object` | `businessObject` |
 
 状态枚举建议：
 
@@ -136,7 +151,7 @@ Report 1 ── N OperationLog
 | `report_id` | uuid | 所属报告 |
 | `outline_json` | json | 多级大纲树 |
 | `version` | int | 大纲版本 |
-| `source_task_id` | uuid | 生成或重新生成任务 ID |
+| `source_job_id` | uuid | 生成或重新生成任务 ID |
 | `manual_edited` | boolean | 是否发生过手工编辑 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
@@ -168,7 +183,7 @@ Report 1 ── N OperationLog
 | `content_source` | string | 内容来源 |
 | `manual_edited` | boolean | 是否手工编辑 |
 | `version` | int | 内容版本 |
-| `last_generation_task_id` | uuid | 最近生成或重新生成任务 |
+| `last_job_id` | uuid | 最近生成或重新生成任务 |
 | `generated_at` | datetime | 生成时间 |
 | `created_at` | datetime | 创建时间 |
 | `updated_at` | datetime | 更新时间 |
@@ -190,7 +205,30 @@ Report 1 ── N OperationLog
 | `manual` | 手工编辑 |
 | `mixed` | AI 生成后手工编辑 |
 
-### 5.5 ReportTemplate
+### 5.5 ReportSectionVersion
+
+报告章节版本，用于保存手工编辑版本、AI 重新生成版本和后续可能的版本追溯。
+
+| 字段 | 类型建议 | 说明 |
+|---|---|---|
+| `id` | uuid | 章节版本 ID |
+| `report_id` | uuid | 所属报告 |
+| `section_id` | uuid | 所属章节 |
+| `version` | int | 版本号 |
+| `source` | string | 版本来源，例如 `manual`、`ai` |
+| `content` | text | 该版本正文内容 |
+| `tables_json` | json | 该版本表格内容 |
+| `job_id` | uuid | 产出该版本的任务 ID，可空 |
+| `requirements` | text | 本次生成或编辑要求摘要，可空 |
+| `created_by` | string | 创建人或工具调用来源 |
+| `created_at` | datetime | 创建时间 |
+
+说明：
+
+- AI 重新生成指定章节时，应创建新的 `ReportSectionVersion`。
+- 当前生效版本可以通过 `ReportSection.version` 或后续实现中的 `current_version_id` 关联。
+
+### 5.6 ReportTemplate
 
 报告模板。
 
@@ -201,6 +239,8 @@ Report 1 ── N OperationLog
 | `report_type` | string | 绑定报告类型 |
 | `version` | int | 模板版本 |
 | `file_object_key` | string | MinIO 模板文件对象引用 |
+| `file_name` | string | 原始模板文件名 |
+| `file_size` | int64 | 模板文件大小 |
 | `structure_json` | json | 大纲结构配置 |
 | `style_config_json` | json | DOCX 样式配置 |
 | `description` | string | 描述 |
@@ -210,7 +250,7 @@ Report 1 ── N OperationLog
 | `updated_at` | datetime | 更新时间 |
 | `deleted_at` | datetime | 删除时间 |
 
-### 5.6 Material
+### 5.7 ReportMaterial
 
 专业素材。
 
@@ -221,6 +261,8 @@ Report 1 ── N OperationLog
 | `material_type` | string | 文件类型 |
 | `category` | string | 分类 |
 | `file_object_key` | string | MinIO 素材文件对象引用 |
+| `file_name` | string | 原始素材文件名 |
+| `file_size` | int64 | 素材文件大小 |
 | `description` | string | 描述 |
 | `tags_json` | json | 标签 |
 | `enabled` | boolean | 是否启用 |
@@ -229,7 +271,7 @@ Report 1 ── N OperationLog
 | `updated_at` | datetime | 更新时间 |
 | `deleted_at` | datetime | 删除时间 |
 
-### 5.7 TemplateMaterialLink
+### 5.8 TemplateMaterialLink
 
 模板与素材的关联关系。
 
@@ -243,16 +285,16 @@ Report 1 ── N OperationLog
 
 ## 6. 任务与文件实体
 
-### 6.1 GenerationTask
+### 6.1 ReportJob
 
-生成任务记录，覆盖生成和重新生成。
+报告任务记录，覆盖生成、重新生成和文件创建等长任务。任务重试或重新执行应通过 `ReportJobAttempt` 记录。
 
 | 字段 | 类型建议 | 说明 |
 |---|---|---|
 | `id` | uuid | 任务 ID |
 | `request_id` | string | 请求标识 |
 | `source` | string | 来源，例如 `api`、`mcp` |
-| `task_type` | string | 任务类型 |
+| `job_type` | string | 任务类型 |
 | `target_type` | string | 目标类型 |
 | `target_id` | string | 目标 ID |
 | `report_id` | uuid | 报告 ID |
@@ -270,14 +312,14 @@ Report 1 ── N OperationLog
 
 任务类型枚举建议：
 
-| task_type | 说明 |
+| job_type | 说明 |
 |---|---|
-| `generate_outline` | 首次生成大纲 |
-| `regenerate_outline` | 重新生成大纲 |
-| `generate_content` | 首次生成完整正文 |
-| `regenerate_content` | 重新生成完整正文 |
-| `regenerate_section` | 重新生成指定章节 |
-| `export_docx` | 导出 DOCX |
+| `outline_generation` | 首次生成大纲 |
+| `outline_regeneration` | 重新生成大纲 |
+| `content_generation` | 首次生成完整正文 |
+| `content_regeneration` | 重新生成完整正文 |
+| `section_regeneration` | 重新生成指定章节 |
+| `report_file_creation` | 创建报告文件 |
 
 任务状态枚举建议：
 
@@ -290,33 +332,84 @@ Report 1 ── N OperationLog
 | `failed` | 失败 |
 | `canceled` | 已取消 |
 
-### 6.2 ExportFile
+### 6.2 ReportJobAttempt
 
-导出文件记录。
+任务尝试记录，用于保留失败任务重试、人工重新触发或系统恢复执行的历史。
 
 | 字段 | 类型建议 | 说明 |
 |---|---|---|
-| `id` | uuid | 导出文件 ID |
+| `id` | uuid | 尝试记录 ID |
+| `job_id` | uuid | 所属任务 ID |
+| `attempt_number` | int | 第几次尝试，从 1 开始 |
+| `trigger_source` | string | 触发来源，例如 `api`、`mcp`、`system` |
+| `reason` | string | 触发原因或备注 |
+| `request_payload_json` | json | 本次尝试请求快照 |
+| `status` | string | 本次尝试状态 |
+| `error_code` | string | 错误码 |
+| `error_message` | string | 错误信息 |
+| `started_at` | datetime | 开始时间 |
+| `finished_at` | datetime | 结束时间 |
+| `created_at` | datetime | 创建时间 |
+
+说明：
+
+- `POST /api/v1/report-jobs/{jobId}/attempts` 应创建新的 `ReportJobAttempt`。
+- 原 `ReportJob` 不应被删除或覆盖，便于审计失败原因和重试历史。
+
+### 6.3 ReportEvent
+
+报告事件记录，用于支撑 `GET /api/v1/reports/{reportId}/events` 的轮询进度、状态变化和审计信息。
+
+| 字段 | 类型建议 | 说明 |
+|---|---|---|
+| `id` | uuid | 事件 ID |
+| `report_id` | uuid | 所属报告 |
+| `job_id` | uuid | 关联任务 ID，可空 |
+| `event_type` | string | 事件类型 |
+| `message` | string | 事件说明 |
+| `payload_json` | json | 事件附加数据 |
+| `created_at` | datetime | 创建时间 |
+
+说明：
+
+- 事件用于对外展示进度和状态，不应包含 prompt、MinIO object key、内部 URL 或敏感配置。
+- 稳定 SSE 契约未确定前，事件模型先支撑列表轮询。
+
+### 6.4 ReportFile
+
+报告文件记录。
+
+| 字段 | 类型建议 | 说明 |
+|---|---|---|
+| `id` | uuid | 报告文件 ID |
 | `report_id` | uuid | 报告 ID |
-| `generation_task_id` | uuid | 导出任务 ID |
+| `job_id` | uuid | 文件创建任务 ID |
 | `file_name` | string | 文件名 |
 | `file_type` | string | 文件类型，例如 `docx` |
 | `object_key` | string | MinIO 对象引用 |
 | `file_size` | int64 | 文件大小 |
-| `export_status` | string | 导出状态 |
+| `file_status` | string | 文件状态 |
 | `created_by` | string | 创建人 |
 | `created_at` | datetime | 创建时间 |
 
-导出状态枚举建议：
+公开 API 字段映射：
 
-| export_status | 说明 |
+| 数据库字段 | 公开 API 字段 |
 |---|---|
-| `pending` | 待导出 |
-| `running` | 导出中 |
-| `succeeded` | 导出成功 |
-| `failed` | 导出失败 |
+| `file_type` | `format` |
+| `file_status` | `status` |
+| `object_key` | 不返回；公开接口返回 `id`、`contentPath` 或通过 content 接口获取文件内容 |
 
-### 6.3 OperationLog
+文件状态枚举建议：
+
+| file_status | 说明 |
+|---|---|
+| `pending` | 待创建 |
+| `running` | 创建中 |
+| `succeeded` | 创建成功 |
+| `failed` | 创建失败 |
+
+### 6.5 OperationLog
 
 操作日志。
 
@@ -328,23 +421,37 @@ Report 1 ── N OperationLog
 | `operation_type` | string | 操作类型 |
 | `target_type` | string | 目标类型 |
 | `target_id` | string | 目标 ID |
+| `request_id` | string | 请求链路 ID |
 | `request_source` | string | 请求来源 |
+| `tool_name` | string | MCP 工具名，可空 |
+| `parameter_summary_json` | json | MCP 或接口调用参数摘要，可空 |
 | `operation_result` | string | 操作结果 |
 | `error_message` | string | 错误信息 |
+| `metadata_json` | json | 其他审计扩展信息 |
 | `created_at` | datetime | 创建时间 |
+
+公开 API 字段映射：
+
+| 数据库字段 | 公开 API 字段 |
+|---|---|
+| `request_id` | `requestId` |
+| `request_source` | `requestSource` |
+| `tool_name` | `toolName` |
+| `parameter_summary_json` | `parameterSummary` |
+| `metadata_json` | `metadata` |
 
 操作类型建议：
 
 - `create_report`
 - `update_report`
-- `generate_outline`
-- `regenerate_outline`
+- `outline_generation`
+- `outline_regeneration`
 - `save_outline`
-- `generate_content`
-- `regenerate_content`
-- `regenerate_section`
+- `content_generation`
+- `content_regeneration`
+- `section_regeneration`
 - `update_section`
-- `export_docx`
+- `report_file_creation`
 - `upload_template`
 - `update_template`
 - `upload_material`
@@ -376,10 +483,14 @@ Report 1 ── N OperationLog
 - `Report.report_type` 必须是支持的报告类型。
 - `Report.template_id` 应引用启用状态的模板。
 - `ReportOutline.report_id` 与 `ReportSection.report_id` 必须属于同一报告。
-- AI 重新生成必须创建新的 `GenerationTask`。
+- AI 重新生成必须创建新的 `ReportJob`。
+- 任务重试必须创建新的 `ReportJobAttempt`，不得覆盖原任务失败记录。
+- AI 重新生成指定章节时必须创建新的 `ReportSectionVersion`，并更新 `ReportSection.version` 或当前版本引用。
+- `ReportEvent` 只保存可对外展示的进度和状态摘要，不得保存 prompt、内部 URL、MinIO object key 或敏感配置。
 - 重新生成不得删除报告基础信息。
-- 重新生成正文或章节时，应更新对应章节的 `last_generation_task_id`。
+- 重新生成正文或章节时，应更新对应章节的 `last_job_id`。
 - 删除模板时，如果已有报告使用该模板，建议只允许停用或软删除。
 - 删除素材时，如果已有任务引用该素材，建议只允许软删除。
 - 导出文件的 `object_key` 必须能在 MinIO 中定位文件。
+- `file_object_key` 和 `object_key` 只作为服务内部存储引用，不得作为公开 API 字段返回；公开接口应返回文件 ID 或 content 接口路径。
 - 操作日志不得记录密钥、完整下载签名等敏感信息。

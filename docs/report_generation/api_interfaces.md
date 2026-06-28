@@ -1,125 +1,195 @@
-# 报告生成后端接口文档
+# 报告生成接口文档
 
 ## 1. 文档说明
 
-本文定义报告生成模块需要提供的后端接口能力。接口用于支撑大项目前端、管理端、其他后端模块和 MCP 工具调用。
+本文定义报告生成能力的公开 RESTful API 契约，用于约束 `document` 服务与 gateway 的前后端协作。
 
-本模块不负责用户认证、角色权限校验和前端页面。调用方应在调用本模块前完成认证和权限控制。本模块只记录调用方传入的操作者信息和请求来源。
+根据当前主仓库接口规范，稳定公开接口以 `docs/api/gateway.openapi.yaml` 为准。本文中的报告生成路径已经同步进入 gateway OpenAPI active paths，owner service 为 `document`。后续如果新增、删除或修改任一公开接口，必须同步更新：
 
-## 2. 通用约定
+- `docs/api/gateway.openapi.yaml`
+- `docs/frontend-backend-contract.md`
+- `docs/service-boundaries.md`
+- 本文档
+
+本文用于解释报告生成接口的业务语义和使用方式；字段、响应 envelope、错误结构与可依赖路径以 gateway OpenAPI 为最终准绳。
+
+## 2. 接口设计原则
 
 ### 2.1 Base Path
 
-建议基础路径：
+公开接口统一挂在 gateway：
 
 ```text
-/api/v1/report-generation
+/api/v1
 ```
 
-### 2.2 通用请求头
+前端、管理端、其他后端模块和 MCP 工具的 HTTP 调用都只调用 gateway，不直接调用 `document` 服务内部地址。
+
+### 2.2 RESTful 资源路径
+
+公开接口必须使用 RESTful 资源路径，由 HTTP method 表达动作。
+
+禁止在稳定 path 中使用以下动作词：
+
+- `generate`
+- `regenerate`
+- `export`
+- `retry`
+- `download`
+
+报告生成中的“生成、重新生成、导出、重试”统一建模为资源创建：
+
+| 业务动作 | RESTful 建模 |
+|---|---|
+| 生成或重新生成大纲 | `POST /api/v1/reports/{reportId}/jobs`，`jobType=outline_generation` 或 `outline_regeneration` |
+| 生成或重新生成正文 | `POST /api/v1/reports/{reportId}/jobs`，`jobType=content_generation` 或 `content_regeneration` |
+| 重新生成指定章节 | `POST /api/v1/reports/{reportId}/sections/{sectionId}/versions` |
+| 重试失败任务 | `POST /api/v1/report-jobs/{jobId}/attempts` |
+| 导出 DOCX | `POST /api/v1/report-files` |
+| 获取导出文件内容 | `GET /api/v1/report-files/{reportFileId}/content` |
+
+### 2.3 认证与上下文边界
+
+本模块自身不实现用户认证、登录、角色权限系统。
+
+公开 gateway 业务接口默认需要 `Authorization: Bearer <accessToken>`。Gateway 负责认证并向 `document` 服务传递上下文。
+
+前端可传递：
 
 | Header | 必填 | 说明 |
 |---|---:|---|
-| `X-Request-Id` | 否 | 调用方请求链路 ID，不传时由服务端生成 |
-| `X-Operator-Id` | 否 | 操作者 ID，仅用于记录 |
-| `X-Operator-Name` | 否 | 操作者名称，仅用于记录 |
-| `X-Request-Source` | 否 | 请求来源，例如 `frontend`、`admin`、`mcp`、`backend` |
+| `Authorization` | 是 | gateway 认证凭据，本文档中的业务接口默认需要 |
+| `X-Request-Id` | 否 | 调用方请求链路 ID，不传时由 gateway 生成 |
 
-### 2.3 通用响应结构
+Gateway 调用 `document` 服务时应传递：
 
-```json
-{
-  "code": "ok",
-  "message": "success",
-  "data": {},
-  "request_id": "req-uuid"
-}
-```
-
-### 2.4 通用错误结构
-
-```json
-{
-  "code": "validation_error",
-  "message": "report_type is required",
-  "details": {
-    "field": "report_type"
-  },
-  "request_id": "req-uuid"
-}
-```
-
-### 2.5 常用错误码
-
-| code | 说明 |
+| Header | 说明 |
 |---|---|
-| `validation_error` | 请求参数不合法 |
-| `not_found` | 资源不存在 |
-| `conflict` | 当前状态不允许执行该操作 |
-| `generation_failed` | AI 生成失败 |
-| `export_failed` | DOCX 导出失败 |
-| `storage_error` | 数据库或 MinIO 存储失败 |
-| `internal_error` | 未分类服务端错误 |
+| `X-Request-Id` | 贯穿一次请求的 request id |
+| `X-User-Id` | 已认证用户 ID |
+| `X-User-Roles` | 逗号分隔角色 |
+| `X-User-Permissions` | 逗号分隔权限 |
+| `X-Forwarded-For` | 原始客户端地址链 |
+| `X-Forwarded-Proto` | 原始请求协议 |
 
-### 2.6 接口总览表
+`document` 服务只消费上述上下文用于审计、权限判断和追踪，不负责登录态创建。
 
-下表中的路径均相对于 Base Path `/api/v1/report-generation`。
+### 2.4 成功响应
 
-| 分组 | 方法 | 路径 | 说明 |
-|---|---|---|---|
-| 报告类型 | `GET` | `/report-types` | 查询支持的报告类型列表 |
-| 报告类型 | `GET` | `/report-types/{report_type}/templates` | 查询指定报告类型可用模板 |
-| 报告 | `POST` | `/reports` | 创建报告草稿 |
-| 报告 | `GET` | `/reports/{report_id}` | 查询报告详情 |
-| 报告 | `PATCH` | `/reports/{report_id}` | 更新报告基础信息 |
-| 报告 | `DELETE` | `/reports/{report_id}` | 删除报告记录 |
-| 报告 | `GET` | `/reports` | 分页查询报告记录 |
-| 大纲 | `POST` | `/reports/{report_id}/outline/generate` | 生成报告大纲 |
-| 大纲 | `POST` | `/reports/{report_id}/outline/regenerate` | AI 重新生成报告大纲 |
-| 大纲 | `GET` | `/reports/{report_id}/outline` | 查询报告大纲 |
-| 大纲 | `PUT` | `/reports/{report_id}/outline` | 保存完整大纲 |
-| 大纲 | `PATCH` | `/reports/{report_id}/outline/sections/{section_id}` | 调整大纲章节 |
-| 大纲 | `DELETE` | `/reports/{report_id}/outline/sections/{section_id}` | 删除大纲章节 |
-| 大纲 | `POST` | `/reports/{report_id}/outline/renumber` | 对大纲重新编号 |
-| 正文 | `POST` | `/reports/{report_id}/content/generate` | 生成完整正文 |
-| 正文 | `POST` | `/reports/{report_id}/content/regenerate` | AI 重新生成完整正文 |
-| 正文 | `POST` | `/reports/{report_id}/sections/{section_id}/regenerate` | AI 重新生成指定章节 |
-| 正文 | `GET` | `/reports/{report_id}/sections` | 查询章节内容 |
-| 正文 | `PATCH` | `/reports/{report_id}/sections/{section_id}` | 更新章节正文或表格 |
-| 生成任务 | `GET` | `/generation-tasks/{task_id}` | 查询生成任务状态 |
-| 生成任务 | `GET` | `/reports/{report_id}/generation-tasks` | 查询报告生成任务列表 |
-| 生成任务 | `POST` | `/generation-tasks/{task_id}/retry` | 重试失败任务 |
-| 导出 | `POST` | `/reports/{report_id}/exports` | 创建 DOCX 导出任务 |
-| 导出 | `GET` | `/exports/{export_file_id}` | 查询导出状态 |
-| 导出 | `GET` | `/exports/{export_file_id}/file` | 获取导出文件引用 |
-| 模板 | `POST` | `/templates` | 上传报告模板 |
-| 模板 | `GET` | `/templates` | 查询模板列表 |
-| 模板 | `GET` | `/templates/{template_id}` | 查询模板详情 |
-| 模板 | `PATCH` | `/templates/{template_id}` | 更新模板元数据 |
-| 模板 | `DELETE` | `/templates/{template_id}` | 删除模板 |
-| 模板 | `GET` | `/templates/{template_id}/structure` | 查询模板结构 |
-| 模板 | `PUT` | `/templates/{template_id}/structure` | 保存模板结构 |
-| 素材 | `POST` | `/materials` | 上传素材 |
-| 素材 | `GET` | `/materials` | 查询素材列表 |
-| 素材 | `GET` | `/materials/{material_id}` | 查询素材详情 |
-| 素材 | `DELETE` | `/materials/{material_id}` | 删除素材 |
-| 统计与日志 | `GET` | `/statistics/overview` | 查询统计概览 |
-| 统计与日志 | `GET` | `/statistics/report-generation-trend` | 查询近 30 天生成趋势 |
-| 统计与日志 | `GET` | `/operation-logs` | 查询操作日志 |
+单资源响应：
 
-## 3. 报告类型接口
+```json
+{
+  "data": {
+    "id": "rep_123"
+  },
+  "requestId": "req_123"
+}
+```
 
-### 3.1 查询报告类型列表
+分页响应：
+
+```json
+{
+  "data": [],
+  "page": {
+    "page": 1,
+    "pageSize": 20,
+    "total": 0
+  },
+  "requestId": "req_123"
+}
+```
+
+### 2.5 错误响应
+
+```json
+{
+  "error": {
+    "code": "validation_error",
+    "message": "request validation failed",
+    "requestId": "req_123",
+    "fields": {
+      "reportType": "is required"
+    }
+  }
+}
+```
+
+| HTTP status | code | 说明 |
+|---:|---|---|
+| 400 | `validation_error` | 请求参数不合法 |
+| 401 | `unauthorized` | 未认证或认证失效 |
+| 403 | `forbidden` | 已认证但权限不足 |
+| 404 | `not_found` | 资源不存在或不可见 |
+| 409 | `conflict` | 当前状态不允许执行该操作 |
+| 429 | `rate_limited` | 频率或额度限制 |
+| 502 | `dependency_error` | AI、数据库、MinIO 或下游依赖失败 |
+| 500 | `internal_error` | 未分类服务端错误 |
+
+AI 生成失败、导出失败等长任务失败优先体现在 `ReportJob.status=failed` 和 `ReportJob.error` 中；只有同步创建任务失败时才直接返回错误响应。
+
+## 3. 接口总览表
+
+下表为报告生成公开接口草案，路径均相对于 gateway `/api/v1`。
+
+| 分组 | 方法 | 路径 | Auth | Owner | 说明 |
+|---|---|---|---|---|---|
+| 报告类型 | `GET` | `/report-types` | 需要 | `document` | 查询支持的报告类型 |
+| 报告模板 | `GET` | `/report-templates` | 需要 | `document` | 查询模板列表 |
+| 报告模板 | `POST` | `/report-templates` | 需要 | `document` | 上传模板 |
+| 报告模板 | `GET` | `/report-templates/{reportTemplateId}` | 需要 | `document` | 查询模板详情 |
+| 报告模板 | `PATCH` | `/report-templates/{reportTemplateId}` | 需要 | `document` | 更新模板元数据 |
+| 报告模板 | `DELETE` | `/report-templates/{reportTemplateId}` | 需要 | `document` | 删除或停用模板 |
+| 报告模板 | `GET` | `/report-templates/{reportTemplateId}/structure` | 需要 | `document` | 查询模板结构 |
+| 报告模板 | `PATCH` | `/report-templates/{reportTemplateId}/structure` | 需要 | `document` | 保存模板结构 |
+| 报告素材 | `GET` | `/report-materials` | 需要 | `document` | 查询素材列表 |
+| 报告素材 | `POST` | `/report-materials` | 需要 | `document` | 上传素材 |
+| 报告素材 | `GET` | `/report-materials/{materialId}` | 需要 | `document` | 查询素材详情 |
+| 报告素材 | `DELETE` | `/report-materials/{materialId}` | 需要 | `document` | 删除素材 |
+| 报告 | `GET` | `/reports` | 需要 | `document` | 分页查询报告记录 |
+| 报告 | `POST` | `/reports` | 需要 | `document` | 创建报告草稿 |
+| 报告 | `GET` | `/reports/{reportId}` | 需要 | `document` | 查询报告详情 |
+| 报告 | `PATCH` | `/reports/{reportId}` | 需要 | `document` | 更新报告基础信息 |
+| 报告 | `DELETE` | `/reports/{reportId}` | 需要 | `document` | 删除报告记录 |
+| 大纲 | `GET` | `/reports/{reportId}/outlines` | 需要 | `document` | 查询报告大纲版本 |
+| 大纲 | `POST` | `/reports/{reportId}/outlines` | 需要 | `document` | 创建或保存大纲版本 |
+| 大纲 | `GET` | `/reports/{reportId}/outlines/{outlineId}` | 需要 | `document` | 查询指定大纲 |
+| 大纲 | `PATCH` | `/reports/{reportId}/outlines/{outlineId}` | 需要 | `document` | 编辑大纲内容、排序、编号 |
+| 大纲 | `DELETE` | `/reports/{reportId}/outlines/{outlineId}/sections/{sectionId}` | 需要 | `document` | 删除大纲章节 |
+| 正文 | `GET` | `/reports/{reportId}/sections` | 需要 | `document` | 查询章节内容 |
+| 正文 | `POST` | `/reports/{reportId}/sections` | 需要 | `document` | 创建章节草稿或批量保存章节 |
+| 正文 | `GET` | `/reports/{reportId}/sections/{sectionId}` | 需要 | `document` | 查询指定章节 |
+| 正文 | `PATCH` | `/reports/{reportId}/sections/{sectionId}` | 需要 | `document` | 更新章节正文或表格 |
+| 正文版本 | `GET` | `/reports/{reportId}/sections/{sectionId}/versions` | 需要 | `document` | 查询章节版本 |
+| 正文版本 | `POST` | `/reports/{reportId}/sections/{sectionId}/versions` | 需要 | `document` | 创建章节新版本，可用于 AI 重新生成 |
+| 生成任务 | `GET` | `/report-jobs/{jobId}` | 需要 | `document` | 查询任务状态 |
+| 生成任务 | `GET` | `/reports/{reportId}/jobs` | 需要 | `document` | 查询报告任务列表 |
+| 生成任务 | `POST` | `/reports/{reportId}/jobs` | 需要 | `document` | 创建生成或重新生成任务 |
+| 任务尝试 | `GET` | `/report-jobs/{jobId}/attempts` | 需要 | `document` | 查询任务尝试记录 |
+| 任务尝试 | `POST` | `/report-jobs/{jobId}/attempts` | 需要 | `document` | 创建新的任务尝试，用于重试 |
+| 事件 | `GET` | `/reports/{reportId}/events` | 需要 | `document` | 查询或订阅报告生成事件 |
+| 报告文件 | `GET` | `/report-files` | 需要 | `document` | 查询报告文件列表 |
+| 报告文件 | `POST` | `/report-files` | 需要 | `document` | 创建报告文件，可用于 DOCX 导出 |
+| 报告文件 | `GET` | `/report-files/{reportFileId}` | 需要 | `document` | 查询报告文件元数据 |
+| 报告文件 | `GET` | `/report-files/{reportFileId}/content` | 需要 | `document` | 获取报告文件内容 |
+| 统计 | `GET` | `/report-statistics/overview` | 需要 | `document` | 查询报告统计概览 |
+| 统计 | `GET` | `/report-statistics/daily` | 需要 | `document` | 查询每日生成趋势 |
+| 日志 | `GET` | `/report-operation-logs` | 需要 | `document` | 查询报告相关操作日志 |
+
+## 4. 报告类型与模板
+
+### 4.1 查询报告类型
 
 ```http
-GET /api/v1/report-generation/report-types
+GET /api/v1/report-types
 ```
 
-响应数据：
+响应：
 
 ```json
 {
-  "items": [
+  "data": [
     {
       "code": "summer_peak_inspection",
       "name": "迎峰度夏检查报告",
@@ -132,179 +202,130 @@ GET /api/v1/report-generation/report-types
       "description": "用于煤库存审计场景",
       "enabled": true
     }
-  ]
+  ],
+  "requestId": "req_123"
 }
 ```
 
-### 3.2 查询报告类型可用模板
+### 4.2 查询模板列表
 
 ```http
-GET /api/v1/report-generation/report-types/{report_type}/templates
+GET /api/v1/report-templates?page=1&pageSize=20&reportType=summer_peak_inspection&enabled=true
 ```
 
-响应数据：
+响应使用分页 envelope。
+
+### 4.3 上传模板
+
+```http
+POST /api/v1/report-templates
+```
+
+请求类型：`multipart/form-data`
+
+字段：
+
+- `file`
+- `templateName`
+- `reportType`
+- `description`
+
+### 4.4 查询、更新、删除模板
+
+```http
+GET /api/v1/report-templates/{reportTemplateId}
+PATCH /api/v1/report-templates/{reportTemplateId}
+DELETE /api/v1/report-templates/{reportTemplateId}
+```
+
+### 4.5 查询和保存模板结构
+
+```http
+GET /api/v1/report-templates/{reportTemplateId}/structure
+PATCH /api/v1/report-templates/{reportTemplateId}/structure
+```
+
+模板结构请求体：
 
 ```json
 {
-  "items": [
-    {
-      "template_id": "tpl-uuid",
-      "template_name": "迎峰度夏检查报告默认模板",
-      "version": 1,
-      "enabled": true
-    }
-  ]
+  "outlineSchema": [],
+  "styleConfig": {}
 }
 ```
 
-## 4. 报告接口
+## 5. 报告记录
 
-### 4.1 创建报告草稿
+### 5.1 创建报告草稿
 
 ```http
-POST /api/v1/report-generation/reports
+POST /api/v1/reports
 ```
 
 请求体：
 
 ```json
 {
-  "report_name": "2026年迎峰度夏检查报告",
-  "report_type": "summer_peak_inspection",
-  "template_id": "tpl-uuid",
+  "name": "2026年迎峰度夏检查报告",
+  "reportType": "summer_peak_inspection",
+  "templateId": "tpl_123",
   "topic": "2026年迎峰度夏检查",
   "specialty": "电气",
-  "plant_or_business_object": "某电厂",
+  "businessObject": "某电厂",
   "year": 2026,
-  "extra_context": {
+  "extraContext": {
     "region": "华东",
     "notes": "重点关注设备隐患"
-  },
-  "operator": {
-    "id": "user-001",
-    "name": "张三"
   }
 }
 ```
 
-响应数据：
+响应：
 
 ```json
 {
-  "report_id": "report-uuid",
-  "status": "draft"
+  "data": {
+    "id": "rep_123",
+    "status": "draft"
+  },
+  "requestId": "req_123"
 }
 ```
 
-### 4.2 查询报告详情
+### 5.2 查询报告记录
 
 ```http
-GET /api/v1/report-generation/reports/{report_id}
+GET /api/v1/reports?page=1&pageSize=20&reportType=summer_peak_inspection&status=generated
+GET /api/v1/reports/{reportId}
 ```
 
-响应数据应包含报告基础信息、当前大纲、章节摘要、最新生成任务和最新导出文件引用。
+列表响应使用分页 envelope。详情响应应包含报告基础信息、当前大纲、章节摘要、最新任务和最新报告文件引用。
 
-### 4.3 更新报告基础信息
+### 5.3 更新或删除报告
 
 ```http
-PATCH /api/v1/report-generation/reports/{report_id}
+PATCH /api/v1/reports/{reportId}
+DELETE /api/v1/reports/{reportId}
 ```
 
-请求体可包含创建报告时的任意可编辑字段。
+删除建议默认软删除。物理删除应由后续实现单独确认。
 
-### 4.4 删除报告记录
+## 6. 大纲与正文资源
 
-```http
-DELETE /api/v1/report-generation/reports/{report_id}
-```
-
-建议默认采用软删除。若需要物理删除，应由后续设计明确。
-
-### 4.5 分页查询报告记录
+### 6.1 创建或保存大纲版本
 
 ```http
-GET /api/v1/report-generation/reports?page=1&page_size=20&report_type=summer_peak_inspection&status=generated
-```
-
-支持筛选字段：
-
-- `report_name`
-- `report_type`
-- `year`
-- `status`
-- `creator_id`
-- `created_from`
-- `created_to`
-
-## 5. 大纲接口
-
-### 5.1 生成大纲
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/outline/generate
+POST /api/v1/reports/{reportId}/outlines
 ```
 
 请求体：
 
 ```json
 {
-  "requirements": "请生成适合迎峰度夏检查场景的专业报告大纲",
-  "material_ids": ["mat-uuid"],
-  "save_result": true
-}
-```
-
-响应数据：
-
-```json
-{
-  "task_id": "task-uuid",
-  "request_id": "gen-uuid",
-  "status": "pending"
-}
-```
-
-### 5.2 AI 重新生成大纲
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/outline/regenerate
-```
-
-请求体：
-
-```json
-{
-  "requirements": "按最新补充要求重新生成大纲",
-  "material_ids": ["mat-uuid"],
-  "preserve_manual_edits": false,
-  "save_result": true
-}
-```
-
-说明：
-
-- `preserve_manual_edits = true` 时，服务应尽量保留现有手工编辑章节，并在任务结果中返回保留或冲突说明。
-- 重新生成应创建新的生成任务记录。
-
-### 5.3 查询大纲
-
-```http
-GET /api/v1/report-generation/reports/{report_id}/outline
-```
-
-### 5.4 保存完整大纲
-
-```http
-PUT /api/v1/report-generation/reports/{report_id}/outline
-```
-
-请求体：
-
-```json
-{
-  "outline": [
+  "source": "manual",
+  "sections": [
     {
-      "section_id": "sec-1",
+      "clientSectionId": "sec_client_1",
       "title": "概述",
       "level": 1,
       "numbering": "1",
@@ -314,101 +335,31 @@ PUT /api/v1/report-generation/reports/{report_id}/outline
 }
 ```
 
-### 5.5 调整大纲章节
+说明：
+
+- 手工保存大纲时使用 `source=manual`。
+- AI 生成大纲不使用动作路径，应通过 `POST /reports/{reportId}/jobs` 创建 `outline_generation` 或 `outline_regeneration` 任务，任务完成后产生新的大纲版本。
+
+### 6.2 查询和编辑大纲
 
 ```http
-PATCH /api/v1/report-generation/reports/{report_id}/outline/sections/{section_id}
+GET /api/v1/reports/{reportId}/outlines
+GET /api/v1/reports/{reportId}/outlines/{outlineId}
+PATCH /api/v1/reports/{reportId}/outlines/{outlineId}
+DELETE /api/v1/reports/{reportId}/outlines/{outlineId}/sections/{sectionId}
 ```
 
-支持修改标题、层级、排序等字段。
+`PATCH` 可用于修改标题、层级、排序、编号和章节树。
 
-### 5.6 删除大纲章节
+### 6.3 查询和编辑章节
 
 ```http
-DELETE /api/v1/report-generation/reports/{report_id}/outline/sections/{section_id}
+GET /api/v1/reports/{reportId}/sections
+GET /api/v1/reports/{reportId}/sections/{sectionId}
+PATCH /api/v1/reports/{reportId}/sections/{sectionId}
 ```
 
-### 5.7 重新编号
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/outline/renumber
-```
-
-## 6. 正文接口
-
-### 6.1 生成完整正文
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/content/generate
-```
-
-请求体：
-
-```json
-{
-  "requirements": "请基于当前大纲逐章节生成正文",
-  "material_ids": ["mat-uuid"],
-  "save_result": true
-}
-```
-
-响应数据：
-
-```json
-{
-  "task_id": "task-uuid",
-  "request_id": "gen-uuid",
-  "status": "pending"
-}
-```
-
-### 6.2 AI 重新生成完整正文
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/content/regenerate
-```
-
-请求体：
-
-```json
-{
-  "requirements": "请结合最新大纲和补充要求重新生成正文",
-  "material_ids": ["mat-uuid"],
-  "preserve_manual_edits": false,
-  "save_result": true
-}
-```
-
-### 6.3 AI 重新生成指定章节
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/sections/{section_id}/regenerate
-```
-
-请求体：
-
-```json
-{
-  "requirements": "请强化该章节的风险分析内容",
-  "material_ids": ["mat-uuid"],
-  "preserve_manual_edits": false,
-  "save_result": true
-}
-```
-
-### 6.4 查询章节内容
-
-```http
-GET /api/v1/report-generation/reports/{report_id}/sections
-```
-
-### 6.5 更新章节正文
-
-```http
-PATCH /api/v1/report-generation/reports/{report_id}/sections/{section_id}
-```
-
-请求体：
+章节更新请求体：
 
 ```json
 {
@@ -417,249 +368,224 @@ PATCH /api/v1/report-generation/reports/{report_id}/sections/{section_id}
 }
 ```
 
-## 7. 生成任务接口
-
-### 7.1 查询任务状态
+### 6.4 创建章节版本
 
 ```http
-GET /api/v1/report-generation/generation-tasks/{task_id}
+POST /api/v1/reports/{reportId}/sections/{sectionId}/versions
 ```
 
-响应数据：
+请求体：
 
 ```json
 {
-  "task_id": "task-uuid",
-  "request_id": "gen-uuid",
-  "task_type": "regenerate_section",
-  "status": "running",
-  "progress": {
-    "completed_sections": 3,
-    "total_sections": 10,
-    "percent": 30
+  "source": "ai",
+  "requirements": "请强化该章节的风险分析内容",
+  "materialIds": ["mat_123"],
+  "preserveManualEdits": false
+}
+```
+
+该接口用于创建指定章节的新版本。若处理耗时较长，应先创建 `ReportJob`，再由任务结果产出新版本。
+
+## 7. 生成任务
+
+### 7.1 创建任务
+
+```http
+POST /api/v1/reports/{reportId}/jobs
+```
+
+请求体：
+
+```json
+{
+  "jobType": "outline_generation",
+  "target": {
+    "scope": "report",
+    "sectionId": null
   },
-  "error": null
-}
-```
-
-### 7.2 查询报告生成任务列表
-
-```http
-GET /api/v1/report-generation/reports/{report_id}/generation-tasks
-```
-
-### 7.3 重试失败任务
-
-```http
-POST /api/v1/report-generation/generation-tasks/{task_id}/retry
-```
-
-## 8. 导出接口
-
-### 8.1 创建导出任务
-
-```http
-POST /api/v1/report-generation/reports/{report_id}/exports
-```
-
-请求体：
-
-```json
-{
-  "format": "docx",
-  "template_id": "tpl-uuid",
-  "style_options": {
-    "numbering_mode": "global"
+  "requirements": "请生成适合迎峰度夏检查场景的专业报告大纲",
+  "materialIds": ["mat_123"],
+  "options": {
+    "preserveManualEdits": false,
+    "saveResult": true
   }
 }
 ```
 
-### 8.2 查询导出状态
+`jobType` 建议枚举：
 
-```http
-GET /api/v1/report-generation/exports/{export_file_id}
-```
-
-### 8.3 获取导出文件引用
-
-```http
-GET /api/v1/report-generation/exports/{export_file_id}/file
-```
-
-响应数据：
-
-```json
-{
-  "export_file_id": "file-uuid",
-  "file_name": "2026年迎峰度夏检查报告.docx",
-  "file_reference": "minio-object-key-or-signed-url",
-  "expires_at": "2026-06-28T12:00:00Z"
-}
-```
-
-## 9. 模板接口
-
-### 9.1 上传模板
-
-```http
-POST /api/v1/report-generation/templates
-```
-
-请求类型建议使用 `multipart/form-data`。
-
-字段：
-
-- `file`
-- `template_name`
-- `report_type`
-- `description`
-
-### 9.2 查询模板列表
-
-```http
-GET /api/v1/report-generation/templates?report_type=summer_peak_inspection&enabled=true
-```
-
-### 9.3 查询模板详情
-
-```http
-GET /api/v1/report-generation/templates/{template_id}
-```
-
-### 9.4 更新模板元数据
-
-```http
-PATCH /api/v1/report-generation/templates/{template_id}
-```
-
-### 9.5 删除模板
-
-```http
-DELETE /api/v1/report-generation/templates/{template_id}
-```
-
-### 9.6 查询模板结构
-
-```http
-GET /api/v1/report-generation/templates/{template_id}/structure
-```
-
-响应数据：
-
-```json
-{
-  "template_id": "template-uuid",
-  "outline_schema": [],
-  "style_config": {}
-}
-```
-
-### 9.7 保存模板结构
-
-```http
-PUT /api/v1/report-generation/templates/{template_id}/structure
-```
-
-请求体：
-
-```json
-{
-  "outline_schema": [],
-  "style_config": {}
-}
-```
-
-## 10. 素材接口
-
-### 10.1 上传素材
-
-```http
-POST /api/v1/report-generation/materials
-```
-
-请求类型建议使用 `multipart/form-data`。
-
-字段：
-
-- `file`
-- `material_name`
-- `category`
-- `description`
-
-### 10.2 查询素材列表
-
-```http
-GET /api/v1/report-generation/materials?category=检查报告
-```
-
-### 10.3 查询素材详情
-
-```http
-GET /api/v1/report-generation/materials/{material_id}
-```
-
-### 10.4 删除素材
-
-```http
-DELETE /api/v1/report-generation/materials/{material_id}
-```
-
-## 11. 统计与日志接口
-
-### 11.1 查询统计概览
-
-```http
-GET /api/v1/report-generation/statistics/overview
-```
-
-响应数据：
-
-```json
-{
-  "template_count": 2,
-  "report_count": 18,
-  "material_count": 5,
-  "generation": {
-    "running": 1,
-    "succeeded": 15,
-    "failed": 2
-  }
-}
-```
-
-### 11.2 查询近 30 天生成趋势
-
-```http
-GET /api/v1/report-generation/statistics/report-generation-trend?days=30
-```
-
-### 11.3 查询操作日志
-
-```http
-GET /api/v1/report-generation/operation-logs?target_type=report&target_id=report-uuid
-```
-
-## 12. MCP 工具映射
-
-| MCP 工具 | 对应后端能力 |
+| jobType | 说明 |
 |---|---|
-| `generate_report_outline` | `POST /reports/{report_id}/outline/generate` |
-| `regenerate_report_outline` | `POST /reports/{report_id}/outline/regenerate` |
-| `generate_report_text` | `POST /reports/{report_id}/content/generate` |
-| `regenerate_report_text` | `POST /reports/{report_id}/content/regenerate` |
-| `regenerate_report_section` | `POST /reports/{report_id}/sections/{section_id}/regenerate` |
-| `get_generation_status` | `GET /generation-tasks/{task_id}` |
-| `get_report_result` | `GET /reports/{report_id}` |
-| `export_report_docx` | `POST /reports/{report_id}/exports` |
-| `get_template_schema` | `GET /templates/{template_id}/structure` |
+| `outline_generation` | 首次生成大纲 |
+| `outline_regeneration` | 重新生成大纲 |
+| `content_generation` | 生成完整正文 |
+| `content_regeneration` | 重新生成完整正文 |
+| `section_regeneration` | 重新生成指定章节 |
+| `report_file_creation` | 创建报告文件 |
 
-## 13. 接口验收要求
+响应：
 
-- 所有接口返回统一响应结构。
-- 所有失败场景返回明确错误码和错误说明。
-- 生成、重新生成和导出类接口必须创建任务记录。
-- 重新生成接口不得丢失报告基础信息。
-- 编辑接口保存后，导出接口必须使用最新内容。
-- 文件上传和导出文件应保存到 MinIO。
-- 数据库记录应保存 MinIO 对象引用。
-- MCP 工具参数应具备明确必填字段和结构化错误返回。
+```json
+{
+  "data": {
+    "id": "job_123",
+    "reportId": "rep_123",
+    "jobType": "outline_generation",
+    "status": "pending"
+  },
+  "requestId": "req_123"
+}
+```
+
+### 7.2 查询任务
+
+```http
+GET /api/v1/report-jobs/{jobId}
+GET /api/v1/reports/{reportId}/jobs
+```
+
+任务状态：
+
+| status | 说明 |
+|---|---|
+| `pending` | 等待执行 |
+| `running` | 执行中 |
+| `succeeded` | 成功 |
+| `partial_succeeded` | 部分成功 |
+| `failed` | 失败 |
+| `canceled` | 已取消 |
+
+### 7.3 创建任务尝试
+
+```http
+POST /api/v1/report-jobs/{jobId}/attempts
+```
+
+说明：
+
+- 该接口创建新的任务尝试，用于替代旧的 `retry` 动作路径。
+- 服务应保留原任务和历史尝试记录。
+
+### 7.4 报告事件
+
+```http
+GET /api/v1/reports/{reportId}/events
+```
+
+可用于轮询事件列表，后续也可升级为 SSE。稳定 SSE 契约需要先进入 gateway OpenAPI。
+
+## 8. 报告文件
+
+### 8.1 创建报告文件
+
+```http
+POST /api/v1/report-files
+```
+
+请求体：
+
+```json
+{
+  "reportId": "rep_123",
+  "format": "docx",
+  "templateId": "tpl_123",
+  "styleOptions": {
+    "numberingMode": "global"
+  }
+}
+```
+
+说明：
+
+- 该接口用于替代旧的 `export` 动作路径。
+- 文件生成耗时较长时，响应可以返回 `reportFile.status=pending` 和关联 `jobId`。
+- 文件内容不暴露 MinIO object key，前端只通过 content 接口获取。
+
+### 8.2 查询报告文件
+
+```http
+GET /api/v1/report-files?page=1&pageSize=20&reportId=rep_123
+GET /api/v1/report-files/{reportFileId}
+GET /api/v1/report-files/{reportFileId}/content
+```
+
+`GET /api/v1/report-files/{reportFileId}/content` 可返回二进制文件流；错误响应仍使用统一错误结构。
+
+## 9. 素材、统计与日志
+
+### 9.1 报告素材
+
+```http
+GET /api/v1/report-materials
+POST /api/v1/report-materials
+GET /api/v1/report-materials/{materialId}
+DELETE /api/v1/report-materials/{materialId}
+```
+
+上传使用 `multipart/form-data`。素材可作为报告生成任务的 `materialIds` 输入。
+
+### 9.2 统计
+
+```http
+GET /api/v1/report-statistics/overview
+GET /api/v1/report-statistics/daily?days=30
+```
+
+统计接口应返回报告数量、模板数量、素材数量、任务状态分布、近 30 天趋势等。
+
+### 9.3 操作日志
+
+```http
+GET /api/v1/report-operation-logs?targetType=report&targetId=rep_123
+GET /api/v1/report-operation-logs?requestId=req_123&toolName=generate_report_outline
+```
+
+操作日志用于追溯报告创建、任务创建、内容编辑、模板变更、素材变更、文件创建和 MCP 工具调用。
+
+公开响应可包含：
+
+| 字段 | 说明 |
+|---|---|
+| `id` | 操作日志 ID |
+| `operatorId` | 操作者 ID，来自 gateway 或 MCP 上下文 |
+| `operatorName` | 操作者名称 |
+| `operationType` | 操作类型 |
+| `targetType` | 目标资源类型 |
+| `targetId` | 目标资源 ID |
+| `requestId` | 请求链路 ID |
+| `requestSource` | 请求来源，例如 `frontend`、`admin`、`mcp`、`backend` |
+| `toolName` | MCP 工具名，可空 |
+| `parameterSummary` | 已脱敏的参数摘要，不包含 prompt、密钥、MinIO object key 或完整文档内容 |
+| `operationResult` | 操作结果 |
+| `errorMessage` | 错误信息，可空 |
+| `metadata` | 已脱敏审计扩展信息 |
+| `createdAt` | 创建时间 |
+
+## 10. MCP 工具映射
+
+MCP 工具可以继续使用动词型工具名。工具内部调用 HTTP 接口时，必须映射到 gateway `/api/v1` 下的 RESTful 资源接口，不得直接调用 `document` 服务内部地址。
+
+| MCP 工具 | 建议 HTTP 能力 |
+|---|---|
+| `generate_report_outline` | `POST /reports/{reportId}/jobs`，`jobType=outline_generation` |
+| `regenerate_report_outline` | `POST /reports/{reportId}/jobs`，`jobType=outline_regeneration` |
+| `generate_report_text` | `POST /reports/{reportId}/jobs`，`jobType=content_generation` |
+| `regenerate_report_text` | `POST /reports/{reportId}/jobs`，`jobType=content_regeneration` |
+| `regenerate_report_section` | `POST /reports/{reportId}/jobs`，`jobType=section_regeneration` |
+| `get_generation_status` | `GET /report-jobs/{jobId}` |
+| `get_report_result` | `GET /reports/{reportId}` |
+| `export_report_docx` | `POST /report-files` |
+| `get_template_schema` | `GET /report-templates/{reportTemplateId}/structure` |
+
+## 11. 接口验收要求
+
+- 公开路径必须已进入 `docs/api/gateway.openapi.yaml` active paths，才能作为稳定前端契约。
+- 路径必须使用资源名，不出现 `generate`、`regenerate`、`export`、`retry`、`download` 等动作词。
+- 所有公开响应使用 gateway 统一 envelope。
+- 所有公开 ID 使用 string，公开字段使用 camelCase。
+- 业务接口默认通过 gateway bearer token 认证；`document` 服务不实现登录认证，前端、管理端、其他后端模块和 MCP 工具不得绕过 gateway 直连 `document`。
+- Gateway 向 `document` 服务传递 `X-Request-Id`、`X-User-Id`、`X-User-Roles`、`X-User-Permissions`。
+- AI 生成、重新生成、文件创建和任务重试都必须创建可追踪资源记录。
+- 文件内容接口不得暴露 MinIO object key、内部 URL 或敏感存储路径。
+- MCP 工具调用应记录 request id、工具名、参数摘要、执行状态和错误信息。
