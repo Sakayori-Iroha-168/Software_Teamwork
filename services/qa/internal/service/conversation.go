@@ -22,6 +22,7 @@ type ConversationMessage struct {
 	ID        string               `json:"id"`
 	Role      string               `json:"role"`
 	Content   string               `json:"content"`
+	Status    string               `json:"status"`
 	Timestamp string               `json:"timestamp"`
 	Thinking  []domain.ThinkingStep `json:"thinking,omitempty"`
 }
@@ -93,6 +94,7 @@ func (s *ConversationService) GetDetail(ctx context.Context, conversationID stri
 			ID:        msg.ID,
 			Role:      msg.Role,
 			Content:   msg.Content,
+			Status:    msg.Status,
 			Timestamp: msg.CreatedAt.UTC().Format(timeRFC3339),
 		}
 		if msg.Role == "assistant" {
