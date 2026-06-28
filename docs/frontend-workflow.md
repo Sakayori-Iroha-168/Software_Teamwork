@@ -25,8 +25,6 @@ upstream/develop  主仓库日常集成分支
 origin/*          个人 fork 分支
 ```
 
-当前不要把 `frontend-dev` 作为默认前端 PR 目标；只有团队在 `CONTRIBUTING.md` 中明确启用前端专用集成分支后，才能切换过去。不要在文档、CI 或 PR 目标中使用 `frontdev` 这个名字。
-
 ## 日常开发流程
 
 从最新的 `upstream/develop` 创建前端功能分支：
