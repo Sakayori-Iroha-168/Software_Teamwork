@@ -50,3 +50,33 @@ paths:
                 type: string
         "400":
           description: Invalid request
+  /api/v1/qa-config-versions/current:
+    get:
+      summary: Get active QA configuration version
+      responses:
+        "200":
+          description: Active QA configuration
+  /api/v1/qa-config-versions:
+    post:
+      summary: Create and activate a QA configuration version
+      responses:
+        "201":
+          description: Created QA configuration
+  /api/v1/llm-config-versions/current:
+    get:
+      summary: Get active LLM configuration version
+      responses:
+        "200":
+          description: Active LLM configuration without secret values
+  /api/v1/llm-config-versions:
+    post:
+      summary: Create and activate an LLM configuration version
+      responses:
+        "201":
+          description: Created LLM configuration without secret values
+  /api/v1/llm-connection-tests:
+    post:
+      summary: Validate LLM connection parameters
+      responses:
+        "200":
+          description: Connection test result

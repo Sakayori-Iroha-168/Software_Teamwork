@@ -60,3 +60,49 @@ type Citation struct {
 	Score           float64
 	CreatedAt       time.Time
 }
+
+type QAConfigVersion struct {
+	ID                  string
+	VersionNo           int64
+	TopK                int
+	SimilarityThreshold float64
+	UseRerank           bool
+	RerankThreshold     *float64
+	RerankTopN          *int
+	IsActive            bool
+	CreatedAt           time.Time
+	CreatedByUserID     string
+	KnowledgeBases      []QAConfigKnowledgeBase
+}
+
+type QAConfigKnowledgeBase struct {
+	ExternalKBID        string
+	KBType              string
+	DisplayNameSnapshot string
+	SortOrder           int
+}
+
+type LLMConfigVersion struct {
+	ID              string
+	VersionNo       int64
+	Provider        string
+	APIURL          string
+	ModelName       string
+	APIKeySecretRef string
+	APIKeyLast4     string
+	TimeoutSeconds  int
+	Temperature     float64
+	MaxTokens       int
+	IsActive        bool
+	CreatedAt       time.Time
+}
+
+type AdminAuditLog struct {
+	ID             string
+	ExternalUserID string
+	Action         string
+	TargetType     string
+	TargetID       string
+	RequestID      string
+	CreatedAt      time.Time
+}

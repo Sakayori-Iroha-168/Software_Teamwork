@@ -10,6 +10,11 @@
 - `citation`：知识问答路径下输出 mock 引用。
 - `done`：标记本轮回答完成。
 - `error`：预留异常事件。
+- `GET /api/v1/qa-config-versions/current`：获取当前 QA 配置版本。
+- `POST /api/v1/qa-config-versions`：发布并激活新的 QA 配置版本。
+- `GET /api/v1/llm-config-versions/current`：获取当前 LLM 配置版本，响应不包含密钥明文。
+- `POST /api/v1/llm-config-versions`：发布并激活新的 LLM 配置版本，只返回密钥后四位。
+- `POST /api/v1/llm-connection-tests`：连接测试草案接口，当前校验参数并返回 mock 结果。
 
 ## Local Run
 
