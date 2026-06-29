@@ -47,6 +47,7 @@ func TestConfigEndpoints(t *testing.T) {
 			"useRerank": true,
 			"rerankThreshold": 0.5,
 			"rerankTopN": 4,
+			"activate": true,
 			"knowledgeBases": [
 				{"externalKbId":"kb_power_standard","kbType":"technical_supervision","displayNameSnapshot":"电力标准规范库","sortOrder":1}
 			],
@@ -62,14 +63,13 @@ func TestConfigEndpoints(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusCreated, rec.Body.String())
 		}
 		assertJSONContains(t, rec.Body.String(), "topK", float64(8))
+		assertJSONContains(t, rec.Body.String(), "isActive", true)
 	})
 
-	t.Run("create llm config masks api key", func(t *testing.T) {
+	t.Run("create llm config uses gateway profile", func(t *testing.T) {
 		body := strings.NewReader(`{
-			"provider": "openai-compatible",
-			"apiUrl": "https://api.example.com/v1",
+			"profileId": "gateway-qwen-prod",
 			"modelName": "qwen-test",
-			"apiKey": "sk-test-123456",
 			"timeoutSeconds": 30,
 			"temperature": 0.2,
 			"maxTokens": 2048
@@ -84,16 +84,17 @@ func TestConfigEndpoints(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusCreated, rec.Body.String())
 		}
 		got := rec.Body.String()
-		if strings.Contains(got, "sk-test-123456") {
-			t.Fatalf("response leaked api key: %s", got)
+		for _, forbidden := range []string{"apiKey", "apiUrl", "provider"} {
+			if strings.Contains(got, forbidden) {
+				t.Fatalf("response included forbidden provider field %q: %s", forbidden, got)
+			}
 		}
-		assertJSONContains(t, got, "apiKeyLast4", "3456")
+		assertJSONContains(t, got, "profileId", "gateway-qwen-prod")
 	})
 
 	t.Run("test llm connection", func(t *testing.T) {
 		body := strings.NewReader(`{
-			"provider": "openai-compatible",
-			"apiUrl": "https://api.example.com/v1",
+			"profileId": "gateway-qwen-prod",
 			"modelName": "qwen-test"
 		}`)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/llm-connection-tests", body)
@@ -106,6 +107,7 @@ func TestConfigEndpoints(t *testing.T) {
 			t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusOK, rec.Body.String())
 		}
 		assertJSONContains(t, rec.Body.String(), "success", true)
+		assertJSONContains(t, rec.Body.String(), "status", "succeeded")
 	})
 }
 

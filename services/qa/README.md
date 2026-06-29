@@ -11,10 +11,10 @@
 - `done`：标记本轮回答完成。
 - `error`：预留异常事件。
 - `GET /api/v1/qa-config-versions/current`：获取当前 QA 配置版本。
-- `POST /api/v1/qa-config-versions`：发布并激活新的 QA 配置版本。
-- `GET /api/v1/llm-config-versions/current`：获取当前 LLM 配置版本，响应不包含密钥明文。
-- `POST /api/v1/llm-config-versions`：发布并激活新的 LLM 配置版本，只返回密钥后四位。
-- `POST /api/v1/llm-connection-tests`：连接测试草案接口，当前校验参数并返回 mock 结果。
+- `POST /api/v1/qa-config-versions`：创建不可变 QA 配置版本；`activate=true` 时才切换唯一 active。
+- `GET /api/v1/llm-config-versions/current`：获取当前 LLM 配置版本，只返回 AI Gateway `profileId`、`modelName` 与生成参数。
+- `POST /api/v1/llm-config-versions`：发布并激活新的 LLM 配置版本，不接收 provider API key。
+- `POST /api/v1/llm-connection-tests`：连接测试草案接口，当前校验 profile 参数并返回 mock 结果，不保存或切换配置。
 
 ## Local Run
 

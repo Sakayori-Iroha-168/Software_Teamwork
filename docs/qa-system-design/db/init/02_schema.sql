@@ -33,17 +33,27 @@ CREATE TABLE qa_config_knowledge_bases (
 CREATE TABLE llm_config_versions (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     version_no          BIGINT NOT NULL,
-    provider            VARCHAR(64) NOT NULL,
-    api_url             VARCHAR(512) NOT NULL,
+    profile_id          VARCHAR(128) NOT NULL,
     model_name          VARCHAR(128) NOT NULL,
-    api_key_secret_ref  VARCHAR(256),
-    api_key_last4       VARCHAR(4),
     timeout_seconds     INTEGER NOT NULL DEFAULT 60,
     temperature         NUMERIC(4, 2) NOT NULL DEFAULT 0.70,
     max_tokens          INTEGER NOT NULL DEFAULT 4096,
     is_active           BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_llm_config_versions_version_no UNIQUE (version_no)
+);
+
+CREATE TABLE llm_connection_tests (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profile_id          VARCHAR(128) NOT NULL,
+    model_name          VARCHAR(128) NOT NULL,
+    status              VARCHAR(32) NOT NULL,
+    latency_ms          INTEGER,
+    error_code          VARCHAR(64),
+    error_message       TEXT,
+    request_id          VARCHAR(128),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_llm_connection_tests_status CHECK (status IN ('succeeded', 'failed', 'timeout'))
 );
 
 CREATE TABLE admin_audit_logs (
@@ -234,5 +244,6 @@ CREATE INDEX idx_retrieval_test_results_run_id ON retrieval_test_results (test_r
 
 CREATE INDEX idx_admin_audit_logs_created_at ON admin_audit_logs (created_at DESC);
 CREATE INDEX idx_admin_audit_logs_external_user_id ON admin_audit_logs (external_user_id);
+CREATE INDEX idx_llm_connection_tests_created_at ON llm_connection_tests (created_at DESC);
 
 COMMIT;

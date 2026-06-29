@@ -16,6 +16,7 @@ type MemoryStore struct {
 	citations     []Citation
 	qaConfigs     []QAConfigVersion
 	llmConfigs    []LLMConfigVersion
+	llmTests      []LLMConnectionTest
 	auditLogs     []AdminAuditLog
 }
 
@@ -35,6 +36,7 @@ func NewMemoryStore() *MemoryStore {
 				RerankThreshold:     &rerankThreshold,
 				RerankTopN:          &rerankTopN,
 				IsActive:            true,
+				ActivateRequested:   true,
 				CreatedAt:           now,
 				CreatedByUserID:     "seed",
 				KnowledgeBases: []QAConfigKnowledgeBase{
@@ -46,10 +48,8 @@ func NewMemoryStore() *MemoryStore {
 			{
 				ID:             "llm_cfg_seed",
 				VersionNo:      1,
-				Provider:       "openai-compatible",
-				APIURL:         "https://api.example.com/v1",
+				ProfileID:      "gateway-default",
 				ModelName:      "gpt-4o-mini",
-				APIKeyLast4:    "",
 				TimeoutSeconds: 60,
 				Temperature:    0.7,
 				MaxTokens:      4096,
@@ -131,10 +131,12 @@ func (s *MemoryStore) CreateQAConfig(_ context.Context, cfg QAConfigVersion) (QA
 		if s.qaConfigs[i].VersionNo > maxVersion {
 			maxVersion = s.qaConfigs[i].VersionNo
 		}
-		s.qaConfigs[i].IsActive = false
+		if cfg.ActivateRequested {
+			s.qaConfigs[i].IsActive = false
+		}
 	}
 	cfg.VersionNo = maxVersion + 1
-	cfg.IsActive = true
+	cfg.IsActive = cfg.ActivateRequested
 	cfg.CreatedAt = time.Now().UTC()
 	s.qaConfigs = append(s.qaConfigs, cfg)
 	return cfg, nil
@@ -172,5 +174,12 @@ func (s *MemoryStore) AppendAuditLog(_ context.Context, log AdminAuditLog) error
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.auditLogs = append(s.auditLogs, log)
+	return nil
+}
+
+func (s *MemoryStore) AppendLLMConnectionTest(_ context.Context, test LLMConnectionTest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.llmTests = append(s.llmTests, test)
 	return nil
 }

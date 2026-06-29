@@ -2,10 +2,10 @@
 BEGIN;
 
 INSERT INTO llm_config_versions (
-    version_no, provider, api_url, model_name,
+    version_no, profile_id, model_name,
     timeout_seconds, temperature, max_tokens, is_active
 ) VALUES (
-    1, 'openai-compatible', 'https://api.example.com/v1', 'gpt-4o-mini',
+    1, 'gateway-default', 'gpt-4o-mini',
     60, 0.70, 4096, TRUE
 );
 

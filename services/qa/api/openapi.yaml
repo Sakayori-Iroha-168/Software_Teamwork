@@ -58,7 +58,7 @@ paths:
           description: Active QA configuration
   /api/v1/qa-config-versions:
     post:
-      summary: Create and activate a QA configuration version
+      summary: Create a QA configuration version and optionally activate it
       responses:
         "201":
           description: Created QA configuration
@@ -67,16 +67,16 @@ paths:
       summary: Get active LLM configuration version
       responses:
         "200":
-          description: Active LLM configuration without secret values
+          description: Active LLM configuration with AI Gateway profileId
   /api/v1/llm-config-versions:
     post:
-      summary: Create and activate an LLM configuration version
+      summary: Create and activate an LLM configuration version by AI Gateway profileId
       responses:
         "201":
-          description: Created LLM configuration without secret values
+          description: Created LLM configuration without provider API key fields
   /api/v1/llm-connection-tests:
     post:
-      summary: Validate LLM connection parameters
+      summary: Test an LLM profile without saving or activating it
       responses:
         "200":
           description: Connection test result

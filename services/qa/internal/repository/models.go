@@ -70,6 +70,7 @@ type QAConfigVersion struct {
 	RerankThreshold     *float64
 	RerankTopN          *int
 	IsActive            bool
+	ActivateRequested   bool
 	CreatedAt           time.Time
 	CreatedByUserID     string
 	KnowledgeBases      []QAConfigKnowledgeBase
@@ -83,18 +84,15 @@ type QAConfigKnowledgeBase struct {
 }
 
 type LLMConfigVersion struct {
-	ID              string
-	VersionNo       int64
-	Provider        string
-	APIURL          string
-	ModelName       string
-	APIKeySecretRef string
-	APIKeyLast4     string
-	TimeoutSeconds  int
-	Temperature     float64
-	MaxTokens       int
-	IsActive        bool
-	CreatedAt       time.Time
+	ID             string
+	VersionNo      int64
+	ProfileID      string
+	ModelName      string
+	TimeoutSeconds int
+	Temperature    float64
+	MaxTokens      int
+	IsActive       bool
+	CreatedAt      time.Time
 }
 
 type AdminAuditLog struct {
@@ -105,4 +103,16 @@ type AdminAuditLog struct {
 	TargetID       string
 	RequestID      string
 	CreatedAt      time.Time
+}
+
+type LLMConnectionTest struct {
+	ID           string
+	ProfileID    string
+	ModelName    string
+	Status       string
+	LatencyMS    int64
+	ErrorCode    string
+	ErrorMessage string
+	RequestID    string
+	CreatedAt    time.Time
 }

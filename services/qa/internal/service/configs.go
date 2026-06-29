@@ -2,10 +2,7 @@ package service
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
-	"net/url"
 	"strings"
 	"time"
 
@@ -18,6 +15,7 @@ type ConfigStore interface {
 	CurrentLLMConfig(ctx context.Context) (repository.LLMConfigVersion, error)
 	CreateLLMConfig(ctx context.Context, cfg repository.LLMConfigVersion) (repository.LLMConfigVersion, error)
 	AppendAuditLog(ctx context.Context, log repository.AdminAuditLog) error
+	AppendLLMConnectionTest(ctx context.Context, test repository.LLMConnectionTest) error
 }
 
 type ConfigService struct {
@@ -34,6 +32,7 @@ type QAConfigRequest struct {
 	UseRerank           bool                         `json:"useRerank"`
 	RerankThreshold     *float64                     `json:"rerankThreshold,omitempty"`
 	RerankTopN          *int                         `json:"rerankTopN,omitempty"`
+	Activate            bool                         `json:"activate"`
 	KnowledgeBases      []QAConfigKnowledgeBaseInput `json:"knowledgeBases"`
 	CreatedByUserID     string                       `json:"createdByUserId,omitempty"`
 }
@@ -54,6 +53,7 @@ type QAConfigResponse struct {
 	RerankThreshold     *float64                        `json:"rerankThreshold,omitempty"`
 	RerankTopN          *int                            `json:"rerankTopN,omitempty"`
 	IsActive            bool                            `json:"isActive"`
+	ActivateRequested   bool                            `json:"activateRequested"`
 	CreatedAt           time.Time                       `json:"createdAt"`
 	CreatedByUserID     string                          `json:"createdByUserId,omitempty"`
 	KnowledgeBases      []QAConfigKnowledgeBaseResponse `json:"knowledgeBases"`
@@ -67,10 +67,8 @@ type QAConfigKnowledgeBaseResponse struct {
 }
 
 type LLMConfigRequest struct {
-	Provider       string  `json:"provider"`
-	APIURL         string  `json:"apiUrl"`
+	ProfileID      string  `json:"profileId"`
 	ModelName      string  `json:"modelName"`
-	APIKey         string  `json:"apiKey,omitempty"`
 	TimeoutSeconds int     `json:"timeoutSeconds"`
 	Temperature    float64 `json:"temperature"`
 	MaxTokens      int     `json:"maxTokens"`
@@ -79,10 +77,8 @@ type LLMConfigRequest struct {
 type LLMConfigResponse struct {
 	ID             string    `json:"id"`
 	VersionNo      int64     `json:"versionNo"`
-	Provider       string    `json:"provider"`
-	APIURL         string    `json:"apiUrl"`
+	ProfileID      string    `json:"profileId"`
 	ModelName      string    `json:"modelName"`
-	APIKeyLast4    string    `json:"apiKeyLast4,omitempty"`
 	TimeoutSeconds int       `json:"timeoutSeconds"`
 	Temperature    float64   `json:"temperature"`
 	MaxTokens      int       `json:"maxTokens"`
@@ -91,17 +87,16 @@ type LLMConfigResponse struct {
 }
 
 type LLMConnectionTestRequest struct {
-	Provider       string `json:"provider,omitempty"`
-	APIURL         string `json:"apiUrl,omitempty"`
+	ProfileID      string `json:"profileId,omitempty"`
 	ModelName      string `json:"modelName,omitempty"`
-	APIKey         string `json:"apiKey,omitempty"`
 	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
 }
 
 type LLMConnectionTestResponse struct {
 	Success   bool      `json:"success"`
-	Provider  string    `json:"provider"`
+	ProfileID string    `json:"profileId"`
 	ModelName string    `json:"modelName"`
+	Status    string    `json:"status"`
 	LatencyMS int64     `json:"latencyMs"`
 	TestedAt  time.Time `json:"testedAt"`
 	Message   string    `json:"message"`
@@ -126,6 +121,7 @@ func (s *ConfigService) CreateQAConfig(ctx context.Context, req QAConfigRequest,
 		UseRerank:           req.UseRerank,
 		RerankThreshold:     req.RerankThreshold,
 		RerankTopN:          req.RerankTopN,
+		ActivateRequested:   req.Activate,
 		CreatedByUserID:     req.CreatedByUserID,
 	}
 	for _, kb := range req.KnowledgeBases {
@@ -161,19 +157,16 @@ func (s *ConfigService) CurrentLLMConfig(ctx context.Context) (LLMConfigResponse
 }
 
 func (s *ConfigService) CreateLLMConfig(ctx context.Context, req LLMConfigRequest, requestID string) (LLMConfigResponse, error) {
-	if err := validateLLMConfig(req.Provider, req.APIURL, req.ModelName, req.TimeoutSeconds, req.MaxTokens); err != nil {
+	if err := validateLLMConfig(req.ProfileID, req.ModelName, req.TimeoutSeconds, req.MaxTokens); err != nil {
 		return LLMConfigResponse{}, err
 	}
 	cfg := repository.LLMConfigVersion{
-		ID:              newID("llm_cfg"),
-		Provider:        req.Provider,
-		APIURL:          req.APIURL,
-		ModelName:       req.ModelName,
-		APIKeySecretRef: secretRef(req.APIKey),
-		APIKeyLast4:     last4(req.APIKey),
-		TimeoutSeconds:  req.TimeoutSeconds,
-		Temperature:     req.Temperature,
-		MaxTokens:       req.MaxTokens,
+		ID:             newID("llm_cfg"),
+		ProfileID:      req.ProfileID,
+		ModelName:      req.ModelName,
+		TimeoutSeconds: req.TimeoutSeconds,
+		Temperature:    req.Temperature,
+		MaxTokens:      req.MaxTokens,
 	}
 	created, err := s.store.CreateLLMConfig(ctx, cfg)
 	if err != nil {
@@ -192,31 +185,40 @@ func (s *ConfigService) CreateLLMConfig(ctx context.Context, req LLMConfigReques
 
 func (s *ConfigService) TestLLMConnection(ctx context.Context, req LLMConnectionTestRequest) (LLMConnectionTestResponse, error) {
 	startedAt := time.Now()
-	if req.Provider == "" || req.APIURL == "" || req.ModelName == "" {
+	if req.ProfileID == "" || req.ModelName == "" {
 		current, err := s.store.CurrentLLMConfig(ctx)
 		if err != nil {
 			return LLMConnectionTestResponse{}, err
 		}
-		if req.Provider == "" {
-			req.Provider = current.Provider
-		}
-		if req.APIURL == "" {
-			req.APIURL = current.APIURL
+		if req.ProfileID == "" {
+			req.ProfileID = current.ProfileID
 		}
 		if req.ModelName == "" {
 			req.ModelName = current.ModelName
 		}
 	}
-	if err := validateLLMConfig(req.Provider, req.APIURL, req.ModelName, defaultIfZero(req.TimeoutSeconds, 60), 1); err != nil {
+	if err := validateLLMConfig(req.ProfileID, req.ModelName, defaultIfZero(req.TimeoutSeconds, 60), 1); err != nil {
 		return LLMConnectionTestResponse{}, err
 	}
+	latencyMS := time.Since(startedAt).Milliseconds()
+	testedAt := time.Now().UTC()
+	_ = s.store.AppendLLMConnectionTest(ctx, repository.LLMConnectionTest{
+		ID:        newID("llm_test"),
+		ProfileID: req.ProfileID,
+		ModelName: req.ModelName,
+		Status:    "succeeded",
+		LatencyMS: latencyMS,
+		RequestID: "",
+		CreatedAt: testedAt,
+	})
 	return LLMConnectionTestResponse{
 		Success:   true,
-		Provider:  req.Provider,
+		ProfileID: req.ProfileID,
 		ModelName: req.ModelName,
-		LatencyMS: time.Since(startedAt).Milliseconds(),
-		TestedAt:  time.Now().UTC(),
-		Message:   "connection parameters are valid; provider call is mocked in this service draft",
+		Status:    "succeeded",
+		LatencyMS: latencyMS,
+		TestedAt:  testedAt,
+		Message:   "connection parameters are valid; AI Gateway provider call is mocked in this service draft",
 	}, nil
 }
 
@@ -226,6 +228,12 @@ func validateQAConfig(req QAConfigRequest) error {
 	}
 	if req.SimilarityThreshold < 0 || req.SimilarityThreshold > 1 {
 		return errors.New("similarityThreshold must be between 0 and 1")
+	}
+	if req.RerankThreshold != nil && (*req.RerankThreshold < 0 || *req.RerankThreshold > 1) {
+		return errors.New("rerankThreshold must be between 0 and 1")
+	}
+	if req.RerankTopN != nil && *req.RerankTopN <= 0 {
+		return errors.New("rerankTopN must be greater than 0")
 	}
 	for _, kb := range req.KnowledgeBases {
 		if strings.TrimSpace(kb.ExternalKBID) == "" {
@@ -238,16 +246,12 @@ func validateQAConfig(req QAConfigRequest) error {
 	return nil
 }
 
-func validateLLMConfig(provider string, apiURL string, modelName string, timeoutSeconds int, maxTokens int) error {
-	if strings.TrimSpace(provider) == "" {
-		return errors.New("provider is required")
+func validateLLMConfig(profileID string, modelName string, timeoutSeconds int, maxTokens int) error {
+	if strings.TrimSpace(profileID) == "" {
+		return errors.New("profileId is required")
 	}
 	if strings.TrimSpace(modelName) == "" {
 		return errors.New("modelName is required")
-	}
-	parsedURL, err := url.ParseRequestURI(apiURL)
-	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		return errors.New("apiUrl must be a valid absolute URL")
 	}
 	if timeoutSeconds <= 0 {
 		return errors.New("timeoutSeconds must be greater than 0")
@@ -268,6 +272,7 @@ func mapQAConfig(cfg repository.QAConfigVersion) QAConfigResponse {
 		RerankThreshold:     cfg.RerankThreshold,
 		RerankTopN:          cfg.RerankTopN,
 		IsActive:            cfg.IsActive,
+		ActivateRequested:   cfg.ActivateRequested,
 		CreatedAt:           cfg.CreatedAt,
 		CreatedByUserID:     cfg.CreatedByUserID,
 	}
@@ -286,31 +291,14 @@ func mapLLMConfig(cfg repository.LLMConfigVersion) LLMConfigResponse {
 	return LLMConfigResponse{
 		ID:             cfg.ID,
 		VersionNo:      cfg.VersionNo,
-		Provider:       cfg.Provider,
-		APIURL:         cfg.APIURL,
+		ProfileID:      cfg.ProfileID,
 		ModelName:      cfg.ModelName,
-		APIKeyLast4:    cfg.APIKeyLast4,
 		TimeoutSeconds: cfg.TimeoutSeconds,
 		Temperature:    cfg.Temperature,
 		MaxTokens:      cfg.MaxTokens,
 		IsActive:       cfg.IsActive,
 		CreatedAt:      cfg.CreatedAt,
 	}
-}
-
-func secretRef(secret string) string {
-	if secret == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(secret))
-	return "memory://llm-api-key/" + hex.EncodeToString(sum[:8])
-}
-
-func last4(secret string) string {
-	if len(secret) <= 4 {
-		return secret
-	}
-	return secret[len(secret)-4:]
 }
 
 func defaultIfZero(value int, fallback int) int {
