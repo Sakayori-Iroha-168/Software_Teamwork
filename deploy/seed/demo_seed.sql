@@ -110,6 +110,24 @@ VALUES
         '{}'::jsonb,
         'usr_local_admin',
         'usr_local_admin'
+    ),
+    (
+        'default-rerank',
+        'Local placeholder rerank profile',
+        'rerank',
+        'local_compatible',
+        'http://localhost:11434/v1',
+        'local-placeholder-rerank',
+        true,
+        true,
+        60000,
+        false,
+        false,
+        NULL,
+        10,
+        '{}'::jsonb,
+        'usr_local_admin',
+        'usr_local_admin'
     )
 ON CONFLICT (id) DO UPDATE
 SET name = EXCLUDED.name,

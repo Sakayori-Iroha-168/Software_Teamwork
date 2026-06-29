@@ -24,7 +24,7 @@ Frontend and external callers should use gateway `/api/v1/**` routes only. Do no
 | Area | Seed |
 | --- | --- |
 | Auth | `admin` user with `super_admin` role |
-| AI Gateway | `default-chat` and `default-embedding` placeholder profiles without provider credentials |
+| AI Gateway | `default-chat`, `default-embedding`, and `default-rerank` placeholder profiles without provider credentials |
 | Document | Demo report types |
 | Knowledge | `kb_local_demo` example knowledge base |
 
@@ -97,6 +97,12 @@ curl -i http://localhost:8085/readyz  # document
 curl -i http://localhost:8086/readyz  # ai-gateway
 ```
 
+Compose uses `ai-gateway /healthz` for container health because the seeded
+profiles are placeholders without provider credentials. `ai-gateway /readyz`
+is still the diagnostic endpoint for real model readiness and will report a
+degraded state until chat, embedding, and rerank profiles are configured with
+usable credentials.
+
 Use Compose health state to locate dependency failures:
 
 ```bash
@@ -117,7 +123,8 @@ Common failures:
 | --- | --- | --- |
 | `gateway /readyz` reports dependency error | Redis or auth is not ready, or a service URL is missing | `docker compose ps redis auth gateway` |
 | Auth is not ready | `auth_system` migration failed or Postgres is unavailable | `docker compose logs migrate-auth auth postgres` |
-| AI Gateway is not ready | profile tables missing or credential encryption env is invalid | `docker compose logs migrate-ai-gateway ai-gateway` |
+| AI Gateway container is unhealthy | service process failed or credential encryption env is invalid | `docker compose logs ai-gateway` |
+| AI Gateway `/readyz` is degraded | local placeholder profiles have no provider credentials yet | configure real chat, embedding, and rerank profiles through the service API |
 | QA exits on startup | `AI_GATEWAY_URL` or `KNOWLEDGE_SERVICE_URL` is invalid, or database migration failed | `docker compose logs qa migrate-qa` |
 | File uploads disappear after restart | `FILE_STORAGE_BACKEND=memory` was used | Set `FILE_STORAGE_BACKEND=local` |
 | MinIO buckets missing | `minio-init` did not complete | `docker compose logs minio-init` |

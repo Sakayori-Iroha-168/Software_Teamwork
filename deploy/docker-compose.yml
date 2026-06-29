@@ -278,7 +278,7 @@ services:
         condition: service_completed_successfully
     healthcheck:
       <<: *health-http
-      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8086/readyz"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8086/healthz"]
 
   qa:
     build:
