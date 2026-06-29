@@ -91,12 +91,8 @@ func responseRunFromRow(row sqlc.ResponseRunRow) service.ResponseRun {
 	if row.CompletedAt.Valid {
 		value.CompletedAt = &row.CompletedAt.Time
 	}
-	if row.StopReason.Valid {
-		reason := row.StopReason.String
-		if reason == "failed" {
-			reason = "model_error"
-		}
-		value.TerminationReason = &reason
+	if row.TerminationReason.Valid {
+		value.TerminationReason = &row.TerminationReason.String
 	}
 	return value
 }

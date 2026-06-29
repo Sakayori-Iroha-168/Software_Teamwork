@@ -80,6 +80,7 @@ type completionResponse struct {
 		Message      agent.Message `json:"message"`
 		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
+	Usage agent.Usage `json:"usage"`
 }
 
 func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools []agent.ToolDefinition) (agent.Completion, error) {
@@ -134,5 +135,5 @@ func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools [
 		return agent.Completion{}, errors.New("completion response has no choices")
 	}
 	choice := decoded.Choices[0]
-	return agent.Completion{Message: choice.Message, FinishReason: choice.FinishReason}, nil
+	return agent.Completion{Message: choice.Message, FinishReason: choice.FinishReason, Usage: decoded.Usage}, nil
 }

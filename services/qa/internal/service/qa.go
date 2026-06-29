@@ -71,16 +71,18 @@ type ConversationListOptions struct {
 }
 
 type Message struct {
-	ID             string     `json:"id"`
-	ConversationID string     `json:"sessionId"`
-	SequenceNo     int        `json:"sequenceNo"`
-	Role           string     `json:"role"`
-	Content        string     `json:"content"`
-	Intent         string     `json:"intent,omitempty"`
-	Status         string     `json:"status"`
-	CitationCount  int        `json:"-"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	CompletedAt    *time.Time `json:"completedAt,omitempty"`
+	ID             string          `json:"id"`
+	ConversationID string          `json:"sessionId"`
+	SequenceNo     int             `json:"sequenceNo"`
+	Role           string          `json:"role"`
+	Content        string          `json:"content"`
+	Intent         string          `json:"intent,omitempty"`
+	Status         string          `json:"status"`
+	ReasoningSteps []ReasoningStep `json:"thinking,omitempty"`
+	Citations      []Citation      `json:"citations,omitempty"`
+	CitationCount  int             `json:"-"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	CompletedAt    *time.Time      `json:"completedAt,omitempty"`
 }
 
 type ReasoningStep struct {
@@ -110,18 +112,33 @@ type Page[T any] struct {
 }
 
 type RetrievalOptions struct {
-	TopK            int                 `json:"topK,omitempty"`
-	ScoreThreshold  float64             `json:"scoreThreshold,omitempty"`
-	RerankThreshold float64             `json:"rerankThreshold,omitempty"`
-	EnableRerank    bool                `json:"enableRerank,omitempty"`
-	TagFilters      map[string][]string `json:"tagFilters,omitempty"`
+	TopK                      int                 `json:"topK,omitempty"`
+	ScoreThreshold            float64             `json:"scoreThreshold,omitempty"`
+	SimilarityThreshold       float64             `json:"similarityThreshold,omitempty"`
+	RerankThreshold           float64             `json:"rerankThreshold,omitempty"`
+	RerankTopN                int                 `json:"rerankTopN,omitempty"`
+	EnableRerank              bool                `json:"enableRerank,omitempty"`
+	UseRerank                 bool                `json:"useRerank,omitempty"`
+	TagFilters                map[string][]string `json:"tagFilters,omitempty"`
+	TopKDeprecated            int                 `json:"top_k,omitempty"`
+	ScoreThresholdDeprecated  float64             `json:"similarity_threshold,omitempty"`
+	UseRerankDeprecated       bool                `json:"use_rerank,omitempty"`
+}
+
+type AgentOptions struct {
+	EnabledToolNames []string `json:"enabledToolNames,omitempty"`
+	MaxIterations    int      `json:"maxIterations,omitempty"`
 }
 
 type AskInput struct {
 	Message          string           `json:"message"`
 	Mode             string           `json:"mode,omitempty"`
 	KnowledgeBaseIDs []string         `json:"knowledgeBaseIds,omitempty"`
-	Retrieval        RetrievalOptions `json:"retrieval,omitempty"`
+	KnowledgeBases  []string         `json:"knowledge_bases,omitempty"`
+	Retrieval       RetrievalOptions `json:"retrieval,omitempty"`
+	Params          RetrievalOptions `json:"params,omitempty"`
+	Agent           AgentOptions     `json:"agent,omitempty"`
+	ConversationID  string           `json:"conversation_id,omitempty"`
 }
 
 type AskResult struct {
@@ -176,6 +193,7 @@ type Repository interface {
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
 	SaveModelInvocation(context.Context, string, ModelInvocation) (string, error)
 	GetResponseRun(context.Context, string, string) (ResponseRun, error)
+	UpdateResponseRunTermination(context.Context, string, string, string, string, int, int) error
 }
 
 type AgentRunner interface {
@@ -194,18 +212,19 @@ type RuntimeProvider interface {
 }
 
 type QAService struct {
-	repository Repository
-	runtime    RuntimeProvider
-	now        func() time.Time
-	activeMu   sync.Mutex
-	activeRuns map[string]context.CancelFunc
+	repository  Repository
+	resourceRepo ResourceRepository
+	runtime     RuntimeProvider
+	now         func() time.Time
+	activeMu    sync.Mutex
+	activeRuns  map[string]context.CancelFunc
 }
 
-func NewQAService(repository Repository, runtime RuntimeProvider) (*QAService, error) {
+func NewQAService(repository Repository, resourceRepo ResourceRepository, runtime RuntimeProvider) (*QAService, error) {
 	if repository == nil || runtime == nil {
 		return nil, errors.New("repository and runtime provider are required")
 	}
-	return &QAService{repository: repository, runtime: runtime, now: time.Now, activeRuns: map[string]context.CancelFunc{}}, nil
+	return &QAService{repository: repository, resourceRepo: resourceRepo, runtime: runtime, now: time.Now, activeRuns: map[string]context.CancelFunc{}}, nil
 }
 
 func (s *QAService) CreateConversation(ctx context.Context, userID, title string) (Conversation, error) {
@@ -271,6 +290,7 @@ func (s *QAService) ListMessages(ctx context.Context, userID, conversationID str
 }
 
 func (s *QAService) Ask(ctx context.Context, userID, conversationID string, input AskInput, observe ProgressObserver) (AskResult, error) {
+	input = normalizeAskInput(input)
 	if err := validateAskInput(input); err != nil {
 		return AskResult{}, err
 	}
@@ -283,6 +303,33 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		return AskResult{}, err
 	}
 
+	var qaConfigVersionID, llmConfigVersionID string
+	var maxIterations, overallTimeoutSeconds int
+	if s.resourceRepo != nil {
+		qaConfig, qaErr := s.resourceRepo.GetActiveQAConfigVersion(ctx)
+		if qaErr == nil {
+			qaConfigVersionID = qaConfig.ID
+			maxIterations = qaConfig.Agent.MaxIterations
+			overallTimeoutSeconds = qaConfig.Agent.OverallTimeoutSeconds
+		}
+		llmConfig, llmErr := s.resourceRepo.GetActiveLLMConfigVersion(ctx)
+		if llmErr == nil {
+			llmConfigVersionID = llmConfig.ID
+		}
+	}
+	if input.Agent.MaxIterations > 0 {
+		maxIterations = input.Agent.MaxIterations
+	}
+	if maxIterations <= 0 {
+		maxIterations = 5
+	}
+	if overallTimeoutSeconds <= 0 {
+		overallTimeoutSeconds = 120
+	}
+
+	timeoutCtx, cancelTimeout := context.WithTimeout(ctx, time.Duration(overallTimeoutSeconds)*time.Second)
+	defer cancelTimeout()
+
 	now := s.now().UTC()
 	intent := input.Mode
 	if intent == "" {
@@ -294,7 +341,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err != nil {
 		return AskResult{}, err
 	}
-	runCtx, cancelRun := context.WithCancel(ctx)
+	runCtx, cancelRun := context.WithCancel(timeoutCtx)
 	s.activeMu.Lock()
 	s.activeRuns[run.ID] = cancelRun
 	s.activeMu.Unlock()
@@ -314,7 +361,15 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 
 	runtime, release, err := s.runtime.Acquire()
 	if err != nil {
-		return AskResult{}, NewError(CodeDependency, "agent runtime is unavailable", err)
+		assistantMessage.Status = "failed"
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = s.repository.UpdateMessage(cleanupCtx, userID, assistantMessage)
+		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "agent runtime is unavailable"})
+		_ = s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events)
+		terminationReason := "model_error"
+		_ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, "failed", terminationReason, 0, 0)
+		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: []ReasoningStep{}}, NewError(CodeDependency, "agent runtime is unavailable", err)
 	}
 	defer release()
 	messages := make([]agent.Message, 0, len(history.Items)+3)
@@ -335,6 +390,8 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if profileID == "" {
 		profileID = "default"
 	}
+	var totalPromptTokens, totalCompletionTokens int
+	var lastFinishReason string
 	result, runErr := runtime.Runner.RunWithObserver(runCtx, messages, func(event agent.Event) {
 		switch event.Type {
 		case agent.EventModelStarted:
@@ -346,18 +403,30 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 				startedAt = s.now().UTC()
 			}
 			finishedAt := s.now().UTC()
+			latencyMs := finishedAt.Sub(startedAt).Milliseconds()
+			invocationStatus := "completed"
+			if event.FinishReason == "error" {
+				invocationStatus = "failed"
+			}
 			_, _ = s.repository.SaveModelInvocation(ctx, userID, ModelInvocation{
-				ResponseRunID: run.ID,
-				IterationNo:   event.Iteration,
-				Provider:      "ai-gateway",
-				ProfileID:     profileID,
-				ModelName:     runtime.LLMModel,
-				FinishReason:  event.FinishReason,
-				Status:        "completed",
-				StartedAt:     startedAt,
-				FinishedAt:    &finishedAt,
-				LatencyMS:     finishedAt.Sub(startedAt).Milliseconds(),
+				ResponseRunID:      run.ID,
+				IterationNo:        event.Iteration,
+				Provider:           "ai-gateway",
+				ProfileID:          profileID,
+				ModelName:          runtime.LLMModel,
+				FinishReason:       event.FinishReason,
+				Status:             invocationStatus,
+				PromptTokens:       event.PromptTokens,
+				CompletionTokens:   event.CompletionTokens,
+				ReasoningTokens:    event.ReasoningTokens,
+				TotalTokens:        event.TotalTokens,
+				StartedAt:          startedAt,
+				FinishedAt:         &finishedAt,
+				LatencyMS:          latencyMs,
 			})
+			totalPromptTokens += event.PromptTokens
+			totalCompletionTokens += event.CompletionTokens
+			lastFinishReason = event.FinishReason
 		case agent.EventToolStarted, agent.EventToolCompleted, agent.EventToolFailed:
 			emit(string(event.Type), map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration})
 		}
@@ -368,24 +437,36 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		steps = append(steps, step)
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
 	})
-	if runErr == nil && runCtx.Err() != nil {
-		runErr = runCtx.Err()
-	}
+
+	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason, result.Iteration, maxIterations)
+	assistantMessage.Status = "completed"
+	runStatus := "completed"
+
 	if runErr != nil {
 		assistantMessage.Status = "failed"
+		runStatus = "failed"
 		if errors.Is(runErr, context.Canceled) {
 			assistantMessage.Status = "cancelled"
+			runStatus = "cancelled"
 		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
+	} else if timeoutCtx.Err() != nil {
+		assistantMessage.Status = "failed"
+		runStatus = "failed"
+	}
+
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	if runErr != nil || timeoutCtx.Err() != nil {
 		_ = s.repository.UpdateMessage(cleanupCtx, userID, assistantMessage)
 		_ = s.repository.SaveReasoningSteps(cleanupCtx, userID, assistantMessage.ID, steps)
 		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "answer generation failed"})
 		_ = s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events)
+		_ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens)
 		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(CodeDependency, "answer generation failed", runErr)
 	}
+
 	assistantMessage.Content = result.Final.Content
-	assistantMessage.Status = "completed"
 	if err := s.repository.UpdateMessage(ctx, userID, assistantMessage); err != nil {
 		return AskResult{}, fmt.Errorf("save assistant message: %w", err)
 	}
@@ -397,10 +478,30 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err := s.repository.SaveStreamEvents(ctx, userID, run.ID, events); err != nil {
 		return AskResult{}, fmt.Errorf("save stream events: %w", err)
 	}
+	_ = s.repository.UpdateResponseRunTermination(ctx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens)
 	if completed, err := s.repository.GetResponseRun(ctx, userID, run.ID); err == nil {
 		run = completed
 	}
 	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
+}
+
+func terminationReasonFromResult(runErr error, timeoutCtx context.Context, runCtx context.Context, finishReason string, iteration int, maxIterations int) string {
+	if runErr != nil {
+		if errors.Is(runErr, context.Canceled) {
+			return "cancelled"
+		}
+		return "model_error"
+	}
+	if timeoutCtx.Err() != nil {
+		return "timeout"
+	}
+	if runCtx.Err() != nil {
+		return "cancelled"
+	}
+	if iteration >= maxIterations {
+		return "max_iterations"
+	}
+	return "completed"
 }
 
 func (s *QAService) CancelActiveRun(runID string) {
@@ -426,6 +527,50 @@ func publicStepStatus(value string) string {
 	return value
 }
 
+func normalizeAskInput(input AskInput) AskInput {
+	result := input
+	if len(result.KnowledgeBaseIDs) == 0 && len(result.KnowledgeBases) > 0 {
+		result.KnowledgeBaseIDs = result.KnowledgeBases
+	}
+	if result.Retrieval.TopK == 0 && result.Retrieval.TopKDeprecated > 0 {
+		result.Retrieval.TopK = result.Retrieval.TopKDeprecated
+	}
+	if result.Retrieval.ScoreThreshold == 0 && result.Retrieval.ScoreThresholdDeprecated > 0 {
+		result.Retrieval.ScoreThreshold = result.Retrieval.ScoreThresholdDeprecated
+	}
+	if !result.Retrieval.EnableRerank && result.Retrieval.UseRerankDeprecated {
+		result.Retrieval.EnableRerank = result.Retrieval.UseRerankDeprecated
+	}
+	if !result.Retrieval.EnableRerank && result.Retrieval.UseRerank {
+		result.Retrieval.EnableRerank = result.Retrieval.UseRerank
+	}
+	if result.Retrieval.ScoreThreshold == 0 && result.Retrieval.SimilarityThreshold > 0 {
+		result.Retrieval.ScoreThreshold = result.Retrieval.SimilarityThreshold
+	}
+	if result.Retrieval.TopK == 0 && result.Params.TopK > 0 {
+		result.Retrieval.TopK = result.Params.TopK
+	}
+	if result.Retrieval.TopK == 0 && result.Params.TopKDeprecated > 0 {
+		result.Retrieval.TopK = result.Params.TopKDeprecated
+	}
+	if result.Retrieval.ScoreThreshold == 0 && result.Params.ScoreThreshold > 0 {
+		result.Retrieval.ScoreThreshold = result.Params.ScoreThreshold
+	}
+	if result.Retrieval.ScoreThreshold == 0 && result.Params.ScoreThresholdDeprecated > 0 {
+		result.Retrieval.ScoreThreshold = result.Params.ScoreThresholdDeprecated
+	}
+	if !result.Retrieval.EnableRerank && result.Params.EnableRerank {
+		result.Retrieval.EnableRerank = result.Params.EnableRerank
+	}
+	if !result.Retrieval.EnableRerank && result.Params.UseRerank {
+		result.Retrieval.EnableRerank = result.Params.UseRerank
+	}
+	if !result.Retrieval.EnableRerank && result.Params.UseRerankDeprecated {
+		result.Retrieval.EnableRerank = result.Params.UseRerankDeprecated
+	}
+	return result
+}
+
 func validateAskInput(input AskInput) error {
 	message := strings.TrimSpace(input.Message)
 	if message == "" || utf8.RuneCountInString(message) > 32000 {
@@ -438,7 +583,8 @@ func validateAskInput(input AskInput) error {
 	if input.Mode == "data_analysis" {
 		return NewError(CodeUnsupportedIntent, "data analysis is not supported", nil)
 	}
-	if len(input.KnowledgeBaseIDs) > 50 {
+	totalKB := len(input.KnowledgeBaseIDs) + len(input.KnowledgeBases)
+	if totalKB > 50 {
 		return ValidationError(map[string]string{"knowledgeBaseIds": "must not contain more than 50 items"})
 	}
 	return nil

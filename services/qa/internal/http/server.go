@@ -115,6 +115,36 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /internal/v1/qa-sessions/{sessionId}/messages", s.handleAsk)
 	s.registerResourceRoutes()
 	s.mux.HandleFunc("/", s.handleNotFound)
+	s.registerPublicRoutes()
+}
+
+func (s *Server) registerPublicRoutes() {
+	s.mux.HandleFunc("POST /api/v1/qa-sessions", s.handleCreateConversation)
+	s.mux.HandleFunc("GET /api/v1/qa-sessions", s.handleListConversations)
+	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}", s.handleGetConversation)
+	s.mux.HandleFunc("PATCH /api/v1/qa-sessions/{sessionId}", s.handleUpdateConversation)
+	s.mux.HandleFunc("DELETE /api/v1/qa-sessions/{sessionId}", s.handleDeleteConversation)
+	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}/messages", s.handleListMessages)
+	s.mux.HandleFunc("POST /api/v1/qa-sessions/{sessionId}/messages", s.handleAsk)
+	s.registerPublicResourceRoutes()
+}
+
+func (s *Server) registerPublicResourceRoutes() {
+	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}/events", s.handleListStreamEvents)
+	s.mux.HandleFunc("GET /api/v1/messages/{messageId}/citations", s.handleListMessageCitations)
+	s.mux.HandleFunc("GET /api/v1/citations/{citationId}", s.handleGetCitation)
+	s.mux.HandleFunc("POST /api/v1/citation-lookups", s.handleLookupCitations)
+	s.mux.HandleFunc("GET /api/v1/qa-config-versions/current", s.handleGetActiveQAConfigVersion)
+	s.mux.HandleFunc("POST /api/v1/qa-config-versions", s.handleCreateQAConfigVersion)
+	s.mux.HandleFunc("GET /api/v1/llm-config-versions/current", s.handleGetActiveLLMConfigVersion)
+	s.mux.HandleFunc("POST /api/v1/llm-config-versions", s.handleCreateLLMConfigVersion)
+	s.mux.HandleFunc("POST /api/v1/llm-connection-tests", s.handleTestLLMConnection)
+	s.mux.HandleFunc("POST /api/v1/retrieval-test-runs", s.handleCreateRetrievalTestRun)
+	s.mux.HandleFunc("GET /api/v1/retrieval-test-runs/{testRunId}", s.handleGetRetrievalTestRun)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/overview", s.handleGetMetricsOverview)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/trend", s.handleGetMetricsTrend)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/top-queries", s.handleGetTopQueries)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/intent-distribution", s.handleGetIntentDistribution)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -266,10 +296,36 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	includeThinking := true
+	if v := r.URL.Query().Get("includeThinking"); v != "" {
+		includeThinking = v != "false"
+	}
+	includeCitations := true
+	if v := r.URL.Query().Get("includeCitations"); v != "" {
+		includeCitations = v != "false"
+	}
 	result, err := s.qa.ListMessages(r.Context(), userID, r.PathValue("sessionId"), page, pageSize)
 	if err != nil {
 		writeError(w, r, err)
 		return
+	}
+	if includeCitations && s.resource != nil {
+		for i := range result.Items {
+			if result.Items[i].Role == agent.RoleAssistant {
+				citations, _ := s.resource.ListMessageCitations(r.Context(), userID, result.Items[i].ID)
+				result.Items[i].Citations = citations
+			}
+		}
+	}
+	if !includeThinking {
+		for i := range result.Items {
+			result.Items[i].ReasoningSteps = nil
+		}
+	}
+	if !includeCitations {
+		for i := range result.Items {
+			result.Items[i].Citations = nil
+		}
 	}
 	writePage(w, r, http.StatusOK, result)
 }
@@ -318,6 +374,9 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
+	heartbeatTicker := time.NewTicker(15 * time.Second)
+	defer heartbeatTicker.Stop()
+
 	sentError := false
 	observe := func(event service.ProgressEvent) {
 		if event.Type == "error" {
@@ -325,7 +384,24 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
 	}
+
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-heartbeatTicker.C:
+				writeSSE(w, flusher, "heartbeat", 0, map[string]any{})
+			case <-done:
+				return
+			case <-r.Context().Done():
+				return
+			}
+		}
+	}()
+
 	_, err := s.qa.Ask(r.Context(), userID, r.PathValue("sessionId"), input, observe)
+	close(done)
+
 	if err != nil {
 		appErr, ok := service.Classify(err)
 		if !ok {

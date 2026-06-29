@@ -31,7 +31,7 @@ SELECT
     rr.status,
     COALESCE(rr.current_iteration, 0)::integer,
     COALESCE(rr.max_iterations, 5)::integer,
-    rr.stop_reason,
+    rr.termination_reason,
     COALESCE(rr.prompt_tokens, 0) + COALESCE(rr.completion_tokens, 0) + COALESCE(rr.reasoning_tokens, 0),
     COALESCE(rr.latency_ms, 0)::bigint,
     rr.started_at,
@@ -52,9 +52,10 @@ WHERE rr.assistant_message_id = sqlc.arg(assistant_message_id)::uuid
 -- name: UpdateResponseRunByAssistantMessage :exec
 UPDATE response_runs
 SET status = sqlc.arg(status),
-    stop_reason = CASE
-        WHEN sqlc.arg(status) = 'completed' THEN NULL
-        ELSE sqlc.arg(status)
+    termination_reason = CASE
+        WHEN sqlc.arg(status) = 'completed' THEN 'completed'
+        WHEN sqlc.arg(status) = 'cancelled' THEN 'cancelled'
+        ELSE NULL
     END,
     completed_at = CASE
         WHEN sqlc.arg(status) <> 'running' THEN now()
@@ -71,10 +72,22 @@ UPDATE response_runs
 SET current_iteration = GREATEST(current_iteration, sqlc.arg(iteration_no))
 WHERE id = sqlc.arg(id)::uuid;
 
+-- name: UpdateResponseRunTermination :exec
+UPDATE response_runs rr
+SET status = sqlc.arg(status),
+    termination_reason = sqlc.arg(termination_reason),
+    prompt_tokens = sqlc.arg(prompt_tokens),
+    completion_tokens = sqlc.arg(completion_tokens),
+    completed_at = sqlc.arg(completed_at)
+FROM conversations c
+WHERE rr.id::text = sqlc.arg(id)::text
+    AND c.id = rr.conversation_id
+    AND c.external_user_id = sqlc.arg(external_user_id);
+
 -- name: CancelResponseRun :one
 UPDATE response_runs rr
 SET status = 'cancelled',
-    stop_reason = 'cancelled',
+    termination_reason = 'cancelled',
     completed_at = now(),
     latency_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000
 FROM conversations c

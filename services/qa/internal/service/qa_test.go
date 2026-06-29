@@ -65,6 +65,9 @@ func (r *fakeRepository) SaveReasoningSteps(_ context.Context, _, _ string, step
 func (r *fakeRepository) SaveModelInvocation(_ context.Context, _ string, invocation ModelInvocation) (string, error) {
 	return fmt.Sprintf("invocation-%d", invocation.IterationNo), nil
 }
+func (r *fakeRepository) UpdateResponseRunTermination(_ context.Context, _, _, _, _ string, _, _ int) error {
+	return nil
+}
 
 type fakeAgentRunner struct {
 	input []agent.Message
@@ -98,7 +101,7 @@ func TestAskPersistsConversationMessagesAndDisplayableSteps(t *testing.T) {
 	now := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Title: "新对话", Status: "active", CreatedAt: now, UpdatedAt: now}}
 	runner := &fakeAgentRunner{}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: runner, prompt: "system prompt"})
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: runner, prompt: "system prompt"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +140,7 @@ func TestAskRejectsUnsupportedDataAnalysis(t *testing.T) {
 
 func TestListConversationsNormalizesDocumentedOptions(t *testing.T) {
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", Status: "active"}}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"})
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +163,7 @@ func TestCancelActiveRunCancelsAgentAndPersistsCancelledMessage(t *testing.T) {
 	now := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}
 	runner := blockingAgentRunner{started: make(chan struct{})}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: runner, prompt: "system"})
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: runner, prompt: "system"})
 	if err != nil {
 		t.Fatal(err)
 	}

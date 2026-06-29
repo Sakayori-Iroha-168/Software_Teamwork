@@ -28,12 +28,16 @@ const (
 // Event intentionally excludes tool arguments, tool results, prompts, and
 // credentials. It is safe to adapt into logs or public progress summaries.
 type Event struct {
-	Type         EventType
-	Iteration    int
-	ToolCallID   string
-	ToolName     string
-	FinishReason string
-	Err          error
+	Type             EventType
+	Iteration        int
+	ToolCallID       string
+	ToolName         string
+	FinishReason     string
+	PromptTokens     int
+	CompletionTokens int
+	ReasoningTokens  int
+	TotalTokens      int
+	Err              error
 }
 
 type Observer func(Event)
@@ -121,7 +125,7 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 			return Result{}, fmt.Errorf("%w: expected assistant role, got %q", ErrInvalidResponse, assistant.Role)
 		}
 		messages = append(messages, assistant)
-		emit(observer, Event{Type: EventModelCompleted, Iteration: iteration, FinishReason: completion.FinishReason})
+		emit(observer, Event{Type: EventModelCompleted, Iteration: iteration, FinishReason: completion.FinishReason, PromptTokens: completion.Usage.PromptTokens, CompletionTokens: completion.Usage.CompletionTokens, ReasoningTokens: completion.Usage.ReasoningTokens, TotalTokens: completion.Usage.TotalTokens})
 
 		if len(assistant.ToolCalls) == 0 {
 			if strings.TrimSpace(assistant.Content) == "" {

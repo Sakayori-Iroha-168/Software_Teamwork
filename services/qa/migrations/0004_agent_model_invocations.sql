@@ -23,11 +23,17 @@ CREATE TABLE agent_model_invocations (
 CREATE INDEX idx_agent_model_invocations_run
     ON agent_model_invocations(response_run_id, iteration_no);
 
-ALTER TABLE agent_tool_calls
-    ADD CONSTRAINT agent_tool_calls_model_invocation_id_fkey
-    FOREIGN KEY (model_invocation_id) REFERENCES agent_model_invocations(id);
+ALTER TABLE response_runs
+    ADD COLUMN termination_reason TEXT CHECK (termination_reason IN ('completed', 'max_iterations', 'timeout', 'cancelled', 'model_error'));
+
+ALTER TABLE response_runs
+    DROP COLUMN IF EXISTS stop_reason;
 
 -- +goose Down
-ALTER TABLE agent_tool_calls
-    DROP CONSTRAINT IF EXISTS agent_tool_calls_model_invocation_id_fkey;
+ALTER TABLE response_runs
+    ADD COLUMN stop_reason TEXT;
+
+ALTER TABLE response_runs
+    DROP COLUMN IF EXISTS termination_reason;
+
 DROP TABLE IF EXISTS agent_model_invocations;

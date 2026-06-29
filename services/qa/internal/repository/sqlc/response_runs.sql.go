@@ -68,7 +68,7 @@ SELECT
     rr.status,
     COALESCE(rr.current_iteration, 0)::integer,
     COALESCE(rr.max_iterations, 5)::integer,
-    rr.stop_reason,
+    rr.termination_reason,
     COALESCE(rr.prompt_tokens, 0) + COALESCE(rr.completion_tokens, 0) + COALESCE(rr.reasoning_tokens, 0),
     COALESCE(rr.latency_ms, 0)::bigint,
     rr.started_at,
@@ -88,7 +88,7 @@ type ResponseRunRow struct {
 	Status             string         `json:"status"`
 	CurrentIteration   int32          `json:"current_iteration"`
 	MaxIterations      int32          `json:"max_iterations"`
-	StopReason         sql.NullString `json:"stop_reason"`
+	TerminationReason  sql.NullString `json:"termination_reason"`
 	TotalTokens        int32          `json:"total_tokens"`
 	LatencyMs          int64          `json:"latency_ms"`
 	StartedAt          time.Time      `json:"started_at"`
@@ -106,7 +106,7 @@ func (q *Queries) GetResponseRunForUser(ctx context.Context, id string, external
 		&item.Status,
 		&item.CurrentIteration,
 		&item.MaxIterations,
-		&item.StopReason,
+		&item.TerminationReason,
 		&item.TotalTokens,
 		&item.LatencyMs,
 		&item.StartedAt,
@@ -133,9 +133,10 @@ func (q *Queries) GetResponseRunIDByAssistantMessage(ctx context.Context, assist
 const updateResponseRunByAssistantMessage = `-- name: UpdateResponseRunByAssistantMessage :exec
 UPDATE response_runs
 SET status = $1,
-    stop_reason = CASE
-        WHEN $1 = 'completed' THEN NULL
-        ELSE $1
+    termination_reason = CASE
+        WHEN $1 = 'completed' THEN 'completed'
+        WHEN $1 = 'cancelled' THEN 'cancelled'
+        ELSE NULL
     END,
     completed_at = CASE
         WHEN $1 <> 'running' THEN now()
@@ -164,10 +165,28 @@ func (q *Queries) UpdateResponseRunIteration(ctx context.Context, iterationNo in
 	return err
 }
 
+const updateResponseRunTermination = `-- name: UpdateResponseRunTermination :exec
+UPDATE response_runs rr
+SET status = $1,
+    termination_reason = $2,
+    prompt_tokens = $3,
+    completion_tokens = $4,
+    completed_at = $5
+FROM conversations c
+WHERE rr.id::text = $6::text
+    AND c.id = rr.conversation_id
+    AND c.external_user_id = $7
+`
+
+func (q *Queries) UpdateResponseRunTermination(ctx context.Context, status string, terminationReason *string, promptTokens int, completionTokens int, completedAt time.Time, id string, externalUserID string) error {
+	_, err := q.db.Exec(ctx, updateResponseRunTermination, status, terminationReason, promptTokens, completionTokens, completedAt, id, externalUserID)
+	return err
+}
+
 const cancelResponseRun = `-- name: CancelResponseRun :one
 UPDATE response_runs rr
 SET status = 'cancelled',
-    stop_reason = 'cancelled',
+    termination_reason = 'cancelled',
     completed_at = now(),
     latency_ms = EXTRACT(EPOCH FROM (now() - started_at)) * 1000
 FROM conversations c

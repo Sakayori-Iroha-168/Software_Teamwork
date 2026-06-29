@@ -399,6 +399,22 @@ func (r *Postgres) GetResponseRun(ctx context.Context, userID, runID string) (se
 	return responseRunFromRow(row), nil
 }
 
+func (r *Postgres) UpdateResponseRunTermination(ctx context.Context, userID, runID, status, terminationReason string, promptTokens, completionTokens int) error {
+	now := time.Now().UTC()
+	var terminationReasonPtr *string
+	if terminationReason != "" {
+		terminationReasonPtr = &terminationReason
+	}
+	err := r.queries.UpdateResponseRunTermination(ctx, runID, userID, status, terminationReasonPtr, promptTokens, completionTokens, now)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return service.NewError(service.CodeNotFound, "response run not found", err)
+	}
+	if err != nil {
+		return fmt.Errorf("update response run termination: %w", err)
+	}
+	return nil
+}
+
 func (r *Postgres) CancelResponseRun(ctx context.Context, userID, runID string) (service.ResponseRun, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
