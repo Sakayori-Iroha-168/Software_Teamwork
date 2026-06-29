@@ -402,20 +402,20 @@ func (r *Postgres) GetResponseRun(ctx context.Context, userID, runID string) (se
 	return responseRunFromRow(row), nil
 }
 
-func (r *Postgres) UpdateResponseRunTermination(ctx context.Context, userID, runID, status, terminationReason string, promptTokens, completionTokens, reasoningTokens int) error {
+func (r *Postgres) UpdateResponseRunTermination(ctx context.Context, userID, runID, status, terminationReason string, promptTokens, completionTokens, reasoningTokens int) (string, error) {
 	now := time.Now().UTC()
 	var terminationReasonPtr *string
 	if terminationReason != "" {
 		terminationReasonPtr = &terminationReason
 	}
-	err := r.queries.UpdateResponseRunTermination(ctx, status, terminationReasonPtr, promptTokens, completionTokens, reasoningTokens, now, runID, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return service.NewError(service.CodeNotFound, "response run not found", err)
+	id, err := r.queries.UpdateResponseRunTermination(ctx, status, terminationReasonPtr, promptTokens, completionTokens, reasoningTokens, now, runID, userID)
+	if errors.Is(err, pgx.ErrNoRows) || id == "" {
+		return "", service.NewError(service.CodeNotFound, "response run not found", err)
 	}
 	if err != nil {
-		return fmt.Errorf("update response run termination: %w", err)
+		return "", fmt.Errorf("update response run termination: %w", err)
 	}
-	return nil
+	return id, nil
 }
 
 func (r *Postgres) CancelResponseRun(ctx context.Context, userID, runID string) (service.ResponseRun, error) {

@@ -74,7 +74,7 @@ UPDATE response_runs
 SET current_iteration = GREATEST(current_iteration, sqlc.arg(iteration_no))
 WHERE id = sqlc.arg(id)::uuid;
 
--- name: UpdateResponseRunTermination :exec
+-- name: UpdateResponseRunTermination :one
 UPDATE response_runs rr
 SET status = sqlc.arg(status),
     termination_reason = sqlc.arg(termination_reason),
@@ -85,7 +85,8 @@ SET status = sqlc.arg(status),
 FROM conversations c
 WHERE rr.id::text = sqlc.arg(id)::text
     AND c.id = rr.conversation_id
-    AND c.external_user_id = sqlc.arg(external_user_id);
+    AND c.external_user_id = sqlc.arg(external_user_id)
+RETURNING rr.id;
 
 -- name: CancelResponseRun :one
 UPDATE response_runs rr

@@ -200,7 +200,7 @@ type Repository interface {
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
 	SaveModelInvocation(context.Context, string, ModelInvocation) (string, error)
 	GetResponseRun(context.Context, string, string) (ResponseRun, error)
-	UpdateResponseRunTermination(context.Context, string, string, string, string, int, int, int) error
+	UpdateResponseRunTermination(context.Context, string, string, string, string, int, int, int) (string, error)
 }
 
 type AgentRunner interface {
@@ -336,6 +336,9 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if maxIterations <= 0 {
 		maxIterations = 5
 	}
+	if maxIterations > 10 {
+		maxIterations = 10
+	}
 	if overallTimeoutSeconds <= 0 {
 		overallTimeoutSeconds = 120
 	}
@@ -381,7 +384,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "agent runtime is unavailable"})
 		_ = s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events)
 		terminationReason := "model_error"
-		_ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, "failed", terminationReason, 0, 0, 0)
+		_, _ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, "failed", terminationReason, 0, 0, 0)
 		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: []ReasoningStep{}}, NewError(CodeDependency, "agent runtime is unavailable", err)
 	}
 	defer release()
@@ -476,7 +479,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		_ = s.repository.SaveReasoningSteps(cleanupCtx, userID, assistantMessage.ID, steps)
 		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "answer generation failed"})
 		_ = s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events)
-		_ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
+		_, _ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
 		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(CodeDependency, "answer generation failed", runErr)
 	}
 
@@ -492,7 +495,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err := s.repository.SaveStreamEvents(ctx, userID, run.ID, events); err != nil {
 		return AskResult{}, fmt.Errorf("save stream events: %w", err)
 	}
-	_ = s.repository.UpdateResponseRunTermination(ctx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
+	_, _ = s.repository.UpdateResponseRunTermination(ctx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
 	if completed, err := s.repository.GetResponseRun(ctx, userID, run.ID); err == nil {
 		run = completed
 	}
