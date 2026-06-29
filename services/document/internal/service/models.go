@@ -340,7 +340,7 @@ type ReportSectionVersion struct {
 type ReportSettings struct {
 	ID                   string
 	LLMProfileID         *string
-	DefaultTemplateID    *string
+	DefaultTemplates     map[string]string
 	DefaultFileFormat    string
 	DefaultNumberingMode string
 	UpdatedAt            time.Time
@@ -350,7 +350,7 @@ type ReportSettings struct {
 // UpdateReportSettingsInput carries optional patch fields for PATCH /report-settings.
 type UpdateReportSettingsInput struct {
 	LLMProfileID         *string
-	DefaultTemplateID    *string
+	DefaultTemplates     map[string]string
 	DefaultFileFormat    *string
 	DefaultNumberingMode *string
 }
@@ -393,8 +393,11 @@ type OperationLogListFilter struct {
 	Page          int
 	PageSize      int
 	OperationType string
+	TargetType    string
 	TargetID      string
+	RequestID     string
 	RequestSource string
+	ToolName      string
 }
 
 // OperationLogListResult wraps the paginated log list.

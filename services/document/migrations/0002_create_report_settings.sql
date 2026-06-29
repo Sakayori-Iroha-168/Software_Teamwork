@@ -2,7 +2,7 @@
 CREATE TABLE report_settings (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     llm_profile_id text,
-    default_template_id uuid,
+    default_templates jsonb NOT NULL DEFAULT '{}'::jsonb,
     default_file_format text NOT NULL DEFAULT 'docx',
     default_numbering_mode text NOT NULL DEFAULT 'global',
     updated_at timestamptz NOT NULL DEFAULT now(),

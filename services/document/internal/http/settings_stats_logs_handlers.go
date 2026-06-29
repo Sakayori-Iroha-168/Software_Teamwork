@@ -41,8 +41,8 @@ func reportSettingsFromDomain(s service.ReportSettings) reportSettingsResponse {
 			ProfileID: s.LLMProfileID,
 		}
 	}
-	if s.DefaultTemplateID != nil {
-		resp.DefaultTemplates = map[string]string{"default": *s.DefaultTemplateID}
+	if len(s.DefaultTemplates) > 0 {
+		resp.DefaultTemplates = s.DefaultTemplates
 	}
 	return resp
 }
@@ -95,9 +95,7 @@ func (s *Server) handleUpdateReportSettings(w http.ResponseWriter, r *http.Reque
 		input.LLMProfileID = req.LLM.ProfileID
 	}
 	if req.DefaultTemplates != nil {
-		if v, ok := req.DefaultTemplates["default"]; ok {
-			input.DefaultTemplateID = &v
-		}
+		input.DefaultTemplates = req.DefaultTemplates
 	}
 	if req.File != nil {
 		input.DefaultFileFormat = req.File.DefaultFormat
@@ -211,8 +209,11 @@ func (s *Server) handleListOperationLogs(w http.ResponseWriter, r *http.Request)
 		Page:          page,
 		PageSize:      pageSize,
 		OperationType: q.Get("operationType"),
+		TargetType:    q.Get("targetType"),
 		TargetID:      q.Get("targetId"),
+		RequestID:     q.Get("requestId"),
 		RequestSource: q.Get("requestSource"),
+		ToolName:      q.Get("toolName"),
 	})
 	if err != nil {
 		writeError(w, r, err)

@@ -1336,15 +1336,16 @@ func isUniqueViolation(err error) bool {
 func (r *PostgresRepository) GetReportSettings(ctx context.Context) (service.ReportSettings, error) {
 	row := r.pool.QueryRow(ctx, `
 		SELECT id::text, llm_profile_id,
-		       default_template_id::text,
+		       default_templates,
 		       default_file_format, default_numbering_mode,
 		       updated_at, created_at
 		FROM report_settings LIMIT 1`)
 	var s service.ReportSettings
 	var id pgtype.Text
-	var llmProfileID, defaultTemplateID pgtype.Text
+	var llmProfileID pgtype.Text
+	var defaultTemplatesRaw []byte
 	var updatedAt, createdAt pgtype.Timestamptz
-	if err := row.Scan(&id, &llmProfileID, &defaultTemplateID,
+	if err := row.Scan(&id, &llmProfileID, &defaultTemplatesRaw,
 		&s.DefaultFileFormat, &s.DefaultNumberingMode,
 		&updatedAt, &createdAt); err != nil {
 		return service.ReportSettings{}, err
@@ -1354,9 +1355,11 @@ func (r *PostgresRepository) GetReportSettings(ctx context.Context) (service.Rep
 		v := llmProfileID.String
 		s.LLMProfileID = &v
 	}
-	if defaultTemplateID.Valid {
-		v := defaultTemplateID.String
-		s.DefaultTemplateID = &v
+	if len(defaultTemplatesRaw) > 0 {
+		_ = json.Unmarshal(defaultTemplatesRaw, &s.DefaultTemplates)
+	}
+	if s.DefaultTemplates == nil {
+		s.DefaultTemplates = map[string]string{}
 	}
 	s.UpdatedAt = timestamptzToTime(updatedAt)
 	s.CreatedAt = timestamptzToTime(createdAt)
@@ -1364,14 +1367,24 @@ func (r *PostgresRepository) GetReportSettings(ctx context.Context) (service.Rep
 }
 
 func (r *PostgresRepository) UpdateReportSettings(ctx context.Context, input service.UpdateReportSettingsInput) (service.ReportSettings, error) {
+	var defaultTemplatesJSON *[]byte
+	if input.DefaultTemplates != nil {
+		b, err := json.Marshal(input.DefaultTemplates)
+		if err != nil {
+			return service.ReportSettings{}, fmt.Errorf("marshal default_templates: %w", err)
+		}
+		defaultTemplatesJSON = &b
+	}
 	_, err := r.pool.Exec(ctx, `
 		UPDATE report_settings SET
 		  llm_profile_id         = COALESCE($1, llm_profile_id),
-		  default_template_id    = COALESCE($2, default_template_id),
+		  default_templates      = CASE WHEN $2::jsonb IS NOT NULL
+		                                THEN $2::jsonb
+		                                ELSE default_templates END,
 		  default_file_format    = COALESCE($3, default_file_format),
 		  default_numbering_mode = COALESCE($4, default_numbering_mode),
 		  updated_at             = now()`,
-		input.LLMProfileID, input.DefaultTemplateID,
+		input.LLMProfileID, defaultTemplatesJSON,
 		input.DefaultFileFormat, input.DefaultNumberingMode)
 	if err != nil {
 		return service.ReportSettings{}, err
@@ -1395,6 +1408,7 @@ func (r *PostgresRepository) GetReportStatisticsOverview(ctx context.Context) (s
 		SELECT DATE(created_at) AS day, COUNT(*)::int
 		FROM reports
 		WHERE status = 'generated'
+		  AND deleted_at IS NULL
 		  AND created_at >= now() - INTERVAL '30 days'
 		GROUP BY day ORDER BY day`)
 	if err != nil {
@@ -1423,11 +1437,15 @@ func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter servi
 		       COUNT(*) OVER() AS total
 		FROM report_operation_logs
 		WHERE ($1 = '' OR operation_type = $1)
-		  AND ($2 = '' OR target_id      = $2)
-		  AND ($3 = '' OR request_source = $3)
+		  AND ($2 = '' OR target_type    = $2)
+		  AND ($3 = '' OR target_id      = $3)
+		  AND ($4 = '' OR request_id     = $4)
+		  AND ($5 = '' OR request_source = $5)
+		  AND ($6 = '' OR tool_name      = $6)
 		ORDER BY created_at DESC
-		LIMIT $4 OFFSET $5`,
-		filter.OperationType, filter.TargetID, filter.RequestSource,
+		LIMIT $7 OFFSET $8`,
+		filter.OperationType, filter.TargetType, filter.TargetID,
+		filter.RequestID, filter.RequestSource, filter.ToolName,
 		filter.PageSize, offset)
 	if err != nil {
 		return service.OperationLogListResult{}, err
