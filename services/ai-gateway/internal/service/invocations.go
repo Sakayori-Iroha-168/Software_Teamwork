@@ -54,7 +54,7 @@ func (s *Service) CreateEmbeddings(ctx context.Context, req RequestContext, inpu
 	if callErr != nil {
 		return EmbeddingResponse{}, s.finishInvocation(ctx, invocation, metadata, nil, callErr)
 	}
-	if err := validateEmbeddingResponse(response); err != nil {
+	if err := validateEmbeddingResponse(response, len(input.Input)); err != nil {
 		return EmbeddingResponse{}, s.finishInvocation(ctx, invocation, metadata, nil, err)
 	}
 	if err := s.finishInvocation(ctx, invocation, metadata, response.Usage, nil); err != nil {
@@ -109,7 +109,7 @@ func (s *Service) CreateReranking(ctx context.Context, req RequestContext, input
 	if callErr != nil {
 		return RerankingResponse{}, s.finishInvocation(ctx, invocation, metadata, nil, callErr)
 	}
-	if err := validateRerankingResponse(response); err != nil {
+	if err := validateRerankingResponse(response, input.Documents); err != nil {
 		return RerankingResponse{}, s.finishInvocation(ctx, invocation, metadata, nil, err)
 	}
 	if err := s.finishInvocation(ctx, invocation, metadata, response.Usage, nil); err != nil {
@@ -315,26 +315,45 @@ func validateRerankingInput(input RerankingInput) map[string]string {
 	return fields
 }
 
-func validateEmbeddingResponse(response EmbeddingResponse) error {
-	if response.Object != "list" || strings.TrimSpace(response.Model) == "" || len(response.Data) == 0 {
+func validateEmbeddingResponse(response EmbeddingResponse, expectedCount int) error {
+	if response.Object != "list" || strings.TrimSpace(response.Model) == "" || expectedCount <= 0 || len(response.Data) != expectedCount {
 		return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
 	}
-	for _, item := range response.Data {
+	seen := make(map[int]struct{}, expectedCount)
+	for position, item := range response.Data {
 		if item.Object != "embedding" || !json.Valid(item.Embedding) || len(item.Embedding) == 0 {
 			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
 		}
+		if item.Index < 0 || item.Index >= expectedCount {
+			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
+		}
+		if _, ok := seen[item.Index]; ok {
+			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
+		}
+		if item.Index != position {
+			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
+		}
+		seen[item.Index] = struct{}{}
 	}
 	return nil
 }
 
-func validateRerankingResponse(response RerankingResponse) error {
-	if response.Object != "list" || strings.TrimSpace(response.Model) == "" {
+func validateRerankingResponse(response RerankingResponse, documents []RerankingDocument) error {
+	if response.Object != "list" || strings.TrimSpace(response.Model) == "" || len(response.Data) == 0 || len(response.Data) > len(documents) {
 		return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
 	}
+	seen := make(map[int]struct{}, len(response.Data))
 	for _, item := range response.Data {
-		if strings.TrimSpace(item.DocumentID) == "" {
+		if item.Index < 0 || item.Index >= len(documents) {
 			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
 		}
+		if _, ok := seen[item.Index]; ok {
+			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
+		}
+		if strings.TrimSpace(item.DocumentID) == "" || item.DocumentID != documents[item.Index].ID {
+			return NewProviderError(CodeDependency, "provider returned an invalid response", nil, nil)
+		}
+		seen[item.Index] = struct{}{}
 	}
 	return nil
 }
