@@ -278,6 +278,7 @@ type saveSectionRequest struct {
 	ParentID      *string           `json:"parentId,omitempty"`
 	Title         *string           `json:"title,omitempty"`
 	Level         *int              `json:"level,omitempty"`
+	SortOrder     *int              `json:"sortOrder,omitempty"`
 	Numbering     *string           `json:"numbering,omitempty"`
 	Content       *string           `json:"content,omitempty"`
 	Tables        *[]map[string]any `json:"tables,omitempty"`
@@ -295,6 +296,7 @@ func (r saveSectionRequest) toService() service.SaveSectionInput {
 		ParentID:      r.ParentID,
 		Title:         r.Title,
 		Level:         r.Level,
+		SortOrder:     r.SortOrder,
 		Numbering:     r.Numbering,
 		Content:       r.Content,
 		Tables:        r.Tables,

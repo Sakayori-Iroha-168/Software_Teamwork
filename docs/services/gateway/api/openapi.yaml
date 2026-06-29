@@ -3795,6 +3795,9 @@ components:
           type: string
         level:
           type: integer
+        sortOrder:
+          type: integer
+          minimum: 0
         numbering:
           type: string
         content:

@@ -1847,6 +1847,7 @@ export interface components {
             parentId?: string;
             title: string;
             level?: number;
+            sortOrder?: number;
             numbering?: string;
             content?: string;
             tables?: {

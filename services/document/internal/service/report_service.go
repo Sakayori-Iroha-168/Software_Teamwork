@@ -105,6 +105,7 @@ type SaveSectionInput struct {
 	ParentID      *string
 	Title         *string
 	Level         *int
+	SortOrder     *int
 	Numbering     *string
 	Content       *string
 	Tables        *[]map[string]any
@@ -434,6 +435,9 @@ func (s *ReportService) CreateSection(ctx context.Context, reqCtx RequestContext
 		return ReportSection{}, dependencyError("list report sections", err)
 	}
 	section := buildNewSection(reportID, input, nextSectionSortOrder(siblings, input.ParentID), s.now())
+	if err := validateSectionParent(reportID, section, sectionsByID(siblings)); err != nil {
+		return ReportSection{}, err
+	}
 	created, err := s.repo.CreateReportSection(ctx, section)
 	if err != nil {
 		return ReportSection{}, mapRepositoryReadError(err, "create report section failed")
@@ -497,12 +501,12 @@ func (s *ReportService) SaveSections(ctx context.Context, reqCtx RequestContext,
 		if err != nil {
 			return dependencyError("list report sections", err)
 		}
-		byID := map[string]ReportSection{}
-		for _, section := range existing {
-			byID[section.ID] = section
-		}
+		byID := sectionsByID(existing)
 
 		for _, item := range input.Sections {
+			if err := validateSectionSortOrder(item.SortOrder); err != nil {
+				return err
+			}
 			sectionID := strings.TrimSpace(item.ID)
 			if sectionID == "" {
 				createInput, err := createInputFromSaveSection(item)
@@ -510,6 +514,12 @@ func (s *ReportService) SaveSections(ctx context.Context, reqCtx RequestContext,
 					return err
 				}
 				section := buildNewSection(reportID, createInput, nextSectionSortOrder(existing, createInput.ParentID), s.now())
+				if item.SortOrder != nil {
+					section.SortOrder = *item.SortOrder
+				}
+				if err := validateSectionParent(reportID, section, byID); err != nil {
+					return err
+				}
 				created, err := txRepo.CreateReportSection(ctx, section)
 				if err != nil {
 					return mapRepositoryReadError(err, "create report section failed")
@@ -528,6 +538,9 @@ func (s *ReportService) SaveSections(ctx context.Context, reqCtx RequestContext,
 				return NewError(CodeConflict, "section content generation is in progress", nil)
 			}
 			section = applySectionSave(section, item, s.now())
+			if err := validateSectionParent(reportID, section, byID); err != nil {
+				return err
+			}
 			updated, err := txRepo.UpdateReportSection(ctx, section)
 			if err != nil {
 				return mapRepositoryReadError(err, "report section not found")
@@ -587,13 +600,16 @@ func applySectionSave(section ReportSection, input SaveSectionInput, updatedAt t
 		section.OutlineNodeID = *input.OutlineNodeID
 	}
 	if input.ParentID != nil {
-		section.ParentID = *input.ParentID
+		section.ParentID = strings.TrimSpace(*input.ParentID)
 	}
 	if input.Level != nil {
 		section.Level = *input.Level
 		if section.Level <= 0 {
 			section.Level = 1
 		}
+	}
+	if input.SortOrder != nil {
+		section.SortOrder = *input.SortOrder
 	}
 	if input.Numbering != nil {
 		section.Numbering = *input.Numbering
@@ -644,7 +660,7 @@ func buildNewSection(reportID string, input CreateSectionInput, sortOrder int, n
 	return ReportSection{
 		ID:               id,
 		ReportID:         reportID,
-		ParentID:         input.ParentID,
+		ParentID:         strings.TrimSpace(input.ParentID),
 		OutlineNodeID:    input.OutlineNodeID,
 		SectionPath:      id,
 		Title:            input.Title,
@@ -671,6 +687,57 @@ func nextSectionSortOrder(sections []ReportSection, parentID string) int {
 		}
 	}
 	return sortOrder
+}
+
+func sectionsByID(sections []ReportSection) map[string]ReportSection {
+	byID := map[string]ReportSection{}
+	for _, section := range sections {
+		byID[section.ID] = section
+	}
+	return byID
+}
+
+func validateSectionSortOrder(sortOrder *int) error {
+	if sortOrder != nil && *sortOrder < 0 {
+		return ValidationError(map[string]string{"sortOrder": "must be greater than or equal to 0"})
+	}
+	return nil
+}
+
+func validateSectionParent(reportID string, section ReportSection, sections map[string]ReportSection) error {
+	parentID := strings.TrimSpace(section.ParentID)
+	if parentID == "" {
+		return nil
+	}
+	if parentID == section.ID {
+		return ValidationError(map[string]string{"parentId": "must not reference the same section"})
+	}
+	parent, ok := sections[parentID]
+	if !ok || parent.ReportID != reportID {
+		return ValidationError(map[string]string{"parentId": "must reference a section in the same report"})
+	}
+
+	seen := map[string]struct{}{section.ID: {}}
+	current := parent
+	for {
+		if _, ok := seen[current.ID]; ok {
+			return ValidationError(map[string]string{"parentId": "must not create a section cycle"})
+		}
+		seen[current.ID] = struct{}{}
+
+		nextID := strings.TrimSpace(current.ParentID)
+		if nextID == "" {
+			return nil
+		}
+		if nextID == section.ID {
+			return ValidationError(map[string]string{"parentId": "must not create a section cycle"})
+		}
+		next, ok := sections[nextID]
+		if !ok || next.ReportID != reportID {
+			return ValidationError(map[string]string{"parentId": "must reference a section in the same report"})
+		}
+		current = next
+	}
 }
 
 func stringPtrValue(value *string) string {

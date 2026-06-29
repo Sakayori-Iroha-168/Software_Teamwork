@@ -225,8 +225,8 @@ func TestPostSectionsBatchSaveUsesCollectionEndpoint(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/reports/report-1/sections", strings.NewReader(`{
 		"sections": [
-			{"id": "section-1", "parentId": "parent-1", "outlineNodeId": "outline-1", "title": "Updated intro", "level": 2, "numbering": "1.1", "content": "edited body"},
-			{"title": "New section", "content": "new body"}
+			{"id": "section-1", "parentId": "parent-1", "outlineNodeId": "outline-1", "title": "Updated intro", "level": 2, "sortOrder": 3, "numbering": "1.1", "content": "edited body"},
+			{"title": "New section", "sortOrder": 4, "content": "new body"}
 		]
 	}`))
 	req.SetPathValue("reportId", "report-1")
@@ -248,6 +248,9 @@ func TestPostSectionsBatchSaveUsesCollectionEndpoint(t *testing.T) {
 	}
 	if fake.savedSections[0].Level == nil || *fake.savedSections[0].Level != 2 {
 		t.Fatalf("SaveSections level = %v, want 2", fake.savedSections[0].Level)
+	}
+	if fake.savedSections[0].SortOrder == nil || *fake.savedSections[0].SortOrder != 3 {
+		t.Fatalf("SaveSections sortOrder = %v, want 3", fake.savedSections[0].SortOrder)
 	}
 	if fake.savedSections[0].Numbering == nil || *fake.savedSections[0].Numbering != "1.1" {
 		t.Fatalf("SaveSections numbering = %v, want 1.1", fake.savedSections[0].Numbering)

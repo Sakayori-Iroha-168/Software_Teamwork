@@ -475,8 +475,12 @@ func TestSaveSectionsUpdatesMetadataWithoutBumpingVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSection() error = %v", err)
 	}
+	parent, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "Parent"})
+	if err != nil {
+		t.Fatalf("CreateSection(parent) error = %v", err)
+	}
 
-	parentID := "parent-section"
+	parentID := parent.ID
 	outlineNodeID := "outline-2"
 	title := "Updated intro"
 	level := 2
@@ -512,6 +516,82 @@ func TestSaveSectionsUpdatesMetadataWithoutBumpingVersion(t *testing.T) {
 	}
 	if updated.ManualEdited {
 		t.Fatalf("metadata-only save should respect manualEdited=false when content is unchanged")
+	}
+}
+
+func TestCreateSectionRejectsParentFromAnotherReport(t *testing.T) {
+	svc, _ := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	otherReport := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+
+	otherParent, err := svc.CreateSection(context.Background(), actor, otherReport.ID, CreateSectionInput{Title: "Other parent"})
+	if err != nil {
+		t.Fatalf("CreateSection(other parent) error = %v", err)
+	}
+
+	_, err = svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "Child", ParentID: otherParent.ID})
+	appErr, ok := Classify(err)
+	if !ok || appErr.Code != CodeValidation || appErr.Fields["parentId"] == "" {
+		t.Fatalf("expected parentId validation error, got %v", err)
+	}
+}
+
+func TestSaveSectionsRejectsParentCycle(t *testing.T) {
+	svc, _ := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+
+	first, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "First"})
+	if err != nil {
+		t.Fatalf("CreateSection(first) error = %v", err)
+	}
+	second, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "Second"})
+	if err != nil {
+		t.Fatalf("CreateSection(second) error = %v", err)
+	}
+
+	firstParent := second.ID
+	secondParent := first.ID
+	_, err = svc.SaveSections(context.Background(), actor, report.ID, SaveSectionsInput{
+		Sections: []SaveSectionInput{
+			{ID: first.ID, ParentID: &firstParent},
+			{ID: second.ID, ParentID: &secondParent},
+		},
+	})
+	appErr, ok := Classify(err)
+	if !ok || appErr.Code != CodeValidation || appErr.Fields["parentId"] == "" {
+		t.Fatalf("expected parentId cycle validation error, got %v", err)
+	}
+}
+
+func TestSaveSectionsPersistsExplicitSortOrder(t *testing.T) {
+	svc, repo := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+
+	first, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "First"})
+	if err != nil {
+		t.Fatalf("CreateSection(first) error = %v", err)
+	}
+	second, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "Second"})
+	if err != nil {
+		t.Fatalf("CreateSection(second) error = %v", err)
+	}
+
+	firstSortOrder := 1
+	secondSortOrder := 0
+	_, err = svc.SaveSections(context.Background(), actor, report.ID, SaveSectionsInput{
+		Sections: []SaveSectionInput{
+			{ID: second.ID, SortOrder: &secondSortOrder},
+			{ID: first.ID, SortOrder: &firstSortOrder},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveSections() error = %v", err)
+	}
+	if repo.sections[first.ID].SortOrder != firstSortOrder || repo.sections[second.ID].SortOrder != secondSortOrder {
+		t.Fatalf("sortOrder was not persisted: first=%d second=%d", repo.sections[first.ID].SortOrder, repo.sections[second.ID].SortOrder)
 	}
 }
 
