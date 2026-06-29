@@ -56,6 +56,11 @@ paths:
             type: string
             enum: [active, archived]
             default: active
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Optional text filter matched against the session title or latest message preview.
         - name: sort
           in: query
           schema:

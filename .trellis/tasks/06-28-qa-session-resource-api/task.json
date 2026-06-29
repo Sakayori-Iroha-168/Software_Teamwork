@@ -2,7 +2,7 @@
   "id": "qa-session-resource-api",
   "name": "qa-session-resource-api",
   "title": "QA session resource API",
-  "description": "",
+  "description": "Implement DLQA-169 QA session resource API and keep it aligned with the gateway OpenAPI and QA service contract.",
   "status": "in_progress",
   "dev_type": null,
   "scope": "services/qa",

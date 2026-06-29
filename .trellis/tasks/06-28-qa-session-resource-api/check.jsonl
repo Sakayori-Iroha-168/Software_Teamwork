@@ -1,5 +1,6 @@
-{"file":"docs/services/qa.md","reason":"Verify implemented routes, DTO casing, envelopes, pagination, auth, and error behavior match the QA API contract."}
-{"file":"docs/services/qa-database.md","reason":"Verify the migration and repository model align with the QA conversation schema and ownership boundaries."}
+{"file":"docs/services/gateway/api/openapi.yaml","reason":"Verify implemented routes, query parameters, DTO casing, envelopes, pagination, auth, and error behavior match the active gateway contract."}
+{"file":"docs/services/qa/README.md","reason":"Verify QA service behavior and boundaries match the service contract notes."}
+{"file":"docs/services/qa/docs/data-models.md","reason":"Verify the migration and repository model align with the QA conversation schema and ownership boundaries."}
 {"file":".trellis/spec/backend/api-contracts.md","reason":"Check RESTful route shape, OpenAPI coverage, gateway context propagation, and response envelope consistency."}
 {"file":".trellis/spec/backend/database-guidelines.md","reason":"Check migration structure, soft-delete fields, indexes, and repository isolation assumptions."}
 {"file":".trellis/spec/backend/error-handling.md","reason":"Check standard error code/status mapping and requestId propagation."}

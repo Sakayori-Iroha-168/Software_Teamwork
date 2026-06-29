@@ -97,9 +97,10 @@ func TestListSessionsAggregatesMessagePreviewAndFiltersOwner(t *testing.T) {
 	now := time.Date(2026, 6, 28, 9, 0, 0, 0, time.UTC)
 	repo.SeedSession(repository.Session{ID: "s1", ExternalUserID: "usr_123", Title: "mine", Status: service.SessionStatusActive, CreatedAt: now, UpdatedAt: now.Add(time.Hour)})
 	repo.SeedSession(repository.Session{ID: "s2", ExternalUserID: "other", Title: "other", Status: service.SessionStatusActive, CreatedAt: now, UpdatedAt: now.Add(2 * time.Hour)})
+	repo.SeedSession(repository.Session{ID: "s3", ExternalUserID: "usr_123", Title: "unmatched", Status: service.SessionStatusActive, CreatedAt: now, UpdatedAt: now.Add(3 * time.Hour)})
 	repo.SeedMessages(repository.Message{ID: "m1", ConversationID: "s1", SequenceNo: 1, Content: "preview", CreatedAt: now})
 
-	req := authorizedRequest(http.MethodGet, "/api/v1/qa-sessions?page=1&pageSize=10", nil)
+	req := authorizedRequest(http.MethodGet, "/api/v1/qa-sessions?page=1&pageSize=10&q=preview", nil)
 	res := httptest.NewRecorder()
 	server.ServeHTTP(res, req)
 	if res.Code != http.StatusOK {

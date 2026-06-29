@@ -115,6 +115,7 @@ func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 		Page:     parseIntQuery(r, "page"),
 		PageSize: parseIntQuery(r, "pageSize"),
 		Status:   strings.TrimSpace(r.URL.Query().Get("status")),
+		Query:    strings.TrimSpace(r.URL.Query().Get("q")),
 		Sort:     strings.TrimSpace(r.URL.Query().Get("sort")),
 	}
 	result, err := s.sessions.ListSessions(r.Context(), reqCtx, input)

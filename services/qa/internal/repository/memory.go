@@ -76,7 +76,11 @@ func (r *MemoryRepository) ListSessionSummaries(ctx context.Context, filter Sess
 		if filter.Status != "" && session.Status != filter.Status {
 			continue
 		}
-		items = append(items, r.summaryLocked(session))
+		summary := r.summaryLocked(session)
+		if !matchesSessionQuery(summary, filter.Query) {
+			continue
+		}
+		items = append(items, summary)
 	}
 	sortSessionSummaries(items, filter.Sort)
 
@@ -184,6 +188,16 @@ func lastMessagePreview(messages []Message) string {
 		}
 	}
 	return ""
+}
+
+func matchesSessionQuery(summary SessionSummary, query string) bool {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return true
+	}
+	title := strings.ToLower(summary.Session.Title)
+	preview := strings.ToLower(summary.LastMessagePreview)
+	return strings.Contains(title, query) || strings.Contains(preview, query)
 }
 
 func sortSessionSummaries(items []SessionSummary, sortBy string) {

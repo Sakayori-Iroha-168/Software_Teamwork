@@ -62,6 +62,7 @@ func TestListSessionsFiltersOwnerAndAggregatesMessages(t *testing.T) {
 	repo.SeedSession(repository.Session{ID: "s1", ExternalUserID: "user_1", Title: "one", Status: service.SessionStatusActive, CreatedAt: now, UpdatedAt: now.Add(time.Hour)})
 	repo.SeedSession(repository.Session{ID: "s2", ExternalUserID: "user_2", Title: "other", Status: service.SessionStatusActive, CreatedAt: now, UpdatedAt: now.Add(2 * time.Hour)})
 	repo.SeedSession(repository.Session{ID: "s3", ExternalUserID: "user_1", Title: "archived", Status: service.SessionStatusArchived, CreatedAt: now, UpdatedAt: now.Add(3 * time.Hour)})
+	repo.SeedSession(repository.Session{ID: "s4", ExternalUserID: "user_1", Title: "different", Status: service.SessionStatusActive, CreatedAt: now, UpdatedAt: now.Add(4 * time.Hour)})
 	repo.SeedMessages(
 		repository.Message{ID: "m1", ConversationID: "s1", SequenceNo: 1, Content: "first", CreatedAt: now},
 		repository.Message{ID: "m2", ConversationID: "s1", SequenceNo: 2, Content: "latest preview", CreatedAt: now.Add(time.Minute)},
@@ -72,10 +73,10 @@ func TestListSessionsFiltersOwnerAndAggregatesMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSessions() error = %v", err)
 	}
-	if result.Page.Total != 1 || len(result.Sessions) != 1 {
+	if result.Page.Total != 2 || len(result.Sessions) != 2 {
 		t.Fatalf("result count = total %d len %d", result.Page.Total, len(result.Sessions))
 	}
-	session := result.Sessions[0]
+	session := result.Sessions[1]
 	if session.ID != "s1" || session.MessageCount != 2 || session.LastMessagePreview != "latest preview" {
 		t.Fatalf("session summary = %+v", session)
 	}
@@ -86,6 +87,14 @@ func TestListSessionsFiltersOwnerAndAggregatesMessages(t *testing.T) {
 	}
 	if archived.Page.Total != 1 || archived.Sessions[0].ID != "s3" {
 		t.Fatalf("archived result = %+v", archived)
+	}
+
+	filtered, err := sessions.ListSessions(context.Background(), service.RequestContext{UserID: "user_1"}, service.ListSessionsInput{Query: "preview"})
+	if err != nil {
+		t.Fatalf("ListSessions query error = %v", err)
+	}
+	if filtered.Page.Total != 1 || filtered.Sessions[0].ID != "s1" {
+		t.Fatalf("query filtered result = %+v", filtered)
 	}
 }
 

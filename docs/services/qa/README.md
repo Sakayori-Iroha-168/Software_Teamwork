@@ -362,6 +362,7 @@ JSON 成功、分页和错误响应遵循 [前后端集成契约](../../architec
 | `page` | `number` | 否 | `1` | 页码，从 1 开始。 |
 | `pageSize` | `number` | 否 | `20` | 每页数量。 |
 | `status` | `string` | 否 | `active` | 可选：`active`、`archived`。 |
+| `q` | `string` | 否 | - | 按会话标题或最近消息摘要过滤。 |
 | `sort` | `string` | 否 | `-updatedAt` | 排序字段。 |
 
 响应 `200`：

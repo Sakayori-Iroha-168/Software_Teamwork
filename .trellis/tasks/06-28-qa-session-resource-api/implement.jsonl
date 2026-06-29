@@ -1,5 +1,6 @@
-{"file":"docs/services/qa.md","reason":"Defines the QA session resource endpoints, response envelopes, auth context, pagination, and acceptance criteria for this backend API task."}
-{"file":"docs/services/qa-database.md","reason":"Defines the QA-owned conversation tables and aggregation data used by the session resource implementation."}
+{"file":"docs/services/gateway/api/openapi.yaml","reason":"Defines the active public QA session resource paths, query parameters, response envelopes, and DTO schemas."}
+{"file":"docs/services/qa/README.md","reason":"Explains QA session behavior, gateway context headers, message child resources, and implementation boundaries."}
+{"file":"docs/services/qa/docs/data-models.md","reason":"Defines the QA-owned conversation tables and aggregation data used by the session resource implementation."}
 {"file":".trellis/spec/backend/index.md","reason":"Backend pre-development checklist and service ownership guidance for Go service work."}
 {"file":".trellis/spec/backend/directory-structure.md","reason":"Service-local Go module layout, cmd/internal/api/migrations responsibilities, and Dockerfile placement."}
 {"file":".trellis/spec/backend/api-contracts.md","reason":"REST resource naming, standard success/error envelopes, gateway context headers, and OpenAPI expectations."}

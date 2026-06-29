@@ -94,6 +94,7 @@ type ListSessionsInput struct {
 	Page     int
 	PageSize int
 	Status   string
+	Query    string
 	Sort     string
 }
 
@@ -149,6 +150,7 @@ func (s *Service) ListSessions(ctx context.Context, reqCtx RequestContext, input
 	if sortBy == "" {
 		sortBy = "-updatedAt"
 	}
+	query := strings.TrimSpace(input.Query)
 
 	fields := map[string]string{}
 	if page < 1 {
@@ -170,6 +172,7 @@ func (s *Service) ListSessions(ctx context.Context, reqCtx RequestContext, input
 	result, err := s.store.ListSessionSummaries(ctx, repository.SessionListFilter{
 		ExternalUserID: reqCtx.UserID,
 		Status:         status,
+		Query:          query,
 		Sort:           sortBy,
 		Page:           page,
 		PageSize:       pageSize,

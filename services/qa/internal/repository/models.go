@@ -45,6 +45,7 @@ type SessionSummary struct {
 type SessionListFilter struct {
 	ExternalUserID string
 	Status         string
+	Query          string
 	Sort           string
 	Page           int
 	PageSize       int
