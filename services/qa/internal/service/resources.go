@@ -225,6 +225,7 @@ type ResourceRepository interface {
 	ListMessageCitations(context.Context, string, string) ([]Citation, error)
 	GetCitation(context.Context, string, string) (Citation, error)
 	LookupCitations(context.Context, string, []string) ([]Citation, error)
+	SaveCitations(context.Context, string, []Citation) ([]Citation, error)
 	ListToolCalls(context.Context, string, string) ([]AgentToolCall, error)
 	GetActiveQAConfigVersion(context.Context) (QAConfigVersion, error)
 	CreateQAConfigVersionResource(context.Context, string, CreateQAConfigVersionInput) (QAConfigVersion, error)
@@ -284,6 +285,26 @@ func (s *ResourceService) LookupCitations(ctx context.Context, userID string, id
 		return nil, ValidationError(map[string]string{"citationIds": "must contain between 1 and 100 items"})
 	}
 	return s.repository.LookupCitations(ctx, userID, ids)
+}
+
+// SaveCitations 在回答生成时持久化引用快照。citationNo 在同一条消息内保持稳定：
+// 调用方未指定时按入参顺序补 1..n，已指定的原样保留。
+func (s *ResourceService) SaveCitations(ctx context.Context, messageID string, citations []Citation) ([]Citation, error) {
+	if messageID == "" {
+		return nil, ValidationError(map[string]string{"messageId": "is required"})
+	}
+	prepared := make([]Citation, 0, len(citations))
+	for i, c := range citations {
+		if c.CitationNo <= 0 {
+			c.CitationNo = i + 1
+		}
+		c.MessageID = messageID
+		if c.Metadata == nil {
+			c.Metadata = map[string]any{}
+		}
+		prepared = append(prepared, c)
+	}
+	return s.repository.SaveCitations(ctx, messageID, prepared)
 }
 func (s *ResourceService) ListToolCalls(ctx context.Context, userID, id string) ([]AgentToolCall, error) {
 	return s.repository.ListToolCalls(ctx, userID, id)

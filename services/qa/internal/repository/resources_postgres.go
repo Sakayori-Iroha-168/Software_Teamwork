@@ -64,6 +64,33 @@ func (r *Postgres) LookupCitations(ctx context.Context, userID string, ids []str
 	defer rows.Close()
 	return scanCitations(rows)
 }
+func (r *Postgres) SaveCitations(ctx context.Context, messageID string, citations []service.Citation) ([]service.Citation, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("save citations: begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	saved := make([]service.Citation, 0, len(citations))
+	for _, c := range citations {
+		metadata, _ := json.Marshal(c.Metadata)
+		if len(metadata) == 0 || string(metadata) == "null" {
+			metadata = []byte("{}")
+		}
+		var id string
+		err = tx.QueryRow(ctx, `INSERT INTO citations(message_id,citation_no,external_kb_id,external_doc_id,external_chunk_id,doc_name,section_path,quote_text,context,page_number,score,rerank_score,chunk_type,metadata) VALUES($1,$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,NULLIF($7,''),NULLIF($8,''),NULLIF($9,''),$10,$11,$12,NULLIF($13,''),$14) ON CONFLICT (message_id,citation_no) DO UPDATE SET external_kb_id=EXCLUDED.external_kb_id,external_doc_id=EXCLUDED.external_doc_id,external_chunk_id=EXCLUDED.external_chunk_id,doc_name=EXCLUDED.doc_name,section_path=EXCLUDED.section_path,quote_text=EXCLUDED.quote_text,context=EXCLUDED.context,page_number=EXCLUDED.page_number,score=EXCLUDED.score,rerank_score=EXCLUDED.rerank_score,chunk_type=EXCLUDED.chunk_type,metadata=EXCLUDED.metadata RETURNING id::text`,
+			messageID, c.CitationNo, c.KnowledgeBaseID, c.DocumentID, c.ChunkID, c.DocumentName, c.SectionPath, c.Text, c.Context, c.PageNumber, c.Score, c.RerankScore, c.ChunkType, metadata).Scan(&id)
+		if err != nil {
+			return nil, fmt.Errorf("save citation: %w", err)
+		}
+		c.ID = id
+		c.MessageID = messageID
+		saved = append(saved, c)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("save citations: commit: %w", err)
+	}
+	return saved, nil
+}
 func scanCitations(rows pgx.Rows) ([]service.Citation, error) {
 	items := make([]service.Citation, 0)
 	for rows.Next() {
