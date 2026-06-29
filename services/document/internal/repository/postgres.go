@@ -1330,3 +1330,163 @@ func timestamptzToTimePtr(value pgtype.Timestamptz) *time.Time {
 func isUniqueViolation(err error) bool {
 	return strings.Contains(err.Error(), "duplicate key value") || strings.Contains(err.Error(), "SQLSTATE 23505")
 }
+
+// ── C-08 stubs ────────────────────────────────────────────────────────────────
+
+func (r *PostgresRepository) GetReportSettings(ctx context.Context) (service.ReportSettings, error) {
+	row := r.pool.QueryRow(ctx, `
+		SELECT id, llm_profile_id, default_template_id,
+		       default_file_format, default_numbering_mode,
+		       updated_at, created_at
+		FROM report_settings LIMIT 1`)
+	var s service.ReportSettings
+	var id pgtype.UUID
+	var llmProfileID, defaultTemplateID pgtype.Text
+	var updatedAt, createdAt pgtype.Timestamptz
+	if err := row.Scan(&id, &llmProfileID, &defaultTemplateID,
+		&s.DefaultFileFormat, &s.DefaultNumberingMode,
+		&updatedAt, &createdAt); err != nil {
+		return service.ReportSettings{}, err
+	}
+	s.ID = uuidToString(id)
+	if llmProfileID.Valid {
+		v := llmProfileID.String
+		s.LLMProfileID = &v
+	}
+	if defaultTemplateID.Valid {
+		v := defaultTemplateID.String
+		s.DefaultTemplateID = &v
+	}
+	s.UpdatedAt = timestamptzToTime(updatedAt)
+	s.CreatedAt = timestamptzToTime(createdAt)
+	return s, nil
+}
+
+func (r *PostgresRepository) UpdateReportSettings(ctx context.Context, input service.UpdateReportSettingsInput) (service.ReportSettings, error) {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE report_settings SET
+		  llm_profile_id         = COALESCE($1, llm_profile_id),
+		  default_template_id    = COALESCE($2, default_template_id),
+		  default_file_format    = COALESCE($3, default_file_format),
+		  default_numbering_mode = COALESCE($4, default_numbering_mode),
+		  updated_at             = now()`,
+		input.LLMProfileID, input.DefaultTemplateID,
+		input.DefaultFileFormat, input.DefaultNumberingMode)
+	if err != nil {
+		return service.ReportSettings{}, err
+	}
+	return r.GetReportSettings(ctx)
+}
+
+func (r *PostgresRepository) GetReportStatisticsOverview(ctx context.Context) (service.ReportStatisticsOverview, error) {
+	var o service.ReportStatisticsOverview
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT COUNT(*) FROM report_templates WHERE deleted_at IS NULL)::int,
+		  (SELECT COUNT(*) FROM reports       WHERE deleted_at IS NULL)::int,
+		  (SELECT COUNT(*) FROM reports       WHERE status = 'generated' AND deleted_at IS NULL)::int,
+		  (SELECT COUNT(*) FROM reports       WHERE status = 'failed'    AND deleted_at IS NULL)::int`).
+		Scan(&o.TemplateCount, &o.ReportCount, &o.GeneratedCount, &o.FailedCount)
+	if err != nil {
+		return service.ReportStatisticsOverview{}, err
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT DATE(created_at) AS day, COUNT(*)::int
+		FROM reports
+		WHERE status = 'generated'
+		  AND created_at >= now() - INTERVAL '30 days'
+		GROUP BY day ORDER BY day`)
+	if err != nil {
+		return service.ReportStatisticsOverview{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var t service.DailyTrend
+		if err := rows.Scan(&t.Date, &t.GeneratedCount); err != nil {
+			return service.ReportStatisticsOverview{}, err
+		}
+		o.Trend30d = append(o.Trend30d, t)
+	}
+	return o, rows.Err()
+}
+
+func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter service.OperationLogListFilter) (service.OperationLogListResult, error) {
+	offset := (filter.Page - 1) * filter.PageSize
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, operator_id, operator_name,
+		       operation_type, target_type, target_id,
+		       request_id, request_source, tool_name,
+		       parameter_summary, operation_result, error_message,
+		       metadata, created_at,
+		       COUNT(*) OVER() AS total
+		FROM report_operation_logs
+		WHERE ($1 = '' OR operation_type = $1)
+		  AND ($2 = '' OR target_id      = $2)
+		  AND ($3 = '' OR request_source = $3)
+		ORDER BY created_at DESC
+		LIMIT $4 OFFSET $5`,
+		filter.OperationType, filter.TargetID, filter.RequestSource,
+		filter.PageSize, offset)
+	if err != nil {
+		return service.OperationLogListResult{}, err
+	}
+	defer rows.Close()
+
+	var items []service.OperationLog
+	var total int
+	for rows.Next() {
+		var l service.OperationLog
+		var id, targetID pgtype.UUID
+		var operatorID, operatorName, requestID, requestSource, toolName, errorMessage pgtype.Text
+		var paramSummaryRaw, metadataRaw []byte
+		var createdAt pgtype.Timestamptz
+		if err := rows.Scan(
+			&id, &operatorID, &operatorName,
+			&l.OperationType, &l.TargetType, &targetID,
+			&requestID, &requestSource, &toolName,
+			&paramSummaryRaw, &l.OperationResult, &errorMessage,
+			&metadataRaw, &createdAt, &total,
+		); err != nil {
+			return service.OperationLogListResult{}, err
+		}
+		l.ID = uuidToString(id)
+		l.TargetID = uuidToString(targetID)
+		if operatorID.Valid {
+			v := operatorID.String; l.OperatorID = &v
+		}
+		if operatorName.Valid {
+			v := operatorName.String; l.OperatorName = &v
+		}
+		if requestID.Valid {
+			v := requestID.String; l.RequestID = &v
+		}
+		if requestSource.Valid {
+			v := requestSource.String; l.RequestSource = &v
+		}
+		if toolName.Valid {
+			v := toolName.String; l.ToolName = &v
+		}
+		if errorMessage.Valid {
+			v := errorMessage.String; l.ErrorMessage = &v
+		}
+		if len(paramSummaryRaw) > 0 {
+			_ = json.Unmarshal(paramSummaryRaw, &l.ParameterSummary)
+		}
+		if len(metadataRaw) > 0 {
+			_ = json.Unmarshal(metadataRaw, &l.Metadata)
+		}
+		l.CreatedAt = timestamptzToTime(createdAt)
+		items = append(items, l)
+	}
+	if err := rows.Err(); err != nil {
+		return service.OperationLogListResult{}, err
+	}
+	if items == nil {
+		items = []service.OperationLog{}
+	}
+	return service.OperationLogListResult{
+		Items: items,
+		Page:  service.PageMeta{Page: filter.Page, PageSize: filter.PageSize, Total: total},
+	}, nil
+}

@@ -312,6 +312,22 @@ func (r *fakeRepository) DeleteReportMaterial(context.Context, string, time.Time
 	return nil
 }
 
+func (r *fakeRepository) GetReportSettings(context.Context) (ReportSettings, error) {
+	return ReportSettings{}, nil
+}
+
+func (r *fakeRepository) UpdateReportSettings(_ context.Context, input UpdateReportSettingsInput) (ReportSettings, error) {
+	return ReportSettings{}, nil
+}
+
+func (r *fakeRepository) GetReportStatisticsOverview(context.Context) (ReportStatisticsOverview, error) {
+	return ReportStatisticsOverview{}, nil
+}
+
+func (r *fakeRepository) ListOperationLogs(_ context.Context, filter OperationLogListFilter) (OperationLogListResult, error) {
+	return OperationLogListResult{Items: []OperationLog{}, Page: PageMeta{Page: filter.Page, PageSize: filter.PageSize}}, nil
+}
+
 type fakeFileClient struct {
 	file          FileObject
 	createErr     error
