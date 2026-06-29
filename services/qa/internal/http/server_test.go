@@ -154,6 +154,23 @@ func TestAPIRequiresServiceToken(t *testing.T) {
 	}
 }
 
+func TestOrdinaryUserCannotCreateQAConfigVersion(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-config-versions", strings.NewReader(`{"topK":5}`))
+	request.Header.Set("X-User-Id", "ordinary-user")
+	request.Header.Set("X-Service-Token", "test-service-token")
+
+	server.ServeHTTP(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("unexpected error body: %s", recorder.Body.String())
+	}
+}
+
 func TestCreateConversationMatchesContract(t *testing.T) {
 	now := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
 	server := newTestServer(t, fakeQAService{create: func(_ context.Context, userID, title string) (service.Conversation, error) {
