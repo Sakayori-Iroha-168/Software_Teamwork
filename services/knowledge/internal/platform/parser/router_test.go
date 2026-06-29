@@ -204,6 +204,50 @@ func TestRouterRejectsEmptyAndOversizedDocuments(t *testing.T) {
 	}
 }
 
+func TestRouterRejectsDOCXWithOversizedExpandedXML(t *testing.T) {
+	largeText := strings.Repeat("A", 8<<20+1)
+	docx := officeZip(t, map[string]string{
+		"word/document.xml": `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>` + largeText + `</w:t></w:r></w:p></w:body></w:document>`,
+	})
+
+	_, err := parser.NewRouter().Parse(context.Background(), service.ParseInput{
+		Name:        "large.docx",
+		ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+		Body:        bytes.NewReader(docx),
+		SizeBytes:   int64(len(docx)),
+	})
+	if err == nil {
+		t.Fatal("Parse() oversized docx XML error = nil, want error")
+	}
+	if strings.Contains(err.Error(), largeText[:64]) {
+		t.Fatalf("error leaked source content: %v", err)
+	}
+}
+
+func TestRouterRejectsXLSXWithExcessiveExpandedXMLTotal(t *testing.T) {
+	sheetPayload := strings.Repeat("A", 6<<20)
+	xlsx := officeZip(t, map[string]string{
+		"xl/workbook.xml":            `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheets><sheet name="One" sheetId="1" r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><sheet name="Two" sheetId="2" r:id="rId2" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/><sheet name="Three" sheetId="3" r:id="rId3" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/></sheets></workbook>`,
+		"xl/_rels/workbook.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Target="worksheets/sheet3.xml"/></Relationships>`,
+		"xl/worksheets/sheet1.xml":   `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c><is><t>` + sheetPayload + `</t></is></c></row></sheetData></worksheet>`,
+		"xl/worksheets/sheet2.xml":   `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c><is><t>` + sheetPayload + `</t></is></c></row></sheetData></worksheet>`,
+		"xl/worksheets/sheet3.xml":   `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row><c><is><t>` + sheetPayload + `</t></is></c></row></sheetData></worksheet>`,
+	})
+
+	_, err := parser.NewRouter().Parse(context.Background(), service.ParseInput{
+		Name:        "large.xlsx",
+		ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+		Body:        bytes.NewReader(xlsx),
+		SizeBytes:   int64(len(xlsx)),
+	})
+	if err == nil {
+		t.Fatal("Parse() excessive xlsx expanded XML error = nil, want error")
+	}
+	if strings.Contains(err.Error(), sheetPayload[:64]) {
+		t.Fatalf("error leaked source content: %v", err)
+	}
+}
+
 func TestRouterParsesPDFThroughOCR(t *testing.T) {
 	ocr := &fakeOCRClient{
 		textByName: map[string]string{
@@ -297,6 +341,52 @@ func TestRouterSkipsUnusedAndExternalPPTXImageRelationships(t *testing.T) {
 	}
 }
 
+func TestRouterRejectsPPTXOversizedImageBeforeOCR(t *testing.T) {
+	ocr := &fakeOCRClient{textByName: map[string]string{
+		"ppt/media/image1.png": "must not OCR oversized image",
+	}}
+	largeImage := string(bytes.Repeat([]byte{'i'}, 4<<20+1))
+	pptx := pptxWithSlideImages(t, []pptxImage{{name: "image1.png", content: largeImage}})
+
+	_, err := parser.NewRouterWithOCR(ocr).Parse(context.Background(), service.ParseInput{
+		Name:        "training.pptx",
+		ContentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		Body:        bytes.NewReader(pptx),
+		SizeBytes:   int64(len(pptx)),
+	})
+	if err == nil {
+		t.Fatal("Parse() oversized pptx image error = nil, want error")
+	}
+	if len(ocr.requests) != 0 {
+		t.Fatalf("ocr requests = %+v, want none for oversized image", ocr.requests)
+	}
+}
+
+func TestRouterRejectsPPTXWithTooManyImagesBeforeOCR(t *testing.T) {
+	images := make([]pptxImage, 17)
+	ocrTexts := make(map[string]string, len(images))
+	for i := range images {
+		name := fmt.Sprintf("image%d.png", i+1)
+		images[i] = pptxImage{name: name, content: "tiny"}
+		ocrTexts["ppt/media/"+name] = "must not OCR too many images"
+	}
+	ocr := &fakeOCRClient{textByName: ocrTexts}
+	pptx := pptxWithSlideImages(t, images)
+
+	_, err := parser.NewRouterWithOCR(ocr).Parse(context.Background(), service.ParseInput{
+		Name:        "training.pptx",
+		ContentType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+		Body:        bytes.NewReader(pptx),
+		SizeBytes:   int64(len(pptx)),
+	})
+	if err == nil {
+		t.Fatal("Parse() too many pptx images error = nil, want error")
+	}
+	if len(ocr.requests) != 0 {
+		t.Fatalf("ocr requests = %d, want none when image count exceeds limit", len(ocr.requests))
+	}
+}
+
 func officeZip(t *testing.T, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -314,6 +404,40 @@ func officeZip(t *testing.T, files map[string]string) []byte {
 		t.Fatalf("zip Close() error = %v", err)
 	}
 	return buf.Bytes()
+}
+
+type pptxImage struct {
+	name    string
+	content string
+}
+
+func pptxWithSlideImages(t *testing.T, images []pptxImage) []byte {
+	t.Helper()
+	var slide strings.Builder
+	var rels strings.Builder
+	slide.WriteString(`<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:cSld><p:spTree>`)
+	rels.WriteString(`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`)
+	files := map[string]string{
+		"ppt/presentation.xml":            `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>`,
+		"ppt/_rels/presentation.xml.rels": `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="slides/slide1.xml"/></Relationships>`,
+	}
+	for i, image := range images {
+		id := fmt.Sprintf("rImage%d", i+1)
+		slide.WriteString(`<p:pic><p:blipFill><a:blip r:embed="`)
+		slide.WriteString(id)
+		slide.WriteString(`"/></p:blipFill></p:pic>`)
+		rels.WriteString(`<Relationship Id="`)
+		rels.WriteString(id)
+		rels.WriteString(`" Target="../media/`)
+		rels.WriteString(image.name)
+		rels.WriteString(`" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"/>`)
+		files["ppt/media/"+image.name] = image.content
+	}
+	slide.WriteString(`</p:spTree></p:cSld></p:sld>`)
+	rels.WriteString(`</Relationships>`)
+	files["ppt/slides/slide1.xml"] = slide.String()
+	files["ppt/slides/_rels/slide1.xml.rels"] = rels.String()
+	return officeZip(t, files)
 }
 
 type fakeOCRClient struct {

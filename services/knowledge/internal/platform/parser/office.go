@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -15,8 +16,18 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/knowledge/internal/service"
 )
 
+const (
+	maxOfficeXMLEntryBytes = uint64(maxParsedTextBytes)
+	maxOfficeXMLTotalBytes = uint64(maxParsedTextBytes * 2)
+	maxPPTXOCRImageBytes   = uint64(4 << 20)
+	maxPPTXOCRImages       = 16
+)
+
+var errArchiveEntryMissing = errors.New("document archive is missing required content")
+
 func parseDOCX(archive *zip.Reader) (service.ParsedDocument, error) {
-	data, err := readArchiveFile(archive, "word/document.xml")
+	reader := newOfficeArchiveReader(archive)
+	data, err := reader.readXML("word/document.xml")
 	if err != nil {
 		return service.ParsedDocument{}, err
 	}
@@ -40,14 +51,15 @@ type ocrRequestContext struct {
 }
 
 func parsePPTX(ctx context.Context, archive *zip.Reader, ocr OCRClient, requestContext ocrRequestContext) (service.ParsedDocument, error) {
-	slideFiles := orderedPresentationSlides(archive)
+	reader := newOfficeArchiveReader(archive)
+	slideFiles := orderedPresentationSlides(reader)
 	if len(slideFiles) == 0 {
 		return service.ParsedDocument{}, fmt.Errorf("presentation has no slides")
 	}
 	sections := make([]string, 0, len(slideFiles))
 	title := ""
 	for index, file := range slideFiles {
-		data, err := readArchiveFile(archive, file)
+		data, err := reader.readXML(file)
 		if err != nil {
 			return service.ParsedDocument{}, err
 		}
@@ -55,7 +67,7 @@ func parsePPTX(ctx context.Context, archive *zip.Reader, ocr OCRClient, requestC
 		if err != nil {
 			return service.ParsedDocument{}, err
 		}
-		ocrParagraphs, err := extractSlideOCRText(ctx, archive, file, ocr, requestContext)
+		ocrParagraphs, err := extractSlideOCRText(ctx, reader, file, ocr, requestContext)
 		if err != nil {
 			return service.ParsedDocument{}, err
 		}
@@ -86,7 +98,7 @@ func firstPresentationTitle(content string) string {
 	return firstNonEmptyLine(content)
 }
 
-func extractSlideOCRText(ctx context.Context, archive *zip.Reader, slideFile string, ocr OCRClient, requestContext ocrRequestContext) ([]string, error) {
+func extractSlideOCRText(ctx context.Context, archive *officeArchiveReader, slideFile string, ocr OCRClient, requestContext ocrRequestContext) ([]string, error) {
 	if ocr == nil {
 		return nil, nil
 	}
@@ -94,11 +106,17 @@ func extractSlideOCRText(ctx context.Context, archive *zip.Reader, slideFile str
 	if len(imageTargets) == 0 {
 		return nil, nil
 	}
+	if len(imageTargets) > archive.remainingOCRImages() {
+		return nil, fmt.Errorf("presentation contains too many images for OCR")
+	}
 	paragraphs := make([]string, 0, len(imageTargets))
 	for index, target := range imageTargets {
-		data, err := readArchiveFile(archive, target)
+		data, err := archive.readOCRImage(target)
 		if err != nil {
-			continue
+			if errors.Is(err, errArchiveEntryMissing) {
+				continue
+			}
+			return nil, err
 		}
 		result, err := ocr.ExtractText(ctx, OCRRequest{
 			DocumentName: target,
@@ -119,17 +137,18 @@ func extractSlideOCRText(ctx context.Context, archive *zip.Reader, slideFile str
 }
 
 func parseXLSX(archive *zip.Reader) (service.ParsedDocument, error) {
-	sheetFiles := orderedWorkbookSheets(archive)
+	reader := newOfficeArchiveReader(archive)
+	sheetFiles := orderedWorkbookSheets(reader)
 	if len(sheetFiles) == 0 {
 		return service.ParsedDocument{}, fmt.Errorf("spreadsheet has no worksheets")
 	}
-	sharedStrings, err := parseSharedStrings(archive)
+	sharedStrings, err := parseSharedStrings(reader)
 	if err != nil {
 		return service.ParsedDocument{}, err
 	}
 	sections := make([]string, 0, len(sheetFiles))
 	for index, file := range sheetFiles {
-		data, err := readArchiveFile(archive, file)
+		data, err := reader.readXML(file)
 		if err != nil {
 			return service.ParsedDocument{}, err
 		}
@@ -150,31 +169,93 @@ func parseXLSX(archive *zip.Reader) (service.ParsedDocument, error) {
 	return service.ParsedDocument{Content: content, Title: firstNonEmptyLine(content)}, nil
 }
 
-func readArchiveFile(archive *zip.Reader, name string) ([]byte, error) {
-	if archive == nil {
+type officeArchiveReader struct {
+	archive  *zip.Reader
+	xmlBytes uint64
+	images   int
+}
+
+func newOfficeArchiveReader(archive *zip.Reader) *officeArchiveReader {
+	return &officeArchiveReader{archive: archive}
+}
+
+func (r *officeArchiveReader) readXML(name string) ([]byte, error) {
+	if r == nil {
 		return nil, fmt.Errorf("document archive is missing")
 	}
-	for _, file := range archive.File {
+	remaining := maxOfficeXMLTotalBytes
+	if r.xmlBytes >= maxOfficeXMLTotalBytes {
+		return nil, fmt.Errorf("document archive expanded content is too large")
+	}
+	remaining -= r.xmlBytes
+	limit := maxOfficeXMLEntryBytes
+	if remaining < limit {
+		limit = remaining
+	}
+	data, err := r.readFile(name, limit)
+	if err != nil {
+		return nil, err
+	}
+	r.xmlBytes += uint64(len(data))
+	return data, nil
+}
+
+func (r *officeArchiveReader) readOCRImage(name string) ([]byte, error) {
+	if r == nil {
+		return nil, fmt.Errorf("document archive is missing")
+	}
+	if r.images >= maxPPTXOCRImages {
+		return nil, fmt.Errorf("presentation contains too many images for OCR")
+	}
+	data, err := r.readFile(name, maxPPTXOCRImageBytes)
+	if err != nil {
+		return nil, err
+	}
+	r.images++
+	return data, nil
+}
+
+func (r *officeArchiveReader) remainingOCRImages() int {
+	if r == nil || r.images >= maxPPTXOCRImages {
+		return 0
+	}
+	return maxPPTXOCRImages - r.images
+}
+
+func (r *officeArchiveReader) readFile(name string, limit uint64) ([]byte, error) {
+	if r == nil || r.archive == nil {
+		return nil, fmt.Errorf("document archive is missing")
+	}
+	for _, file := range r.archive.File {
 		if file.Name != name {
 			continue
+		}
+		if file.UncompressedSize64 > limit {
+			return nil, fmt.Errorf("document archive entry is too large")
 		}
 		reader, err := file.Open()
 		if err != nil {
 			return nil, fmt.Errorf("document archive entry could not be opened")
 		}
 		defer reader.Close()
-		data, err := io.ReadAll(reader)
+		data, err := io.ReadAll(io.LimitReader(reader, int64(limit)+1))
 		if err != nil {
 			return nil, fmt.Errorf("document archive entry could not be read")
 		}
+		if uint64(len(data)) > limit {
+			return nil, fmt.Errorf("document archive entry is too large")
+		}
 		return data, nil
 	}
-	return nil, fmt.Errorf("document archive is missing required content")
+	return nil, errArchiveEntryMissing
 }
 
-func sortedArchiveFiles(archive *zip.Reader, prefix string, suffix string) []string {
+func sortedArchiveFiles(archive *officeArchiveReader, prefix string, suffix string) []string {
 	files := []string{}
-	for _, file := range archive.File {
+	if archive == nil || archive.archive == nil {
+		return files
+	}
+	for _, file := range archive.archive.File {
 		if strings.HasPrefix(file.Name, prefix) && strings.HasSuffix(file.Name, suffix) && !strings.HasSuffix(file.Name, "/") {
 			files = append(files, file.Name)
 		}
@@ -190,9 +271,9 @@ func sortedArchiveFiles(archive *zip.Reader, prefix string, suffix string) []str
 	return files
 }
 
-func orderedPresentationSlides(archive *zip.Reader) []string {
+func orderedPresentationSlides(archive *officeArchiveReader) []string {
 	fallback := sortedArchiveFiles(archive, "ppt/slides/", ".xml")
-	presentation, err := readArchiveFile(archive, "ppt/presentation.xml")
+	presentation, err := archive.readXML("ppt/presentation.xml")
 	if err != nil {
 		return fallback
 	}
@@ -211,9 +292,9 @@ func orderedPresentationSlides(archive *zip.Reader) []string {
 	return files
 }
 
-func orderedWorkbookSheets(archive *zip.Reader) []string {
+func orderedWorkbookSheets(archive *officeArchiveReader) []string {
 	fallback := sortedArchiveFiles(archive, "xl/worksheets/", ".xml")
-	workbook, err := readArchiveFile(archive, "xl/workbook.xml")
+	workbook, err := archive.readXML("xl/workbook.xml")
 	if err != nil {
 		return fallback
 	}
@@ -232,8 +313,8 @@ func orderedWorkbookSheets(archive *zip.Reader) []string {
 	return files
 }
 
-func relationshipsFor(archive *zip.Reader, relsPath string, baseDir string) map[string]string {
-	data, err := readArchiveFile(archive, relsPath)
+func relationshipsFor(archive *officeArchiveReader, relsPath string, baseDir string) map[string]string {
+	data, err := archive.readXML(relsPath)
 	if err != nil {
 		return nil
 	}
@@ -261,8 +342,8 @@ func relationshipsFor(archive *zip.Reader, relsPath string, baseDir string) map[
 	return rels
 }
 
-func imageTargetsForSlide(archive *zip.Reader, slideFile string) []string {
-	slideData, err := readArchiveFile(archive, slideFile)
+func imageTargetsForSlide(archive *officeArchiveReader, slideFile string) []string {
+	slideData, err := archive.readXML(slideFile)
 	if err != nil {
 		return nil
 	}
@@ -271,7 +352,7 @@ func imageTargetsForSlide(archive *zip.Reader, slideFile string) []string {
 		return nil
 	}
 	relsPath := path.Dir(slideFile) + "/_rels/" + path.Base(slideFile) + ".rels"
-	data, err := readArchiveFile(archive, relsPath)
+	data, err := archive.readXML(relsPath)
 	if err != nil {
 		return nil
 	}
@@ -466,11 +547,11 @@ func extractParagraphText(data []byte) ([]string, error) {
 	return paragraphs, nil
 }
 
-func parseSharedStrings(archive *zip.Reader) ([]string, error) {
-	if !hasZipFile(archive, "xl/sharedStrings.xml") {
+func parseSharedStrings(archive *officeArchiveReader) ([]string, error) {
+	if archive == nil || archive.archive == nil || !hasZipFile(archive.archive, "xl/sharedStrings.xml") {
 		return nil, nil
 	}
-	data, err := readArchiveFile(archive, "xl/sharedStrings.xml")
+	data, err := archive.readXML("xl/sharedStrings.xml")
 	if err != nil {
 		return nil, err
 	}
