@@ -11,9 +11,15 @@
  *   error            heartbeat
  */
 
-import type { KnowledgeQueryRequest, KnowledgeQuerySummary, QASseEventType } from '@/lib/types'
+import type {
+  KnowledgeQueryRequest,
+  KnowledgeQuerySummary,
+  QAMessage,
+  QASseEvent,
+  QASseEventType,
+} from '@/lib/types'
 
-import { apiClient, gatewayRequest } from './client'
+import { apiClient, buildQuery, gatewayRequest } from './client'
 
 // ---------------------------------------------------------------------------
 // SSE handlers interface
@@ -31,27 +37,6 @@ export interface ChatStreamHandlers {
   onAnswerCompleted?: (data: Record<string, unknown> & { seq: number }) => void
   onError?: (data: { code?: string; message: string; fatal?: boolean; seq: number }) => void
   onAbort?: () => void
-}
-
-function toRecord(value: unknown): JsonRecord {
-  return value && typeof value === 'object' ? (value as JsonRecord) : {}
-}
-
-function parsePayload(data: string): QAStreamPayload {
-  try {
-    return toRecord(JSON.parse(data)) as QAStreamPayload
-  } catch {
-    return { text: data }
-  }
-}
-
-function sequence(payload: QAStreamPayload, fallback: number): number {
-  const raw = payload.eventSeq ?? payload.seq
-  return typeof raw === 'number' ? raw : fallback
-}
-
-function textDelta(payload: QAStreamPayload): string {
-  return String(payload.delta ?? payload.text ?? payload.content ?? '')
 }
 
 function dispatch(event: QASseEventType, data: unknown, handlers: ChatStreamHandlers): void {
@@ -91,19 +76,6 @@ function dispatch(event: QASseEventType, data: unknown, handlers: ChatStreamHand
   }
 }
 
-function toQAMessageRequest(params: ChatStreamRequest): CreateQAMessageRequest {
-  return {
-    message: params.message,
-    knowledgeBaseIds: params.knowledge_bases,
-    retrieval: params.params
-      ? {
-          topK: params.params.top_k,
-          scoreThreshold: params.params.similarity_threshold,
-        }
-      : undefined,
-  }
-}
-
 /** Build auth + request-id headers for SSE requests. */
 function buildStreamHeaders(): HeadersInit {
   const token = apiClient.getToken()
@@ -116,6 +88,17 @@ function buildStreamHeaders(): HeadersInit {
     headers.Authorization = `Bearer ${token}`
   }
   return headers
+}
+
+/** Combine two AbortSignals into one merged signal. */
+function mergeAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
+  if (a.aborted) return a
+  if (b.aborted) return b
+  const controller = new AbortController()
+  const handler = () => controller.abort()
+  a.addEventListener('abort', handler, { once: true })
+  b.addEventListener('abort', handler, { once: true })
+  return controller.signal
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +121,7 @@ export function streamChat(
   signal?: AbortSignal,
 ): { abort: () => void } {
   const controller = new AbortController()
-  const combinedSignal = signal ? anyAbort(signal, controller.signal) : controller.signal
+  const combinedSignal = signal ? mergeAbortSignals(signal, controller.signal) : controller.signal
 
   // Shared across then/catch so connection-level errors can compute a seq
   // that passes the consumer-side monotonic-seq check.
@@ -257,6 +240,50 @@ export function streamChat(
 }
 
 // ---------------------------------------------------------------------------
+// POST /qa-sessions/{sessionId}/messages  (non-streaming)
+// ---------------------------------------------------------------------------
+
+/**
+ * Send a chat message and receive a completed QAMessage response.
+ *
+ * Unlike `streamChat`, this does NOT set `Accept: text/event-stream`.
+ * The server returns a single JSON response containing the created QAMessage.
+ *
+ * @param sessionId  QA session id (path parameter)
+ * @param message    User message text (required body field)
+ * @returns The created QAMessage
+ */
+export async function sendMessage(sessionId: string, message: string): Promise<QAMessage> {
+  return gatewayRequest<QAMessage>(`/qa-sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    body: { message },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// GET /qa-sessions/{sessionId}/events?responseRunId=...
+// ---------------------------------------------------------------------------
+
+/**
+ * Replay short-lived persisted SSE events for reconnect recovery or debugging.
+ *
+ * Polls the server for events associated with a specific response run.
+ * Useful after a disconnect to recover missed streaming events.
+ *
+ * @param sessionId      QA session id (path parameter)
+ * @param responseRunId  The response run to replay events for (query parameter)
+ * @returns Array of QASseEvent objects
+ */
+export async function replayEvents(
+  sessionId: string,
+  responseRunId: string,
+): Promise<QASseEvent[]> {
+  return gatewayRequest<QASseEvent[]>(
+    `/qa-sessions/${encodeURIComponent(sessionId)}/events${buildQuery({ responseRunId })}`,
+  )
+}
+
+// ---------------------------------------------------------------------------
 // POST /knowledge-queries
 // ---------------------------------------------------------------------------
 
@@ -269,6 +296,6 @@ export async function queryKnowledge(
 ): Promise<KnowledgeQuerySummary> {
   return gatewayRequest<KnowledgeQuerySummary>('/knowledge-queries', {
     method: 'POST',
-    body: JSON.stringify(params),
+    body: params,
   })
 }

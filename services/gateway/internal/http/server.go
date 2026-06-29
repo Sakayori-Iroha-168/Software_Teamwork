@@ -1,15 +1,16 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/gateway/internal/middleware"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/gateway/internal/response"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/gateway/internal/service"
 )
 
 type Config struct {
@@ -22,37 +23,62 @@ type Config struct {
 	CORSAllowedMethods   []string
 	CORSAllowedHeaders   []string
 	CORSAllowCredentials bool
-	QAServiceURL         string
+	DownstreamTimeout    time.Duration
+	InternalServiceToken string
+	OwnerBaseURLs        map[string]string
+	AuthClient           AuthClient
+	SessionStore         service.SessionStore
+	TokenHasher          service.TokenHasher
+	HTTPClient           *http.Client
+	ReadyCheck           func(context.Context) error
 }
 
 type Server struct {
-	logger         *slog.Logger
-	serviceVersion string
-	environment    string
-	mux            *http.ServeMux
-	handler        http.Handler
-	qaProxy        *httputil.ReverseProxy
+	logger               *slog.Logger
+	serviceVersion       string
+	environment          string
+	internalServiceToken string
+	authClient           AuthClient
+	sessionStore         service.SessionStore
+	tokenHasher          service.TokenHasher
+	ownerBaseURLs        map[string]*url.URL
+	httpClient           *http.Client
+	streamHTTPClient     *http.Client
+	readyCheck           func(context.Context) error
+	mux                  *http.ServeMux
+	handler              http.Handler
 }
 
 func NewServer(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Server{
-		logger:         cfg.Logger,
-		serviceVersion: cfg.ServiceVersion,
-		environment:    cfg.Environment,
-		mux:            http.NewServeMux(),
+	if cfg.DownstreamTimeout <= 0 {
+		cfg.DownstreamTimeout = 10 * time.Second
 	}
-	if cfg.QAServiceURL != "" {
-		s.qaProxy = newQAServiceProxy(cfg.QAServiceURL, cfg.Logger)
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{Timeout: cfg.DownstreamTimeout}
+	}
+	s := &Server{
+		logger:               cfg.Logger,
+		serviceVersion:       cfg.ServiceVersion,
+		environment:          cfg.Environment,
+		internalServiceToken: strings.TrimSpace(cfg.InternalServiceToken),
+		authClient:           cfg.AuthClient,
+		sessionStore:         cfg.SessionStore,
+		tokenHasher:          cfg.TokenHasher,
+		ownerBaseURLs:        parseOwnerBaseURLs(cfg.OwnerBaseURLs),
+		httpClient:           cfg.HTTPClient,
+		streamHTTPClient:     cloneHTTPClientWithoutTimeout(cfg.HTTPClient),
+		readyCheck:           cfg.ReadyCheck,
+		mux:                  http.NewServeMux(),
 	}
 	s.routes()
 	s.handler = middleware.Chain(
 		s.mux,
 		middleware.RequestID(),
 		middleware.Recover(cfg.Logger),
-		middleware.Timeout(cfg.RequestTimeout),
+		middleware.TimeoutWithSkip(cfg.RequestTimeout, skipsFixedRequestTimeout),
 		middleware.CORS(middleware.CORSConfig{
 			AllowedOrigins:   cfg.CORSAllowedOrigins,
 			AllowedMethods:   cfg.CORSAllowedMethods,
@@ -64,64 +90,18 @@ func NewServer(cfg Config) *Server {
 	return s
 }
 
-func newQAServiceProxy(targetURL string, logger *slog.Logger) *httputil.ReverseProxy {
-	target, _ := url.Parse(targetURL)
-	proxy := httputil.NewSingleHostReverseProxy(target)
-	proxy.ModifyResponse = func(r *http.Response) error {
-		return nil
-	}
-	proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-		logger.ErrorContext(r.Context(), "QA service proxy error", "error", err)
-		response.WriteError(w, http.StatusBadGateway, response.ErrorDetail{
-			Code:      response.CodeDependency,
-			Message:   "QA service unavailable",
-			RequestID: middleware.RequestIDFromContext(r.Context()),
-		})
-	}
-	return proxy
-}
-
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
-	if s.qaProxy != nil {
-		s.registerQARoutes()
+	s.mux.HandleFunc("POST /api/v1/users", s.handleCreateUser)
+	s.mux.HandleFunc("POST /api/v1/sessions", s.handleCreateSession)
+	s.mux.HandleFunc("GET /api/v1/users/me", s.handleCurrentUser)
+	s.mux.HandleFunc("DELETE /api/v1/sessions/current", s.handleDeleteCurrentSession)
+	for _, route := range activeProxyRoutes {
+		route := route
+		s.mux.HandleFunc(route.Method+" "+route.Pattern, s.handleProxy(route))
 	}
 	s.mux.HandleFunc("/", s.handleNotFound)
-}
-
-func (s *Server) registerQARoutes() {
-	qaPaths := []string{
-		"/api/v1/qa-sessions",
-		"/api/v1/response-runs",
-		"/api/v1/messages",
-		"/api/v1/citations",
-		"/api/v1/citation-lookups",
-		"/api/v1/qa-config-versions",
-		"/api/v1/llm-config-versions",
-		"/api/v1/llm-connection-tests",
-		"/api/v1/retrieval-test-runs",
-		"/api/v1/qa-metrics",
-	}
-	for _, path := range qaPaths {
-		s.mux.HandleFunc("GET "+path, s.handleQAProxy)
-		s.mux.HandleFunc("GET "+path+"/{rest...}", s.handleQAProxy)
-		s.mux.HandleFunc("POST "+path, s.handleQAProxy)
-		s.mux.HandleFunc("POST "+path+"/{rest...}", s.handleQAProxy)
-		s.mux.HandleFunc("PATCH "+path+"/{rest...}", s.handleQAProxy)
-		s.mux.HandleFunc("DELETE "+path+"/{rest...}", s.handleQAProxy)
-	}
-}
-
-func (s *Server) handleQAProxy(w http.ResponseWriter, r *http.Request) {
-	if s.qaProxy == nil {
-		s.handleNotFound(w, r)
-		return
-	}
-	newPath := r.URL.Path
-	newPath = strings.Replace(newPath, "/api/v1/", "/internal/v1/", 1)
-	r.URL.Path = newPath
-	s.qaProxy.ServeHTTP(w, r)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -138,6 +118,25 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	if s.readyCheck != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.readyCheck(ctx); err != nil {
+			s.logger.WarnContext(r.Context(), "gateway dependencies are not ready",
+				"service", "gateway",
+				"request_id", middleware.RequestIDFromContext(r.Context()),
+				"operation", "readyz",
+				"status", "failed",
+				"error", err,
+			)
+			response.WriteError(w, http.StatusServiceUnavailable, response.ErrorDetail{
+				Code:      response.CodeDependency,
+				Message:   "gateway dependencies are not ready",
+				RequestID: middleware.RequestIDFromContext(r.Context()),
+			})
+			return
+		}
+	}
 	response.WriteJSON(w, http.StatusOK, healthResponse{
 		Status:      "ready",
 		Service:     "gateway",
@@ -159,4 +158,29 @@ type healthResponse struct {
 	Service     string `json:"service"`
 	Version     string `json:"version,omitempty"`
 	Environment string `json:"environment,omitempty"`
+}
+
+func parseOwnerBaseURLs(values map[string]string) map[string]*url.URL {
+	parsed := make(map[string]*url.URL, len(values))
+	for owner, raw := range values {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme == "" || u.Host == "" {
+			continue
+		}
+		parsed[owner] = u
+	}
+	return parsed
+}
+
+func cloneHTTPClientWithoutTimeout(client *http.Client) *http.Client {
+	if client == nil {
+		return &http.Client{}
+	}
+	cloned := *client
+	cloned.Timeout = 0
+	return &cloned
 }

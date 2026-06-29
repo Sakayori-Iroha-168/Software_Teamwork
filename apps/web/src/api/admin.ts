@@ -23,6 +23,7 @@ import type {
   QARetrievalTestRunRequest,
   QATopQuery,
   SessionSummary,
+  UpdateKnowledgeBaseRequest,
   UserSummary,
 } from '@/lib/types'
 
@@ -43,7 +44,7 @@ export async function createLLMConfigVersion(
 ): Promise<QALLMConfigVersion> {
   return gatewayRequest<QALLMConfigVersion>('/llm-config-versions', {
     method: 'POST',
-    body: JSON.stringify(config),
+    body: config,
   })
 }
 
@@ -53,18 +54,8 @@ export async function testLLMConnection(
 ): Promise<QALLMConnectionTest> {
   return gatewayRequest<QALLMConnectionTest>('/llm-connection-tests', {
     method: 'POST',
-    body: {
-      provider: 'ai-gateway',
-      profileId,
-      modelName: config.model_name ?? current.model_name,
-      timeoutSeconds: config.timeout ?? current.timeout,
-      temperature: config.temperature ?? current.temperature,
-      maxTokens: config.max_tokens ?? current.max_tokens,
-      activate: true,
-    } satisfies components['schemas']['CreateQALLMConfigVersionRequest'],
+    body: params,
   })
-
-  return toLLMConfig(next, await getDefaultChatProfile().catch(() => undefined))
 }
 
 // =========================================================================
@@ -82,7 +73,7 @@ export async function createQAConfigVersion(
 ): Promise<QAConfigVersion> {
   return gatewayRequest<QAConfigVersion>('/qa-config-versions', {
     method: 'POST',
-    body: JSON.stringify(config),
+    body: config,
   })
 }
 
@@ -96,19 +87,8 @@ export async function runRetrievalTest(
 ): Promise<QARetrievalTestRun> {
   return gatewayRequest<QARetrievalTestRun>('/retrieval-test-runs', {
     method: 'POST',
-    body: {
-      defaultKnowledgeBaseIds: defaults.knowledge_bases,
-      retrieval: {
-        topK: defaults.top_k,
-        scoreThreshold: defaults.similarity_threshold,
-        enableRerank: defaults.use_rerank,
-        useRerank: defaults.use_rerank,
-        rerankTopN: defaults.rerank_top_n,
-      },
-      activate: true,
-    } satisfies components['schemas']['CreateQAConfigVersionRequest'],
+    body: params,
   })
-  return getKnowledgeConfig()
 }
 
 // =========================================================================
@@ -117,23 +97,17 @@ export async function runRetrievalTest(
 
 /** GET /qa-metrics/overview?days=N */
 export function getQAMetricsOverview(days?: number): Promise<QAMetricsOverview> {
-  return gatewayRequest<QAMetricsOverview>(
-    `/qa-metrics/overview${buildQuery({ days })}`,
-  )
+  return gatewayRequest<QAMetricsOverview>(`/qa-metrics/overview${buildQuery({ days })}`)
 }
 
 /** GET /qa-metrics/trend?days=N */
 export function getQAMetricsTrend(days?: number): Promise<QAMetricsTrend> {
-  return gatewayRequest<QAMetricsTrend>(
-    `/qa-metrics/trend${buildQuery({ days: days ?? 30 })}`,
-  )
+  return gatewayRequest<QAMetricsTrend>(`/qa-metrics/trend${buildQuery({ days: days ?? 30 })}`)
 }
 
 /** GET /qa-metrics/top-queries?limit=N&days=N */
 export async function getQATopQueries(limit?: number, days?: number): Promise<QATopQuery[]> {
-  return gatewayRequest<QATopQuery[]>(
-    `/qa-metrics/top-queries${buildQuery({ limit, days })}`,
-  )
+  return gatewayRequest<QATopQuery[]>(`/qa-metrics/top-queries${buildQuery({ limit, days })}`)
 }
 
 /** GET /qa-metrics/intent-distribution?days=N */
@@ -153,9 +127,10 @@ export interface ListKnowledgeBasesParams {
   pageSize?: number
 }
 
-export async function listKnowledgeBases(
-  params: ListKnowledgeBasesParams = {},
-): Promise<{ items: KnowledgeBaseSummary[]; page: { page: number; pageSize: number; total: number } }> {
+export async function listKnowledgeBases(params: ListKnowledgeBasesParams = {}): Promise<{
+  items: KnowledgeBaseSummary[]
+  page: { page: number; pageSize: number; total: number }
+}> {
   return gatewayPageRequest<KnowledgeBaseSummary>(
     `/knowledge-bases${buildQuery({ page: params.page, pageSize: params.pageSize })}`,
   )
@@ -167,12 +142,29 @@ export async function createKnowledgeBase(
 ): Promise<KnowledgeBaseSummary> {
   return gatewayRequest<KnowledgeBaseSummary>('/knowledge-bases', {
     method: 'POST',
-    body: {
-      name: params.name,
-      description: params.description ?? '',
-    },
+    body: params,
   })
-  return toKnowledgeBaseConfig(kb)
+}
+
+/** GET /knowledge-bases/{knowledgeBaseId} */
+export async function getKnowledgeBase(knowledgeBaseId: string): Promise<KnowledgeBaseSummary> {
+  return gatewayRequest<KnowledgeBaseSummary>(
+    `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`,
+  )
+}
+
+/** PATCH /knowledge-bases/{knowledgeBaseId} */
+export async function updateKnowledgeBase(
+  knowledgeBaseId: string,
+  params: UpdateKnowledgeBaseRequest,
+): Promise<KnowledgeBaseSummary> {
+  return gatewayRequest<KnowledgeBaseSummary>(
+    `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`,
+    {
+      method: 'PATCH',
+      body: params,
+    },
+  )
 }
 
 /** DELETE /knowledge-bases/{knowledgeBaseId} */
@@ -200,7 +192,7 @@ export async function createUser(body: CreateUserRequest): Promise<{
 }> {
   return gatewayRequest<{ user: UserSummary; session: SessionSummary }>('/users', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body,
   })
 }
 
