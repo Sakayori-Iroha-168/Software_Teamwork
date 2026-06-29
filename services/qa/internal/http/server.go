@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/http/middleware"
@@ -335,7 +336,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 
 	// SSE event channel to serialize writes to ResponseWriter
 	eventCh := make(chan service.ProgressEvent, 64)
-	sentErrorCh := make(chan bool, 1)
+	var sentError atomic.Bool
 	var writerWg sync.WaitGroup
 
 	// Single writer goroutine - ensures ResponseWriter is not accessed concurrently
@@ -349,10 +350,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 			select {
 			case event := <-eventCh:
 				if event.Type == "error" {
-					select {
-					case sentErrorCh <- true:
-					default:
-					}
+					sentError.Store(true)
 				}
 				writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
 			case <-heartbeatTicker.C:
@@ -363,10 +361,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 					select {
 					case event := <-eventCh:
 						if event.Type == "error" {
-							select {
-							case sentErrorCh <- true:
-							default:
-							}
+							sentError.Store(true)
 						}
 						writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
 					default:
@@ -397,13 +392,11 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			appErr = service.NewError(service.CodeInternal, "answer generation failed", err)
 		}
-		// Check if error was already sent via channel
-		select {
-		case <-sentErrorCh:
+		// Check if error was already sent via atomic flag
+		if sentError.Load() {
 			return // error already sent
-		default:
-			writeSSE(w, flusher, "error", 0, map[string]any{"code": appErr.Code, "message": appErr.Message, "requestId": requestIDFromContext(r.Context())})
 		}
+		writeSSE(w, flusher, "error", 0, map[string]any{"code": appErr.Code, "message": appErr.Message, "requestId": requestIDFromContext(r.Context())})
 		return
 	}
 }
