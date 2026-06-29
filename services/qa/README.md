@@ -92,17 +92,140 @@ Diagnostics must be written to stderr.
 Set `MCP_TRANSPORT=streamable_http` and provide `MCP_SERVER_URL`. Optional
 credentials use `MCP_SERVER_TOKEN` and `MCP_SERVER_TOKEN_HEADER`.
 
+### MCP local integration
+
+Use this section to verify MCP client wiring without PostgreSQL, Gateway, or a
+real knowledge MCP server.
+
+#### Automated tests (no LLM, no manual server)
+
+From `services/qa`:
+
+```powershell
+go test ./internal/platform/mcpclient/... -v
+go test ./internal/platform/toolclient/... -v
+go test ./internal/platform/connectiontest/... -v
+```
+
+These cover stdio and streamable HTTP transports, tool name prefixing, composite
+tool routing, and the settings connection-test path against an in-process echo
+server (`internal/platform/mcpclient/testserver`).
+
+#### Manual REPL check with the bundled echo server
+
+`cmd/mcp-echo` is a minimal streamable HTTP MCP server with one tool: `echo`.
+Use **two terminals**; the echo server blocks its terminal until you stop it.
+
+Terminal A — start the echo server:
+
+```powershell
+cd D:\PROJECTS\Software_Teamwork\services\qa
+go run ./cmd/mcp-echo
+```
+
+Expected log:
+
+```text
+MCP echo server listening on http://localhost:8099
+```
+
+Terminal B — start the agent REPL and point it at the echo server:
+
+```powershell
+cd D:\PROJECTS\Software_Teamwork\services\qa
+$env:MCP_TRANSPORT = "streamable_http"
+$env:MCP_SERVER_URL = "http://localhost:8099"
+$env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
+go run ./cmd/agent
+```
+
+At the `qa >>` prompt, ask which tools are available. A successful merge lists
+local tools (`read_file`, `write_file`, `edit_file`) plus remote tool `echo`.
+
+To verify `tools/call`, ask the model to invoke echo explicitly, for example:
+
+```text
+请调用 echo 工具，参数 text 设为 hello-mcp，并把原始返回结果告诉我
+```
+
+Stop the REPL with `exit` or `q`, then press `Ctrl+C` in terminal A.
+
+#### Common issues
+
+| Symptom | Likely cause |
+| ------- | ------------ |
+| `DEEPSEEK_API_KEY is required` | API key not imported into the current PowerShell process. |
+| `initialize MCP session` failed | Echo server not running, wrong URL, or agent started in the same terminal as the server. |
+| Tool list has no `echo` | `MCP_TRANSPORT` or `MCP_SERVER_URL` not set in the agent terminal. |
+| Agent lists `echo` but does not call it | Rephrase the request to explicitly ask for an echo tool call. |
+
+## PostgreSQL with Docker
+
+QA PostgreSQL runs in Docker (`postgres:16-alpine`) and schema changes are
+applied with [`goose`](https://github.com/pressly/goose) `v3.27.1`, matching the
+project technology baseline. Migrations are **not** mounted into
+`docker-entrypoint-initdb.d`; the one-shot `migrate` service runs `goose up`
+after PostgreSQL becomes healthy.
+
+Start only the database (typical for local `go run ./cmd/server`):
+
+```powershell
+.\scripts\docker-db-up.ps1
+```
+
+```bash
+./scripts/docker-db-up.sh
+```
+
+Or manually:
+
+```powershell
+docker compose -f docker-compose.db.yml up -d --build postgres
+docker compose -f docker-compose.db.yml up --build migrate
+```
+
+Connection string (host port defaults to `5433`):
+
+```text
+postgres://qa_app:qa_app_dev@localhost:5433/qa_system?sslmode=disable
+```
+
+Reset the local database volume and re-apply migrations:
+
+```powershell
+docker compose -f docker-compose.db.yml down -v
+.\scripts\docker-db-up.ps1
+```
+
+Apply or inspect migrations on the host with the project-pinned `goose@v3.27.1` command:
+
+```powershell
+$env:QA_DATABASE_URL = "postgres://qa_app:qa_app_dev@localhost:5433/qa_system?sslmode=disable"
+go run github.com/pressly/goose/v3/cmd/goose@v3.27.1 -dir migrations postgres $env:QA_DATABASE_URL up
+go run github.com/pressly/goose/v3/cmd/goose@v3.27.1 -dir migrations postgres $env:QA_DATABASE_URL status
+```
+
+Integration tests against the Docker database:
+
+```powershell
+$env:QA_TEST_DATABASE_URL = "postgres://qa_app:qa_app_dev@localhost:5433/qa_system?sslmode=disable"
+go test ./internal/repository/... -run TestDocumentedResourceRoundTrip -count=1
+```
+
 ## Run with Docker Compose
 
 Import the user-level DeepSeek variables into the current PowerShell process
-without printing them, then start Auth PostgreSQL, QA PostgreSQL, Redis, Auth,
-QA and Gateway:
+without printing them, then start Auth PostgreSQL, QA PostgreSQL (+ goose
+migrate), Redis, Auth, QA and Gateway:
 
 ```powershell
 $env:DEEPSEEK_API_KEY = [Environment]::GetEnvironmentVariable('DEEPSEEK_API_KEY', 'User')
 $env:DEEPSEEK_BASE_URL = [Environment]::GetEnvironmentVariable('DEEPSEEK_BASE_URL', 'User')
 docker compose up -d --build
 ```
+
+The full stack includes `docker-compose.db.yml` via Compose `include`; QA waits
+for the `migrate` job to finish before starting.
 
 If a local Docker registry mirror cannot pull the Go/Alpine build images, use
 the cached-image fallback after compiling a Linux binary on the host:
@@ -124,13 +247,21 @@ Verify public readiness:
 Invoke-RestMethod http://localhost:8080/readyz
 ```
 
-The migration under `migrations/` is applied by PostgreSQL only when the named
-volume is created for the first time. For a disposable local rebuild:
+Regenerate sqlc code after changing query files:
 
-```powershell
-docker compose down -v
-docker compose up -d --build
+```bash
+sqlc generate
 ```
+
+Generated query code lives in `internal/repository/sqlc/`; SQL sources live in
+`internal/repository/queries/` (sessions/messages/runs plus `settings.sql` for
+runtime settings, MCP servers, and config versions). Generated types stay in the
+repository adapter layer only; handlers, services, and MCP client code must not
+import `internal/repository/sqlc`.
+
+QA uses `pgx/v5` via `sqlc.yaml`; this matches the service `go.mod` baseline
+while the monorepo-wide pgx version decision is tracked separately in
+`docs/architecture/technology-decisions.md`.
 
 ## HTTP API
 
@@ -183,4 +314,11 @@ The REPL remains available for Agent Loop debugging.
 go test ./...
 go build ./cmd/server
 go build ./cmd/agent
+go build ./cmd/mcp-echo
+```
+
+For MCP-only checks without the full suite:
+
+```powershell
+go test ./internal/platform/mcpclient/... ./internal/platform/toolclient/... ./internal/platform/connectiontest/... -v
 ```

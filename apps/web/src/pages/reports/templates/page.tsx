@@ -1,8 +1,24 @@
-import { FileText, Upload } from 'lucide-react'
+import { FileText, Trash2, Upload } from 'lucide-react'
+import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 import type { ReportMaterial, ReportTemplate } from '@/features/reports'
-import { useReportBootstrapQueries, useReportStatisticsQueries } from '@/features/reports'
+import {
+  useDeleteTemplate,
+  useReportBootstrapQueries,
+  useReportStatisticsQueries,
+  useTemplateStructure,
+  useUpdateTemplateStructure,
+} from '@/features/reports'
 
 const fallbackTemplates: ReportTemplate[] = [
   {
@@ -45,12 +61,79 @@ const fallbackMaterials: ReportMaterial[] = [
 ]
 
 export function ReportTemplatesPage() {
+  const [structureTarget, setStructureTarget] = useState<string | null>(null)
+  const [editMode, setEditMode] = useState(false)
+  const [editJson, setEditJson] = useState('')
+  const [jsonError, setJsonError] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ReportTemplate | null>(null)
+
   const { templateQuery, materialQuery } = useReportBootstrapQueries()
   const { overviewQuery, dailyQuery } = useReportStatisticsQueries()
-  const templates = templateQuery.data?.items.length ? templateQuery.data.items : fallbackTemplates
-  const materials = materialQuery.data?.items.length ? materialQuery.data.items : fallbackMaterials
+  const structureQuery = useTemplateStructure(structureTarget)
+  const updateStructureMutation = useUpdateTemplateStructure(structureTarget ?? '')
+  const deleteMutation = useDeleteTemplate()
+
+  const isFallbackTemplates = templateQuery.isError
+  const isFallbackMaterials = materialQuery.isError
+  const templates = isFallbackTemplates ? fallbackTemplates : (templateQuery.data?.items ?? [])
+  const materials = isFallbackMaterials ? fallbackMaterials : (materialQuery.data?.items ?? [])
   const overview = overviewQuery.data
   const daily = dailyQuery.data ?? []
+
+  const handleOpenStructure = (templateId: string) => {
+    setStructureTarget(templateId)
+    setEditMode(false)
+    setJsonError(null)
+  }
+
+  const handleCloseStructure = () => {
+    setStructureTarget(null)
+    setEditMode(false)
+    setJsonError(null)
+  }
+
+  const handleEnterEdit = () => {
+    const data = structureQuery.data
+    if (data) {
+      setEditJson(JSON.stringify(data, null, 2))
+      setEditMode(true)
+      setJsonError(null)
+    }
+  }
+
+  const handleSaveEdit = () => {
+    try {
+      const parsed = JSON.parse(editJson) as Record<string, unknown>
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setJsonError('模板结构必须是一个 JSON 对象')
+        return
+      }
+      setJsonError(null)
+      updateStructureMutation.mutate(
+        parsed as Parameters<typeof updateStructureMutation.mutate>[0],
+        {
+          onSuccess: () => setEditMode(false),
+          onError: () => setJsonError('保存失败，请重试'),
+        },
+      )
+    } catch {
+      setJsonError('JSON 格式无效，请检查语法')
+    }
+  }
+
+  const handleCancelEdit = () => {
+    setEditMode(false)
+    setJsonError(null)
+  }
+
+  const handleDelete = () => {
+    if (!deleteTarget) return
+    deleteMutation.mutate(deleteTarget.id)
+    setDeleteTarget(null)
+  }
+
+  const structureData = structureQuery.data
+  const structureJson = structureData ? JSON.stringify(structureData, null, 2) : ''
 
   return (
     <div className="h-full overflow-auto bg-background p-6">
@@ -111,15 +194,34 @@ export function ReportTemplatesPage() {
           <div className="divide-y divide-border">
             {templates.map((template) => (
               <div key={template.id} className="flex items-center justify-between gap-4 p-4">
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{template.templateName}</p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {template.reportType} · v{template.version} · {template.filename}
                   </p>
                 </div>
-                <span className="rounded-full bg-muted px-2 py-1 text-xs">
-                  {template.enabled ? '启用' : '停用'}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    onClick={() => handleOpenStructure(template.id)}
+                  >
+                    查看结构
+                  </Button>
+                  <span className="rounded-full bg-muted px-2 py-1 text-xs">
+                    {template.enabled ? '启用' : '停用'}
+                  </span>
+                  {!isFallbackTemplates && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="删除模板"
+                      onClick={() => setDeleteTarget(template)}
+                    >
+                      <Trash2 className="size-3 text-destructive" />
+                    </Button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -149,6 +251,112 @@ export function ReportTemplatesPage() {
           </div>
         </section>
       </div>
+
+      {/* Template structure viewer / editor dialog */}
+      <Dialog
+        open={Boolean(structureTarget)}
+        onOpenChange={(open) => !open && handleCloseStructure()}
+      >
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>
+              {structureTarget
+                ? `模板结构 - ${templates.find((t) => t.id === structureTarget)?.templateName ?? structureTarget}`
+                : '模板结构'}
+            </DialogTitle>
+            <DialogDescription>
+              {editMode
+                ? '编辑模板的 outlineSchema 和 styleConfig 配置。'
+                : '模板的 JSON 结构定义。'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {structureQuery.isLoading && (
+            <div className="py-4 text-center text-sm text-muted-foreground">加载中...</div>
+          )}
+
+          {structureQuery.isError && (
+            <div className="py-4 text-center text-sm text-destructive">
+              {editMode
+                ? '无法加载模板结构，请重试。'
+                : '该模板暂无结构数据，或未配置 outlineSchema。'}
+            </div>
+          )}
+
+          {!structureQuery.isLoading && !structureQuery.isError && (
+            <>
+              {editMode ? (
+                <div className="flex flex-col gap-2">
+                  <Textarea
+                    className="min-h-80 font-mono text-xs"
+                    value={editJson}
+                    onChange={(event) => {
+                      setEditJson(event.target.value)
+                      setJsonError(null)
+                    }}
+                    placeholder='{"outlineSchema": [...], "styleConfig": {...}}'
+                  />
+                  {jsonError && <p className="text-xs text-destructive">{jsonError}</p>}
+                </div>
+              ) : (
+                <pre className="max-h-96 overflow-auto rounded-lg bg-muted p-4 font-mono text-xs leading-relaxed">
+                  {structureJson || '{}'}
+                </pre>
+              )}
+            </>
+          )}
+
+          <DialogFooter>
+            {!editMode ? (
+              <>
+                <Button variant="outline" onClick={handleCloseStructure}>
+                  关闭
+                </Button>
+                {structureTarget && (
+                  <Button onClick={handleEnterEdit} disabled={structureQuery.isError}>
+                    编辑结构
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={handleCancelEdit}>
+                  取消
+                </Button>
+                <Button onClick={handleSaveEdit} disabled={updateStructureMutation.isPending}>
+                  {updateStructureMutation.isPending ? '保存中...' : '保存'}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete template confirmation dialog */}
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>确定删除此模板？</DialogTitle>
+            <DialogDescription>
+              {deleteTarget?.templateName
+                ? `即将删除模板"${deleteTarget.templateName}"。此操作不可撤销。`
+                : '此操作不可撤销。'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? '删除中...' : '确认删除'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

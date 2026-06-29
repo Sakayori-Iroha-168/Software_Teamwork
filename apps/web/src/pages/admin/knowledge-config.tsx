@@ -50,7 +50,7 @@ export function KnowledgeConfig() {
     error: kbErr,
   } = useQuery({
     queryKey: ['admin', 'knowledge-bases'],
-    queryFn: listKnowledgeBases,
+    queryFn: () => listKnowledgeBases(),
     staleTime: 60_000,
   })
 
@@ -61,7 +61,7 @@ export function KnowledgeConfig() {
     error: configErr,
   } = useQuery({
     queryKey: ['admin', 'qa-config'],
-    queryFn: getCurrentQAConfig,
+    queryFn: () => getCurrentQAConfig(),
     staleTime: 60_000,
   })
 
@@ -163,8 +163,7 @@ export function KnowledgeConfig() {
                 <div className="flex justify-between border-b border-border pb-2">
                   <span className="text-sm text-muted-foreground">默认知识库</span>
                   <span className="text-sm font-medium text-foreground">
-                    {qaConfig.defaultKnowledgeBaseIds &&
-                    qaConfig.defaultKnowledgeBaseIds.length > 0
+                    {qaConfig.defaultKnowledgeBaseIds && qaConfig.defaultKnowledgeBaseIds.length > 0
                       ? qaConfig.defaultKnowledgeBaseIds.join(', ')
                       : '无'}
                   </span>

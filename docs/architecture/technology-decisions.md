@@ -38,7 +38,7 @@
 | `services/knowledge` | 已落地 Go 服务、memory/PostgreSQL repository、Qdrant HTTP adapter、local hashing embedding、migration、Dockerfile 和本地 Compose。 | `services/knowledge/go.mod`、`services/knowledge/Dockerfile`、`services/knowledge/docker-compose.yml` |
 | `services/file` | 已落地 Go 服务骨架、memory repository 和 memory object store；生产 PostgreSQL/MinIO 适配器未落地。 | `services/file/go.mod` |
 | `gateway`、`auth`、`qa`、`document`、`ai-gateway` | 当前主要是架构、README 和 OpenAPI 契约；服务代码尚未落地。 | `docs/services/**` |
-| CI | 已有 PR guard、commitlint、auto-label；前端/Go 服务构建测试流水线尚未落地。 | `.github/workflows/*.yml` |
+| CI | 已有 PR guard、commitlint、auto-label、Go service build/test workflow 和 goose migration apply workflow；前端流水线尚未落地。 | `.github/workflows/*.yml` |
 
 ## 已确认选型总览
 
@@ -61,15 +61,15 @@
 | 前端 SSE | `fetch` stream wrapper | Web 标准 | 标准库 / 协议 | QA 消息创建使用 POST + `text/event-stream`，支持 `AbortController`。 |
 | 前端测试 | Vitest + React Testing Library + Playwright | 待固定 | 已选型，待固定 | 当前未加入 `apps/web/package.json`。 |
 | 前端代码质量 | ESLint Flat Config + Prettier | ESLint `9.39.4`，Prettier `3.9.0` | 已固定 | 插件版本见前端明细。 |
-| 后端语言 | Go | `go 1.25` | 已固定 | 项目后续 Go 服务基线固定为 1.25；既有 `go 1.22` module 和 Dockerfile 由后续迁移 PR 统一更新。 |
+| 后端语言 | Go | `go 1.25` | 已固定 | 项目 Go 服务基线固定为 1.25；已落地服务 module 和 Dockerfile 应保持一致。 |
 | 后端 HTTP 路由 | Go `net/http` / `http.ServeMux` | Go `1.25` 标准库 | 已固定 | 不默认引入 `gin`/`chi`。 |
 | 后端日志 | Go `log/slog` | Go `1.25` 标准库 | 已固定 | 生产默认 JSON 结构化日志。 |
 | PostgreSQL 访问 | `pgx` + `sqlc` | `pgx/v4@v4.18.3`；sqlc 待固定 | 部分已固定 | Knowledge 当前使用 `pgx/v4`；`sqlc` 尚未落地。 |
 | ORM | 不使用 ORM | N/A | 已固定 | 禁止默认引入 GORM/ent 等 ORM。 |
 | 数据库迁移 | `goose` | `v3.27.1` | 已固定 | 使用 `pressly/goose` CLI 或库执行服务内 migration；该版本要求 Go 1.25+。 |
 | 关系数据库 | PostgreSQL | `postgres:16-alpine` | 已固定 | 当前本地 Compose 固定在 16 Alpine。 |
-| Redis 队列 | `asynq` over Redis | asynq 待固定；Redis `7-alpine` | 部分已固定 | Redis 已在 Knowledge Compose 固定；asynq 尚未引入。 |
-| Redis 缓存/会话 | `go-redis` | 待固定 | 已选型，待固定 | Gateway 会话缓存、短期缓存和队列共享 Redis。 |
+| Redis 队列 | `asynq` over Redis | `asynq v0.26.0`；Redis `7-alpine` | 部分已固定 | Knowledge 已接入 asynq client；其他异步服务按需复用该队列基线。 |
+| Redis 缓存/会话 | `go-redis` | `go-redis/v9 v9.14.1` | 部分已固定 | Knowledge 通过 asynq 间接固定 go-redis；Gateway 会话缓存接入时继续复用 v9 基线。 |
 | 向量数据库 | Qdrant | Compose 当前 `qdrant/qdrant:latest` | 当前为 `latest` | Knowledge 使用手写 HTTP client；生产前必须固定镜像版本。 |
 | Qdrant 客户端 | 手写 HTTP client | Go 标准 HTTP client | 已固定 | 当前 API 使用面较窄，先不引入官方 client。 |
 | 对象存储 | MinIO | Compose 当前 `minio/minio:latest`、`minio/mc:latest` | 当前为 `latest` | File service 封装对象存储；生产前必须固定镜像和 SDK 版本。 |
@@ -82,7 +82,7 @@
 | OpenAPI | OpenAPI | `3.0.3` | 已固定 | Gateway、Auth、Knowledge、QA、Document、AI Gateway 契约均使用 3.0.3。 |
 | API 版本前缀 | `/api/v1` / `/internal/v1` | `v1` | 已固定 | 公开入口以 gateway OpenAPI 为准；内部服务使用服务级契约。 |
 | 后端测试 | Go `testing` + `httptest` | Go `1.25` 标准库 | 已固定 | 默认不引入 BDD 测试框架。 |
-| CI | GitHub Actions | `actions/github-script@v7`；runner `ubuntu-latest` | 部分已固定 | 已有协作类 workflow；构建测试 workflow 尚待落地。 |
+| CI | GitHub Actions | `actions/github-script@v7`；runner `ubuntu-latest` | 部分已固定 | 已有协作类 workflow、Go service build/test workflow 和 goose migration apply workflow；前端 workflow 尚待落地。 |
 | 观测 | `slog` + Prometheus metrics；关键链路 OpenTelemetry tracing | Prometheus/OTel 依赖待固定 | 已选型，待固定 | 第一阶段先保证结构化日志和指标。 |
 | DOCX 生成 | Document worker 调用 Pandoc/LibreOffice 类工具链 | 待固定 | 已选型，待固定 | 落地时必须固定工具链镜像或 CLI 版本。 |
 | MCP 集成 | 成熟 SDK 或独立 MCP sidecar | 待固定 | 已选型，待固定 | QA 负责工具白名单、权限、参数校验和脱敏记录。 |
@@ -131,7 +131,7 @@
 
 | 组件 | 当前版本 | 来源 | 备注 |
 | --- | --- | --- | --- |
-| Go toolchain | `1.25` | 技术选型基线 | 后续 Go 服务统一使用 1.25；既有 `services/*/go.mod` 和 Dockerfile 中的 `1.22` 由独立迁移 PR 更新。 |
+| Go toolchain | `1.25` | 技术选型基线 | Go 服务统一使用 1.25；`services/*/go.mod` 和 Go build Dockerfile 应保持一致。 |
 | `github.com/jackc/pgx/v4` | `v4.18.3` | `services/knowledge/go.mod` | Knowledge 当前已引入；新增服务默认不要混用其他 pgx 大版本。 |
 | `github.com/pressly/goose/v3` | `v3.27.1` | 技术选型基线 | 迁移工具版本固定；可用 CLI 或库方式接入。 |
 | PostgreSQL | `16-alpine` | `services/knowledge/docker-compose.yml` | 本地开发数据库。 |
@@ -161,7 +161,7 @@
 
 | 服务 | 偏离项 | 原因 |
 | --- | --- | --- |
-| `knowledge` | `services/knowledge/go.mod` 使用 `go 1.25.0`。 | Knowledge 是新重建的 RAG 底座服务，需要为后续 RAG MCP server 化预留较新的 Go module 基线；仍沿用标准库 `net/http` / `http.ServeMux` 路由形态。 |
+| `knowledge` | 无。 | Knowledge 现在与仓库 Go 1.25 baseline 一致；仍沿用标准库 `net/http` / `http.ServeMux` 路由形态。 |
 
 ## 三选一决策记录
 
@@ -203,7 +203,7 @@ services/<service>/
 - 迁移文件继续放在 `services/<service>/migrations/`。
 - 文件名使用有序前缀，例如 `0001_create_users.sql`。
 - 首期允许 forward-only migration；如果写 down migration，必须能在本地和 CI 验证。
-- CI 后续应对变更服务执行迁移 apply 校验。
+- CI 对有 SQL migration 的已落地 Go 服务执行迁移 apply 校验。
 - `goose` 固定使用 `github.com/pressly/goose/v3@v3.27.1`；服务可按需要使用 CLI 或库方式接入，但 CI 和 README 必须引用同一版本。
 
 ### Redis 和 asynq
@@ -222,7 +222,7 @@ services/<service>/
 
 - 业务状态、任务最终状态、失败摘要和重试次数以 PostgreSQL 为权威；asynq 只负责排队、调度和执行。
 - handler 不直接执行长任务，只创建业务 job 记录并投递 asynq task。
-- 当前 Redis 本地版本为 `redis:7-alpine`；`asynq` 和 `go-redis` 版本尚未固定。
+- 当前 Redis 本地版本为 `redis:7-alpine`；Knowledge 已固定 `asynq v0.26.0`，并通过 asynq 依赖 `go-redis/v9 v9.14.1`。
 
 ### 日志、指标和追踪
 
@@ -263,16 +263,15 @@ services/<service>/
 - 当前 GitHub Actions 已固定 `actions/github-script@v7`，用于 PR guard、commitlint 和 auto-label。
 - 当前 runner 使用 `ubuntu-latest`，这是 GitHub 托管滚动版本；如需完全可复现 CI，后续应改为团队认可的固定 runner 镜像或自托管 runner。
 - Frontend CI 后续应执行 `bun install --frozen-lockfile`、`bun run --cwd apps/web check`、`bun run --cwd apps/web build`。
-- Go Service CI 后续应按服务路径执行 `go test ./...` 和 `go build ./cmd/server`。
-- 有 PostgreSQL 的服务后续应在 CI 中执行 `goose` migration apply 校验。
+- Go Service CI 按服务路径执行 `go test ./...` 和 `go build ./cmd/server`。
+- Goose migration CI 对有 SQL migration 的服务执行 `goose@v3.27.1` apply 校验。
 - Docker 构建和部署流水线应按服务路径拆分，避免无关变更触发全量检查。
 
 ## 后续需要同步的实现任务
 
 - 为每个 Go 服务补充或迁移 `sqlc.yaml`、query 文件和 `pgx` repository。
-- 为每个有数据库的服务接入 `goose@v3.27.1` 迁移命令和 CI 校验。
-- 将既有 Go 服务的 `go.mod` 与 Dockerfile 从 Go 1.22 迁移到 Go 1.25。
-- 为需要异步任务的服务接入 `asynq` client/worker，并固定 `asynq` 和 `go-redis` 版本。
+- 为后续新增的数据库服务同步 `goose@v3.27.1` 迁移命令和 CI 校验。
+- 为需要异步任务的服务接入 `asynq` client/worker；Knowledge 已固定首个 asynq/go-redis 版本，后续服务接入前应复核是否沿用该版本。
 - 前端接入 `openapi-typescript`，生成 gateway 类型，并固定生成器版本。
 - 前端测试接入 Vitest、React Testing Library 和 Playwright，并固定版本。
 - 本地 Compose 和生产部署移除 `latest` 镜像 tag，固定 Qdrant、MinIO、MinIO mc、Adminer 和 Redis Commander 版本。

@@ -11,29 +11,27 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/repository/sqlc"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 )
 
 func (r *Postgres) ListStreamEvents(ctx context.Context, userID, sessionID, runID string, after int) ([]service.StreamEvent, error) {
-	rows, err := r.pool.Query(ctx, `SELECT e.event_seq,e.event_type,e.payload,e.created_at FROM response_stream_events e JOIN response_runs rr ON rr.id=e.response_run_id JOIN conversations c ON c.id=rr.conversation_id WHERE rr.id::text=$1 AND rr.conversation_id::text=$2 AND c.external_user_id=$3 AND c.deleted_at IS NULL AND e.event_seq>$4 AND e.expires_at>now() ORDER BY e.event_seq`, runID, sessionID, userID, after)
+	rows, err := r.queries.ListStreamEventsForRun(ctx, sqlc.ListStreamEventsForRunParams{
+		ResponseRunID: runID, ConversationID: sessionID, ExternalUserID: userID, AfterSeq: int32(after),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("list stream events: %w", err)
 	}
-	defer rows.Close()
-	items := make([]service.StreamEvent, 0)
-	for rows.Next() {
+	items := make([]service.StreamEvent, 0, len(rows))
+	for _, row := range rows {
 		var item service.StreamEvent
-		var raw []byte
-		if err := rows.Scan(&item.EventSeq, &item.EventType, &raw, &item.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan stream event: %w", err)
-		}
-		if err := json.Unmarshal(raw, &item.Payload); err != nil {
+		item.EventSeq = int(row.EventSeq)
+		item.EventType = row.EventType
+		item.CreatedAt = row.CreatedAt
+		if err := json.Unmarshal(row.Payload, &item.Payload); err != nil {
 			return nil, fmt.Errorf("decode stream event: %w", err)
 		}
 		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate stream events: %w", err)
 	}
 	if len(items) == 0 {
 		if _, err := r.GetResponseRun(ctx, userID, runID); err != nil {

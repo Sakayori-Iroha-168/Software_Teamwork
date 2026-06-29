@@ -1,3 +1,4 @@
+-- +goose Up
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE qa_config_versions (
@@ -216,3 +217,18 @@ INSERT INTO qa_config_versions (
 INSERT INTO llm_config_versions (
     version_no, provider, profile_id, model_name, is_active, created_by_user_id
 ) VALUES (1, 'ai-gateway', 'default', 'deepseek-chat', TRUE, 'system');
+
+-- +goose Down
+DROP TABLE IF EXISTS retrieval_test_results;
+DROP TABLE IF EXISTS retrieval_test_runs;
+DROP TABLE IF EXISTS citations;
+DROP TABLE IF EXISTS response_stream_events;
+DROP TABLE IF EXISTS response_process_steps;
+DROP TABLE IF EXISTS message_content_blocks;
+DROP TABLE IF EXISTS response_runs;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS conversations;
+DROP TABLE IF EXISTS admin_audit_logs;
+DROP TABLE IF EXISTS qa_config_knowledge_bases;
+DROP TABLE IF EXISTS llm_config_versions;
+DROP TABLE IF EXISTS qa_config_versions;

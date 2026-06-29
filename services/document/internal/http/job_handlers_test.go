@@ -83,7 +83,7 @@ func TestGetJobNotFound(t *testing.T) {
 	}
 	server := newTestServerWithJobSvc(mock)
 
-	req := httptest.NewRequest(http.MethodGet, "/reports/550e8400-e29b-41d4-a716-446655440000/jobs/550e8400-e29b-41d4-a716-446655440001", nil)
+	req := httptest.NewRequest(http.MethodGet, "/report-jobs/550e8400-e29b-41d4-a716-446655440001", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
@@ -100,7 +100,7 @@ func TestCancelJobAlreadyCanceled(t *testing.T) {
 	}
 	server := newTestServerWithJobSvc(mock)
 
-	req := httptest.NewRequest(http.MethodPost, "/reports/550e8400-e29b-41d4-a716-446655440000/jobs/550e8400-e29b-41d4-a716-446655440001/cancel", nil)
+	req := httptest.NewRequest(http.MethodPost, "/report-jobs/550e8400-e29b-41d4-a716-446655440001/cancel", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
@@ -117,7 +117,7 @@ func TestRetryJobMaxAttemptsReached(t *testing.T) {
 	}
 	server := newTestServerWithJobSvc(mock)
 
-	req := httptest.NewRequest(http.MethodPost, "/reports/550e8400-e29b-41d4-a716-446655440000/jobs/550e8400-e29b-41d4-a716-446655440001/retry", nil)
+	req := httptest.NewRequest(http.MethodPost, "/report-jobs/550e8400-e29b-41d4-a716-446655440001/attempts", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
@@ -144,7 +144,7 @@ func TestListAttempts(t *testing.T) {
 	}
 	server := newTestServerWithJobSvc(mock)
 
-	req := httptest.NewRequest(http.MethodGet, "/reports/550e8400-e29b-41d4-a716-446655440000/jobs/550e8400-e29b-41d4-a716-446655440001/attempts", nil)
+	req := httptest.NewRequest(http.MethodGet, "/report-jobs/550e8400-e29b-41d4-a716-446655440001/attempts", nil)
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 

@@ -9,7 +9,7 @@ security:
   - bearerAuth: []
 x-implementation-baseline:
   language: Go
-  httpRouter: Go 1.22 net/http ServeMux
+  httpRouter: Go 1.25 net/http ServeMux
   database: PostgreSQL with pgx and sqlc
   migrations: goose
   config: envconfig-style structured environment loading

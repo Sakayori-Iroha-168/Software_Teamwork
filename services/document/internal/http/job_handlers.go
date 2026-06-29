@@ -100,6 +100,10 @@ func toEventResponse(e service.ReportEvent) eventResponse {
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
+	if s.jobSvc == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
+		return
+	}
 	reportID := r.PathValue("reportId")
 	jobs, err := s.jobSvc.ListJobs(r.Context(), reportID)
 	if err != nil {
@@ -114,6 +118,10 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
+	if s.jobSvc == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
+		return
+	}
 	jobID := r.PathValue("jobId")
 	job, err := s.jobSvc.GetJob(r.Context(), jobID)
 	if err != nil {
@@ -124,6 +132,10 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if s.jobSvc == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
+		return
+	}
 	jobID := r.PathValue("jobId")
 	job, err := s.jobSvc.CancelJob(r.Context(), jobID)
 	if err != nil {
@@ -134,6 +146,10 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
+	if s.jobSvc == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
+		return
+	}
 	jobID := r.PathValue("jobId")
 	attempt, err := s.jobSvc.RetryJob(r.Context(), jobID)
 	if err != nil {
@@ -144,6 +160,10 @@ func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListAttempts(w http.ResponseWriter, r *http.Request) {
+	if s.jobSvc == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
+		return
+	}
 	jobID := r.PathValue("jobId")
 	attempts, err := s.jobSvc.ListAttempts(r.Context(), jobID)
 	if err != nil {
@@ -158,6 +178,10 @@ func (s *Server) handleListAttempts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	if s.jobSvc == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
+		return
+	}
 	reportID := r.PathValue("reportId")
 	events, err := s.jobSvc.ListEvents(r.Context(), reportID)
 	if err != nil {

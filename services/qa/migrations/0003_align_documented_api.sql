@@ -1,3 +1,4 @@
+-- +goose Up
 ALTER TABLE qa_config_versions
     ADD COLUMN max_iterations INTEGER NOT NULL DEFAULT 5 CHECK (max_iterations > 0),
     ADD COLUMN tool_timeout_seconds INTEGER NOT NULL DEFAULT 10 CHECK (tool_timeout_seconds > 0),
@@ -54,3 +55,22 @@ CREATE TABLE llm_connection_tests (
 
 CREATE INDEX idx_llm_connection_tests_tested_at
     ON llm_connection_tests(tested_at DESC);
+
+-- +goose Down
+DROP TABLE IF EXISTS llm_connection_tests;
+DROP TABLE IF EXISTS agent_tool_calls;
+ALTER TABLE response_stream_events
+    DROP CONSTRAINT IF EXISTS response_stream_events_event_type_check;
+ALTER TABLE response_stream_events
+    ADD CONSTRAINT response_stream_events_event_type_check CHECK (
+        event_type IN ('intent', 'step', 'token', 'citation', 'done', 'error')
+    );
+ALTER TABLE response_runs
+    DROP COLUMN IF EXISTS max_iterations,
+    DROP COLUMN IF EXISTS current_iteration;
+ALTER TABLE qa_config_versions
+    DROP COLUMN IF EXISTS enabled_tool_names,
+    DROP COLUMN IF EXISTS overall_timeout_seconds,
+    DROP COLUMN IF EXISTS model_timeout_seconds,
+    DROP COLUMN IF EXISTS tool_timeout_seconds,
+    DROP COLUMN IF EXISTS max_iterations;

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -61,6 +62,9 @@ func (r *fakeRepository) SaveReasoningSteps(_ context.Context, _, _ string, step
 	r.savedSteps = append([]ReasoningStep(nil), steps...)
 	return nil
 }
+func (r *fakeRepository) SaveModelInvocation(_ context.Context, _ string, invocation ModelInvocation) (string, error) {
+	return fmt.Sprintf("invocation-%d", invocation.IterationNo), nil
+}
 
 type fakeAgentRunner struct {
 	input []agent.Message
@@ -87,7 +91,7 @@ type fakeRuntimeProvider struct {
 }
 
 func (p fakeRuntimeProvider) Acquire() (RuntimeSnapshot, func(), error) {
-	return RuntimeSnapshot{Runner: p.runner, SystemPrompt: p.prompt}, func() {}, nil
+	return RuntimeSnapshot{Runner: p.runner, SystemPrompt: p.prompt, LLMModel: "deepseek-v4-pro", LLMProfileID: "default"}, func() {}, nil
 }
 
 func TestAskPersistsConversationMessagesAndDisplayableSteps(t *testing.T) {

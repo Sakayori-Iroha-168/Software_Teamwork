@@ -144,6 +144,25 @@ type ProgressEvent struct {
 
 type ProgressObserver func(ProgressEvent)
 
+type ModelInvocation struct {
+	ResponseRunID    string
+	IterationNo      int
+	Provider         string
+	ProfileID        string
+	ModelName        string
+	FinishReason     string
+	Status           string
+	PromptTokens     int
+	CompletionTokens int
+	ReasoningTokens  int
+	TotalTokens      int
+	LatencyMS        int64
+	ErrorCode        string
+	ErrorMessage     string
+	StartedAt        time.Time
+	FinishedAt       *time.Time
+}
+
 type Repository interface {
 	CreateConversation(context.Context, Conversation) (Conversation, error)
 	ListConversations(context.Context, string, ConversationListOptions) (Page[Conversation], error)
@@ -155,6 +174,7 @@ type Repository interface {
 	UpdateMessage(context.Context, string, Message) error
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
+	SaveModelInvocation(context.Context, string, ModelInvocation) (string, error)
 	GetResponseRun(context.Context, string, string) (ResponseRun, error)
 }
 
@@ -165,6 +185,8 @@ type AgentRunner interface {
 type RuntimeSnapshot struct {
 	Runner       AgentRunner
 	SystemPrompt string
+	LLMModel     string
+	LLMProfileID string
 }
 
 type RuntimeProvider interface {
@@ -308,10 +330,34 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	messages = append(messages, agent.Message{Role: agent.RoleUser, Content: userMessage.Content})
 
 	steps := make([]ReasoningStep, 0, 4)
+	iterationStartedAt := map[int]time.Time{}
+	profileID := runtime.LLMProfileID
+	if profileID == "" {
+		profileID = "default"
+	}
 	result, runErr := runtime.Runner.RunWithObserver(runCtx, messages, func(event agent.Event) {
 		switch event.Type {
 		case agent.EventModelStarted:
+			iterationStartedAt[event.Iteration] = s.now().UTC()
 			emit("agent.iteration.started", map[string]any{"responseRunId": run.ID, "iterationNo": event.Iteration})
+		case agent.EventModelCompleted:
+			startedAt := iterationStartedAt[event.Iteration]
+			if startedAt.IsZero() {
+				startedAt = s.now().UTC()
+			}
+			finishedAt := s.now().UTC()
+			_, _ = s.repository.SaveModelInvocation(ctx, userID, ModelInvocation{
+				ResponseRunID: run.ID,
+				IterationNo:   event.Iteration,
+				Provider:      "ai-gateway",
+				ProfileID:     profileID,
+				ModelName:     runtime.LLMModel,
+				FinishReason:  event.FinishReason,
+				Status:        "completed",
+				StartedAt:     startedAt,
+				FinishedAt:    &finishedAt,
+				LatencyMS:     finishedAt.Sub(startedAt).Milliseconds(),
+			})
 		case agent.EventToolStarted, agent.EventToolCompleted, agent.EventToolFailed:
 			emit(string(event.Type), map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration})
 		}

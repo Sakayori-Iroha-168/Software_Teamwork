@@ -4,9 +4,11 @@
 report jobs, job attempts, events, generated file metadata, statistics, and
 operation logs.
 
-This first implementation slice is the service/data baseline for issue #97. It
-does not implement AI generation, DOCX export execution, MCP tools, file-service
-upload/download calls, or AI Gateway calls yet.
+The current implementation provides the service/data baseline, implemented
+report type/template/material metadata APIs, and scaffold coverage for the
+remaining active report-generation contract. It does not implement AI generation,
+DOCX export execution, MCP tools, report workflow orchestration, or AI Gateway
+calls yet.
 
 ## Local Configuration
 
@@ -14,8 +16,8 @@ Required environment variables:
 
 | Variable | Example | Purpose |
 | --- | --- | --- |
-| `DOCUMENT_DATABASE_URL` | `postgres://document:document@localhost:5432/document?sslmode=disable` | PostgreSQL connection string. |
-| `DOCUMENT_REDIS_ADDR` | `localhost:6379` | Redis/asynq queue endpoint. Redis is not the durable job state authority. |
+| `DOCUMENT_DATABASE_URL` | `postgres://document_app:document_app_dev@localhost:5435/document_system?sslmode=disable` | PostgreSQL connection string. |
+| `DOCUMENT_REDIS_ADDR` | `localhost:6380` | Redis/asynq queue endpoint. Redis is not the durable job state authority. |
 | `DOCUMENT_FILE_SERVICE_URL` | `http://localhost:8082` | Internal file service base URL for later template/material/report-file bytes. |
 | `DOCUMENT_AI_GATEWAY_URL` | `http://localhost:8086` | Internal AI Gateway base URL for later generation calls. |
 | `DOCUMENT_AI_GATEWAY_PROFILE_ID` | `default-chat` | AI Gateway profile reference used by report settings/default generation. |
@@ -31,9 +33,23 @@ Optional variables:
 
 ## Run
 
+Docker Compose starts PostgreSQL, Redis, applies goose migrations, and then
+starts the document service. Default values are embedded in `docker-compose.yml`;
+copy `.env.example` to `.env` only when local ports or downstream service URLs
+need to be changed. Compose uses `DOCUMENT_COMPOSE_FILE_SERVICE_URL` and
+`DOCUMENT_COMPOSE_AI_GATEWAY_URL` for container-network downstream overrides, so
+host-run `localhost` examples do not leak into the container by accident:
+
 ```powershell
-$env:DOCUMENT_DATABASE_URL = "postgres://document:document@localhost:5432/document?sslmode=disable"
-$env:DOCUMENT_REDIS_ADDR = "localhost:6379"
+# Optional: Copy-Item .env.example .env
+docker compose up --build
+```
+
+For a host process pointed at the same Compose dependencies:
+
+```powershell
+$env:DOCUMENT_DATABASE_URL = "postgres://document_app:document_app_dev@localhost:5435/document_system?sslmode=disable"
+$env:DOCUMENT_REDIS_ADDR = "localhost:6380"
 $env:DOCUMENT_FILE_SERVICE_URL = "http://localhost:8082"
 $env:DOCUMENT_AI_GATEWAY_URL = "http://localhost:8086"
 $env:DOCUMENT_AI_GATEWAY_PROFILE_ID = "default-chat"
@@ -50,13 +66,65 @@ GET /readyz
 Both JSON responses use the project envelope: `{ "data": ..., "requestId": "..." }`.
 The service-local operational contract is documented in [`api/openapi.yaml`](api/openapi.yaml).
 
+## Active Report Route Coverage
+
+Gateway exposes these document-owned report routes under `/api/v1`. The service
+local paths below omit that prefix. Implemented routes call the document service
+layer. Scaffold routes are registered and return the standard error envelope with
+`error.code=not_implemented` and HTTP `501` until their business workflows land.
+
+| Method | Local path | Operation ID | Status |
+| --- | --- | --- | --- |
+| `GET` | `/report-types` | `listReportTypes` | Implemented |
+| `GET` | `/report-templates` | `listReportTemplates` | Implemented |
+| `POST` | `/report-templates` | `createReportTemplate` | Implemented |
+| `GET` | `/report-templates/{reportTemplateId}` | `getReportTemplate` | Implemented |
+| `PATCH` | `/report-templates/{reportTemplateId}` | `updateReportTemplate` | Implemented |
+| `DELETE` | `/report-templates/{reportTemplateId}` | `deleteReportTemplate` | Implemented |
+| `GET` | `/report-templates/{reportTemplateId}/structure` | `getReportTemplateStructure` | Implemented |
+| `PATCH` | `/report-templates/{reportTemplateId}/structure` | `updateReportTemplateStructure` | Implemented |
+| `GET` | `/report-materials` | `listReportMaterials` | Implemented |
+| `POST` | `/report-materials` | `createReportMaterial` | Implemented |
+| `GET` | `/report-materials/{materialId}` | `getReportMaterial` | Implemented |
+| `DELETE` | `/report-materials/{materialId}` | `deleteReportMaterial` | Implemented |
+| `GET` | `/reports` | `listReports` | Implemented |
+| `POST` | `/reports` | `createReport` | Implemented |
+| `GET` | `/reports/{reportId}` | `getReport` | Implemented |
+| `PATCH` | `/reports/{reportId}` | `updateReport` | Implemented |
+| `DELETE` | `/reports/{reportId}` | `deleteReport` | Implemented |
+| `GET` | `/reports/{reportId}/outlines` | `listReportOutlines` | Implemented |
+| `POST` | `/reports/{reportId}/outlines` | `createReportOutline` | Implemented |
+| `GET` | `/reports/{reportId}/outlines/{outlineId}` | `getReportOutline` | Implemented |
+| `PATCH` | `/reports/{reportId}/outlines/{outlineId}` | `updateReportOutline` | Implemented |
+| `DELETE` | `/reports/{reportId}/outlines/{outlineId}/sections/{sectionId}` | `deleteReportOutlineSection` | Implemented |
+| `GET` | `/reports/{reportId}/sections` | `listReportSections` | Implemented |
+| `POST` | `/reports/{reportId}/sections` | `createReportSection` | Implemented; single create or batch save |
+| `GET` | `/reports/{reportId}/sections/{sectionId}` | `getReportSection` | Implemented |
+| `PATCH` | `/reports/{reportId}/sections/{sectionId}` | `updateReportSection` | Implemented |
+| `GET` | `/reports/{reportId}/sections/{sectionId}/versions` | `listReportSectionVersions` | Implemented |
+| `POST` | `/reports/{reportId}/sections/{sectionId}/versions` | `createReportSectionVersion` | Implemented |
+| `GET` | `/reports/{reportId}/jobs` | `listReportJobs` | Scaffold |
+| `POST` | `/reports/{reportId}/jobs` | `createReportJob` | Scaffold |
+| `GET` | `/report-jobs/{jobId}` | `getReportJob` | Scaffold |
+| `GET` | `/report-jobs/{jobId}/attempts` | `listReportJobAttempts` | Scaffold |
+| `POST` | `/report-jobs/{jobId}/attempts` | `createReportJobAttempt` | Scaffold |
+| `GET` | `/reports/{reportId}/events` | `listReportEvents` | Scaffold |
+| `GET` | `/report-files` | `listReportFiles` | Scaffold |
+| `POST` | `/report-files` | `createReportFile` | Scaffold |
+| `GET` | `/report-files/{reportFileId}` | `getReportFile` | Scaffold |
+| `GET` | `/report-files/{reportFileId}/content` | `getReportFileContent` | Scaffold |
+| `GET` | `/report-statistics/overview` | `getReportStatisticsOverview` | Scaffold |
+| `GET` | `/report-statistics/daily` | `listDailyReportStatistics` | Scaffold |
+| `GET` | `/report-operation-logs` | `listReportOperationLogs` | Scaffold |
+| `GET` | `/report-settings` | `getReportSettings` | Scaffold |
+| `PATCH` | `/report-settings` | `updateReportSettings` | Scaffold |
+
 ## Migrations
 
-Migration files live in `migrations/` and are intended for `goose`.
+Migration files live in `migrations/` and are applied with the project-pinned `goose@v3.27.1` command.
 
 ```powershell
-go install github.com/pressly/goose/v3/cmd/goose@v3.27.1
-goose -dir migrations postgres "$env:DOCUMENT_DATABASE_URL" up
+go run github.com/pressly/goose/v3/cmd/goose@v3.27.1 -dir migrations postgres "$env:DOCUMENT_DATABASE_URL" up
 ```
 
 The first migration creates the report generation tables and seeds the initial

@@ -1,3 +1,6 @@
+include:
+  - docker-compose.db.yml
+
 services:
   auth-postgres:
     image: postgres:16-alpine
@@ -13,24 +16,6 @@ services:
       - ../auth/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U auth_app -d auth_system"]
-      interval: 3s
-      timeout: 3s
-      retries: 20
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: qa_system
-      POSTGRES_USER: qa_app
-      POSTGRES_PASSWORD: qa_app_dev
-      TZ: Asia/Shanghai
-    ports:
-      - "${QA_POSTGRES_PORT:-5433}:5432"
-    volumes:
-      - qa_pg_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U qa_app -d qa_system"]
       interval: 3s
       timeout: 3s
       retries: 20
@@ -90,6 +75,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8084/readyz"]
       interval: 5s
@@ -123,5 +110,4 @@ services:
 
 volumes:
   auth_pg_data:
-  qa_pg_data:
   qa_agent_workspace:

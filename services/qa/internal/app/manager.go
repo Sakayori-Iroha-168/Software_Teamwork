@@ -26,9 +26,11 @@ type ManagerConfig struct {
 }
 
 type runtimeState struct {
-	runner  *agent.Runner
-	prompt  string
-	clients []*mcpclient.Client
+	runner       *agent.Runner
+	prompt       string
+	llmModel     string
+	llmProfileID string
+	clients      []*mcpclient.Client
 }
 
 type Manager struct {
@@ -59,7 +61,10 @@ func (m *Manager) Acquire() (service.RuntimeSnapshot, func(), error) {
 		m.stateMu.RUnlock()
 		return service.RuntimeSnapshot{}, func() {}, errors.New("agent runtime is not initialized")
 	}
-	return service.RuntimeSnapshot{Runner: m.state.runner, SystemPrompt: m.state.prompt}, m.stateMu.RUnlock, nil
+	return service.RuntimeSnapshot{
+		Runner: m.state.runner, SystemPrompt: m.state.prompt,
+		LLMModel: m.state.llmModel, LLMProfileID: m.state.llmProfileID,
+	}, m.stateMu.RUnlock, nil
 }
 
 func (m *Manager) Reload(ctx context.Context) error {
@@ -160,7 +165,10 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 		closeClients(clients)
 		return nil, err
 	}
-	return &runtimeState{runner: runner, prompt: runtimeConfig.SystemPrompt, clients: clients}, nil
+	return &runtimeState{
+		runner: runner, prompt: runtimeConfig.SystemPrompt, clients: clients,
+		llmModel: runtimeConfig.LLM.Model, llmProfileID: runtimeConfig.LLM.ProfileID,
+	}, nil
 }
 
 func (m *Manager) updateMCPStatus(ctx context.Context, id string, toolCount int, connectedAt *time.Time, lastError string) {

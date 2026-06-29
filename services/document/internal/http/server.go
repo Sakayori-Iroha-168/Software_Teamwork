@@ -18,6 +18,21 @@ type ReadyChecker interface {
 	CheckReady(context.Context) error
 }
 
+type DocumentService interface {
+	ListReportTypes(context.Context, service.RequestContext) ([]service.ReportType, error)
+	ListReportTemplates(context.Context, service.RequestContext, service.ReportTemplateListFilter) (service.ReportTemplateListResult, error)
+	CreateReportTemplate(context.Context, service.RequestContext, service.CreateReportTemplateInput) (service.ReportTemplate, error)
+	GetReportTemplate(context.Context, service.RequestContext, string) (service.ReportTemplate, error)
+	UpdateReportTemplate(context.Context, service.RequestContext, service.UpdateReportTemplateInput) (service.ReportTemplate, error)
+	DeleteReportTemplate(context.Context, service.RequestContext, string) error
+	GetReportTemplateStructure(context.Context, service.RequestContext, string) (service.ReportTemplateStructure, error)
+	UpdateReportTemplateStructure(context.Context, service.RequestContext, service.UpdateReportTemplateStructureInput) (service.ReportTemplateStructure, error)
+	ListReportMaterials(context.Context, service.RequestContext, service.ReportMaterialListFilter) (service.ReportMaterialListResult, error)
+	CreateReportMaterial(context.Context, service.RequestContext, service.CreateReportMaterialInput) (service.ReportMaterial, error)
+	GetReportMaterial(context.Context, service.RequestContext, string) (service.ReportMaterial, error)
+	DeleteReportMaterial(context.Context, service.RequestContext, string) error
+}
+
 type JobSvc interface {
 	GetJob(ctx context.Context, id string) (service.ReportJob, error)
 	ListJobs(ctx context.Context, reportID string) ([]service.ReportJob, error)
@@ -27,28 +42,42 @@ type JobSvc interface {
 	ListEvents(ctx context.Context, reportID string) ([]service.ReportEvent, error)
 }
 
+const defaultMaxUploadBytes = int64(32 << 20)
+
 type Config struct {
-	Logger       *slog.Logger
-	ReadyChecker ReadyChecker
-	JobSvc       JobSvc
+	Logger          *slog.Logger
+	ReadyChecker    ReadyChecker
+	DocumentService DocumentService
+	ReportService   ReportService
+	JobSvc          JobSvc
+	MaxUploadBytes  int64
 }
 
 type Server struct {
-	logger       *slog.Logger
-	readyChecker ReadyChecker
-	jobSvc       JobSvc
-	mux          *http.ServeMux
+	logger         *slog.Logger
+	readyChecker   ReadyChecker
+	documents      DocumentService
+	reportService  ReportService
+	jobSvc         JobSvc
+	maxUploadBytes int64
+	mux            *http.ServeMux
 }
 
 func NewServer(cfg Config) *Server {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.MaxUploadBytes <= 0 {
+		cfg.MaxUploadBytes = defaultMaxUploadBytes
+	}
 	server := &Server{
-		logger:       cfg.Logger,
-		readyChecker: cfg.ReadyChecker,
-		jobSvc:       cfg.JobSvc,
-		mux:          http.NewServeMux(),
+		logger:         cfg.Logger,
+		readyChecker:   cfg.ReadyChecker,
+		documents:      cfg.DocumentService,
+		reportService:  cfg.ReportService,
+		jobSvc:         cfg.JobSvc,
+		maxUploadBytes: cfg.MaxUploadBytes,
+		mux:            http.NewServeMux(),
 	}
 	server.routes()
 	return server
@@ -57,12 +86,37 @@ func NewServer(cfg Config) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("GET /report-types", s.handleListReportTypes)
+	s.mux.HandleFunc("GET /report-templates", s.handleListReportTemplates)
+	s.mux.HandleFunc("POST /report-templates", s.handleCreateReportTemplate)
+	s.mux.HandleFunc("GET /report-templates/{reportTemplateId}", s.handleGetReportTemplate)
+	s.mux.HandleFunc("PATCH /report-templates/{reportTemplateId}", s.handleUpdateReportTemplate)
+	s.mux.HandleFunc("DELETE /report-templates/{reportTemplateId}", s.handleDeleteReportTemplate)
+	s.mux.HandleFunc("GET /report-templates/{reportTemplateId}/structure", s.handleGetReportTemplateStructure)
+	s.mux.HandleFunc("PATCH /report-templates/{reportTemplateId}/structure", s.handleUpdateReportTemplateStructure)
+	s.mux.HandleFunc("GET /report-materials", s.handleListReportMaterials)
+	s.mux.HandleFunc("POST /report-materials", s.handleCreateReportMaterial)
+	s.mux.HandleFunc("GET /report-materials/{materialId}", s.handleGetReportMaterial)
+	s.mux.HandleFunc("DELETE /report-materials/{materialId}", s.handleDeleteReportMaterial)
+	s.registerReportRoutes()
+	// C-04: jobs, attempts, events
 	s.mux.HandleFunc("GET /reports/{reportId}/jobs", s.handleListJobs)
-	s.mux.HandleFunc("GET /reports/{reportId}/jobs/{jobId}", s.handleGetJob)
-	s.mux.HandleFunc("POST /reports/{reportId}/jobs/{jobId}/cancel", s.handleCancelJob)
-	s.mux.HandleFunc("POST /reports/{reportId}/jobs/{jobId}/retry", s.handleRetryJob)
-	s.mux.HandleFunc("GET /reports/{reportId}/jobs/{jobId}/attempts", s.handleListAttempts)
+	s.mux.HandleFunc("POST /reports/{reportId}/jobs", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-jobs/{jobId}", s.handleGetJob)
+	s.mux.HandleFunc("POST /report-jobs/{jobId}/cancel", s.handleCancelJob)
+	s.mux.HandleFunc("GET /report-jobs/{jobId}/attempts", s.handleListAttempts)
+	s.mux.HandleFunc("POST /report-jobs/{jobId}/attempts", s.handleRetryJob)
 	s.mux.HandleFunc("GET /reports/{reportId}/events", s.handleListEvents)
+	// remaining stubs (C-07, C-08)
+	s.mux.HandleFunc("GET /report-files", s.handleNotImplemented)
+	s.mux.HandleFunc("POST /report-files", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-files/{reportFileId}", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-files/{reportFileId}/content", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-statistics/overview", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-statistics/daily", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-operation-logs", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-settings", s.handleNotImplemented)
+	s.mux.HandleFunc("PATCH /report-settings", s.handleNotImplemented)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 
@@ -128,6 +182,12 @@ type successEnvelope struct {
 	RequestID string `json:"requestId"`
 }
 
+type pagedEnvelope struct {
+	Data      any          `json:"data"`
+	Page      pageResponse `json:"page"`
+	RequestID string       `json:"requestId"`
+}
+
 type errorEnvelope struct {
 	Error struct {
 		Code      service.Code      `json:"code"`
@@ -139,6 +199,10 @@ type errorEnvelope struct {
 
 func writeData(w http.ResponseWriter, r *http.Request, status int, value any) {
 	writeJSON(w, status, successEnvelope{Data: value, RequestID: requestIDFromContext(r.Context())})
+}
+
+func writePage(w http.ResponseWriter, r *http.Request, status int, value any, page service.PageMeta) {
+	writeJSON(w, status, pagedEnvelope{Data: value, Page: pageFromDomain(page), RequestID: requestIDFromContext(r.Context())})
 }
 
 func writeError(w http.ResponseWriter, r *http.Request, err error) {
@@ -170,6 +234,8 @@ func statusForCode(code service.Code) int {
 		return http.StatusTooManyRequests
 	case service.CodeDependency:
 		return http.StatusBadGateway
+	case service.CodeNotImplemented:
+		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
 	}

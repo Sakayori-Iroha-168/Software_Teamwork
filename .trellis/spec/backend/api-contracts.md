@@ -132,6 +132,7 @@ when values are available:
 | Resource does not exist or is hidden | `404 not_found` |
 | State conflict | `409 conflict` |
 | Rate or quota exceeded | `429 rate_limited` |
+| Active contract route scaffolded before workflow implementation | `501 not_implemented` |
 | Downstream service or infrastructure failed | `502 dependency_error` |
 | Unexpected gateway failure | `500 internal_error` |
 
@@ -283,6 +284,7 @@ payloads, SQL details, or internal URLs.
 | Profile or resource does not exist | `404 not_found` |
 | State or configuration conflict | `409 conflict` |
 | Rate or quota exceeded | `429 rate_limited` or OpenAI-style `rate_limit_error` |
+| Active contract route scaffolded before workflow implementation | `501 not_implemented` |
 | Provider or infrastructure failed | `502 dependency_error` or OpenAI-style `upstream_error` |
 | Unexpected service failure | `500 internal_error` |
 
@@ -612,6 +614,114 @@ response includes contentType and sizeBytes, but no objectKey
 public GET /api/v1/documents/{documentId} stays knowledge-owned and does not expose objectKey
 ```
 
+## Scenario: Document Report Template And Material APIs
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing Document Service report-type, report-template,
+  template-structure, or report-material APIs.
+- Applies to `services/document/internal/http`, `services/document/internal/service`,
+  `services/document/internal/repository`, `services/document/internal/platform/fileclient`,
+  and the matching gateway contract in `docs/services/gateway/api/openapi.yaml`.
+
+### 2. Signatures
+
+Service-local Document routes should mirror the gateway resource paths unless the
+team introduces a versioned internal Document API:
+
+- `GET /report-types`
+- `GET /report-templates`
+- `POST /report-templates` with multipart field `file`, `templateName`,
+  `reportType`, and optional `description`
+- `GET /report-templates/{reportTemplateId}`
+- `PATCH /report-templates/{reportTemplateId}` with optional `templateName`,
+  `description`, and `enabled`
+- `DELETE /report-templates/{reportTemplateId}`
+- `GET /report-templates/{reportTemplateId}/structure`
+- `PATCH /report-templates/{reportTemplateId}/structure`
+- `GET /report-materials`
+- `POST /report-materials` with multipart field `file`, `materialName`,
+  `materialType`, optional `category`, `description`, and `tags`
+- `GET /report-materials/{materialId}`
+- `DELETE /report-materials/{materialId}`
+
+Document calls File Service through:
+
+- `POST /internal/v1/files`
+- `DELETE /internal/v1/files/{fileId}` for best-effort cleanup when a Document
+  business insert fails after upload
+
+### 3. Contracts
+
+- Gateway-facing responses use `{ data, requestId }`; list responses use
+  `{ data, page, requestId }`.
+- Public template DTOs may include `id`, `templateName`, `reportType`, `version`,
+  `description`, `enabled`, `filename`, `fileSize`, `createdBy`, `createdAt`,
+  and `updatedAt`.
+- Public material DTOs may include `id`, `materialName`, `materialType`,
+  `category`, `description`, `tags`, `enabled`, `filename`, `fileSize`,
+  `createdBy`, `createdAt`, and `updatedAt`.
+- Template structure follows gateway OpenAPI: `outlineSchema` array and
+  `styleConfig` object. Do not expose `materialMappings` unless the gateway
+  OpenAPI contract is updated first.
+- Document may persist `file_ref` internally, but public responses must not
+  expose File Service IDs, `file_ref`, buckets, object keys, internal URLs,
+  signed URLs, or storage credentials.
+- Template/material deletion should soft-delete business rows with `deleted_at`
+  and hide them from list/detail responses.
+
+### 4. Validation & Error Matrix
+
+| Condition | Response/error |
+| --- | --- |
+| Missing gateway user context | `401 unauthorized` |
+| Invalid page, pageSize, enabled, UUID, JSON shape, or multipart body | `400 validation_error` |
+| Missing `templateName`, `reportType`, `materialName`, `materialType`, or upload file | `400 validation_error` |
+| Template upload is not a DOCX in the first implementation slice | `400 validation_error` |
+| Disabled or missing report type on template create | `400 validation_error` |
+| Missing or soft-deleted template/material | `404 not_found` |
+| File Service upload failure | `502 dependency_error` |
+| PostgreSQL query/insert/update failure | `502 dependency_error` unless a typed domain error applies |
+
+### 5. Good/Base/Bad Cases
+
+- Good: handler parses multipart, service validates business fields and calls
+  File Service, repository stores `file_ref` plus safe display metadata, and the
+  response omits all internal file identifiers.
+- Base: template/material rows are soft-deleted and hidden from read APIs while
+  historical report references remain intact.
+- Bad: returning File Service `id` as a public template/material field, exposing
+  object storage details, or calling File Service while holding a database
+  transaction.
+
+### 6. Tests Required
+
+- Handler tests for response envelopes, pagination metadata, request ID
+  propagation, invalid query parameters, missing upload file, and JSON decode
+  errors.
+- Service tests or handler fakes for File Service dependency failure mapping,
+  required field validation, DOCX validation, and disabled/missing report type.
+- Repository integration tests, when `DOCUMENT_TEST_DATABASE_URL` is available,
+  for list filters, soft delete hiding, structure JSON round-trip, and tags JSON
+  round-trip.
+- Response safety tests asserting public bodies do not contain `file_ref`,
+  `fileRef`, raw File Service IDs, object keys, buckets, internal URLs, or signed
+  URLs.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+POST /report-templates -> document stores uploaded bytes itself -> response returns fileRef/fileId
+```
+
+#### Correct
+
+```text
+POST /report-templates -> document calls file /internal/v1/files -> stores file_ref internally -> response returns only template id and safe display metadata
+```
+
 ## Scenario: Gateway Redis Session Cache
 
 ### 1. Scope / Trigger
@@ -727,4 +837,125 @@ gateway logs the raw token on failures
 gateway receives Authorization: Bearer token
 gateway hashes token and reads gateway:session:<accessTokenHash>
 gateway injects cached user, roles, and permissions into downstream headers
+```
+
+## Scenario: Auth Service Source-of-Truth API
+
+### 1. Scope / Trigger
+
+- Trigger: changing user creation, session creation, token hashing, RBAC source
+  reads, session revocation, security events, or auth-owned migrations.
+- Applies to `services/auth/internal/service`, `services/auth/internal/http`,
+  `services/auth/internal/repository`, `services/auth/migrations`,
+  `services/auth/api/openapi.yaml`, and `docs/services/auth/api/openapi.yaml`.
+
+### 2. Signatures
+
+- Internal routes:
+  - `POST /internal/v1/users`
+  - `POST /internal/v1/sessions`
+  - `GET /internal/v1/users/{userId}`
+  - `GET /internal/v1/users/{userId}/permissions`
+  - `GET /internal/v1/sessions/{sessionId}`
+  - `DELETE /internal/v1/sessions/{sessionId}`
+- Required caller context: `X-Service-Token` and `X-Caller-Service`; propagate
+  `X-Request-Id` when present.
+- In OpenAPI, model service-token authentication as an API key header:
+  `type: apiKey`, `in: header`, `name: X-Service-Token`. Do not model
+  project service tokens as `Authorization: Bearer` unless the implementation
+  actually accepts the `Authorization` header.
+- Environment keys:
+  - `AUTH_DATABASE_URL`
+  - `AUTH_INTERNAL_SERVICE_TOKEN` required when `AUTH_DATABASE_URL` is set
+  - `AUTH_TOKEN_HASH_SECRET` required when `AUTH_DATABASE_URL` is set
+  - `AUTH_TOKEN_HASH_KEY_VERSION`, default `v1`
+  - `AUTH_SESSION_TTL`, default `24h`
+  - `AUTH_DEFAULT_ROLE_CODE`, default `standard`
+- Database source tables include `auth_users`, `auth_credentials`,
+  `auth_roles`, `auth_permissions`, `user_roles`, `role_permissions`,
+  `auth_sessions`, `session_revocations`, and `auth_security_events`.
+
+### 3. Contracts
+
+- `POST /internal/v1/users` creates a user, password credential, default role
+  assignment, session, and security events, then returns
+  `{ data: { user, session }, requestId }`.
+- `POST /internal/v1/sessions` validates username/password without account
+  enumeration and returns the same session response shape.
+- Passwords are stored as `argon2id-v1` PHC strings with `m=65536`, `t=3`,
+  `p=2`, `salt=16`, and `key=32`.
+- Access tokens are opaque bearer tokens. Auth persists only
+  `hmac-sha256:<keyVersion>:<hex>` token hashes.
+- Raw access tokens may appear only in create-user/create-session success
+  responses. Session read responses must not include raw tokens and should not
+  include token hashes unless a reviewed internal diagnostics contract requires
+  it.
+- Default role/permission seed data must include `standard`, `admin`, and
+  `super_admin` system roles.
+- Security events must cover user creation, session creation failure, session
+  creation success, default role assignment, and session revocation.
+- Security events that are part of the same durable transaction may fail the
+  operation and roll back the business write. Security events written after a
+  durable user/session/revocation write has already committed are best-effort:
+  log a structured warning, but do not return a failed response for business
+  state that is already effective.
+
+### 4. Validation & Error Matrix
+
+| Condition | Response/error |
+| --- | --- |
+| Missing or blank username/password | `400 validation_error` |
+| Missing or invalid service token | `401 unauthorized` |
+| Missing internal caller context | `401 unauthorized` |
+| Unknown username or wrong password | `401 unauthorized` with the same message |
+| Disabled, locked, or otherwise unavailable user | `401 unauthorized` |
+| Duplicate username | `409 conflict` |
+| Missing user/session source record | `404 not_found` for internal reads/deletes |
+| Missing database or token hash secret at runtime | `502 dependency_error` |
+| Repository or migration-dependent write fails | `502 dependency_error` |
+| Post-commit security event write fails after successful durable write | success response is preserved; log `warn` with `operation=record_security_event` |
+
+### 5. Good/Base/Bad Cases
+
+- Good: handler decodes JSON and maps path values; service validates
+  credentials and generates password/token material; repository writes SQL
+  records and maps rows back to domain structs; post-commit security-event
+  failures are logged without making successful user/session writes look
+  failed; response exposes only safe DTOs.
+- Base: gateway calls auth once for user/session creation, stores the returned
+  session identity in Redis, and later uses auth source reads only for cache
+  repair or revocation workflows.
+- Bad: handler hashes passwords directly, stores raw access tokens, returns
+  `accessTokenHash` to public callers, or logs raw credentials/token material.
+
+### 6. Tests Required
+
+- Service tests for duplicate username, wrong password, token hash generation,
+  session creation, security-event recording, post-commit security-event
+  failure semantics, and revoked token lookup failure.
+- HTTP tests for success envelopes, request id propagation, validation errors,
+  missing caller context, and no token/hash leakage from session read responses.
+- Repository tests for explicit-column queries, user roles/permissions mapping,
+  revocation mapping, and security event writes where database tooling exists.
+- Config tests for `AUTH_TOKEN_HASH_SECRET` requirements and TTL/key-version
+  parsing.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+POST /internal/v1/sessions -> handler verifies password -> DB stores accessToken
+GET /internal/v1/sessions/{id} -> returns accessTokenHash to gateway/frontend
+OpenAPI serviceTokenAuth -> Authorization: Bearer, while handler reads X-Service-Token
+POST /internal/v1/users commits user -> post-commit event fails -> handler returns 502
+```
+
+#### Correct
+
+```text
+POST /internal/v1/sessions -> service verifies argon2id password -> DB stores hmac token hash
+GET /internal/v1/sessions/{id} -> returns session identity without raw token/hash
+OpenAPI serviceTokenAuth -> apiKey header X-Service-Token, matching handler auth
+POST /internal/v1/users commits user -> post-commit event fails -> warn log + 201 response
 ```

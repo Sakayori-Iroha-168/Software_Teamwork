@@ -102,3 +102,69 @@ Implemented the frontend gateway OpenAPI generated types, typed transport wrappe
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Issue 147 Go 1.25 baseline
+
+**Date**: 2026-06-29
+**Task**: Issue 147 Go 1.25 baseline
+**Branch**: `Special/chore/go-125-baseline`
+
+### Summary
+
+Aligned landed Go services, Docker build image, Go service CI, and backend CI spec with the documented Go 1.25 baseline.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a8399d9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 5: Issue 148 goose migration CI
+
+**Date**: 2026-06-29
+**Task**: Issue 148 goose migration CI
+**Branch**: `Special/chore/goose-migration-ci`
+
+### Summary
+
+Added goose v3.27.1 migration apply workflow, synchronized service README migration commands, and documented backend migration CI contracts.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `abb2c9f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

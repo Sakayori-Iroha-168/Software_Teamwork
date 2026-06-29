@@ -2,8 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/http/middleware"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 )
 
@@ -119,37 +118,29 @@ func (s *Server) routes() {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	requestID := strings.TrimSpace(r.Header.Get("X-Request-Id"))
-	if requestID == "" {
-		requestID = newRequestID()
-	}
-	ctx := context.WithValue(r.Context(), requestIDKey{}, requestID)
-	ctx = service.WithRequestID(ctx, requestID)
+	middleware.RequestLog(s.logger, http.HandlerFunc(s.dispatch)).ServeHTTP(w, r)
+}
+
+func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
+	requestID := middleware.RequestIDFromContext(r.Context())
+	ctx := service.WithRequestID(r.Context(), requestID)
 	r = r.WithContext(ctx)
-	w.Header().Set("X-Request-Id", requestID)
 	if strings.HasPrefix(r.URL.Path, "/internal/v1/") && !secureTokenEqual(r.Header.Get("X-Service-Token"), s.serviceToken) {
 		writeError(w, r, service.NewError(service.CodeUnauthorized, "service authentication required", nil))
 		return
 	}
-
-	recorder := &statusRecorder{ResponseWriter: w}
-	startedAt := time.Now()
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			s.logger.ErrorContext(ctx, "http panic recovered", "service", "qa", "request_id", requestID, "operation", "http_request")
-			if recorder.status == 0 {
-				writeError(recorder, r, service.NewError(service.CodeInternal, "internal server error", nil))
-			}
-		}
-		status := recorder.status
-		if status == 0 {
-			status = http.StatusOK
-		}
-		if status >= http.StatusInternalServerError {
-			s.logger.ErrorContext(ctx, "http request failed", "service", "qa", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "status", status, "duration_ms", time.Since(startedAt).Milliseconds())
+			s.logger.ErrorContext(ctx, "http panic recovered",
+				"service", "qa",
+				"request_id", requestID,
+				"operation", "http_request",
+				"status", "failed",
+			)
+			writeError(w, r, service.NewError(service.CodeInternal, "internal server error", nil))
 		}
 	}()
-	s.mux.ServeHTTP(recorder, r)
+	s.mux.ServeHTTP(w, r)
 }
 
 func secureTokenEqual(left, right string) bool {
@@ -409,11 +400,8 @@ func conversationListOptions(r *http.Request) (service.ConversationListOptions, 
 	}, nil
 }
 
-type requestIDKey struct{}
-
 func requestIDFromContext(ctx context.Context) string {
-	requestID, _ := ctx.Value(requestIDKey{}).(string)
-	return requestID
+	return service.RequestIDFromContext(ctx)
 }
 
 type errorEnvelope struct {
@@ -504,38 +492,4 @@ func writeSSE(w io.Writer, flusher http.Flusher, event string, sequence int, val
 		_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload)
 	}
 	flusher.Flush()
-}
-
-func newRequestID() string {
-	data := make([]byte, 8)
-	if _, err := rand.Read(data); err != nil {
-		return "req_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	}
-	return "req_" + hex.EncodeToString(data)
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (r *statusRecorder) WriteHeader(status int) {
-	if r.status != 0 {
-		return
-	}
-	r.status = status
-	r.ResponseWriter.WriteHeader(status)
-}
-
-func (r *statusRecorder) Write(body []byte) (int, error) {
-	if r.status == 0 {
-		r.status = http.StatusOK
-	}
-	return r.ResponseWriter.Write(body)
-}
-
-func (r *statusRecorder) Flush() {
-	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
-		flusher.Flush()
-	}
 }

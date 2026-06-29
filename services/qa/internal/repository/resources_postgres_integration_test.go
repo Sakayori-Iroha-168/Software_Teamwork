@@ -39,6 +39,18 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 	if err = repo.SaveStreamEvents(ctx, "integration-user", run.ID, events); err != nil {
 		t.Fatal(err)
 	}
+	invocationID, err := repo.SaveModelInvocation(ctx, "integration-user", service.ModelInvocation{
+		ResponseRunID: run.ID, IterationNo: 1, Provider: "ai-gateway", ProfileID: "default",
+		ModelName: "deepseek-v4-pro", FinishReason: "stop", Status: "completed",
+		StartedAt: now, FinishedAt: ptrTime(now.Add(time.Millisecond)), LatencyMS: 1,
+	})
+	if err != nil || invocationID == "" {
+		t.Fatalf("invocation=%q err=%v", invocationID, err)
+	}
+	rows, err := repo.queries.ListModelInvocationsByRun(ctx, run.ID, "integration-user")
+	if err != nil || len(rows) != 1 || rows[0].Status != "completed" {
+		t.Fatalf("invocations=%+v err=%v", rows, err)
+	}
 	replayed, err := repo.ListStreamEvents(ctx, "integration-user", conversationID, run.ID, 0)
 	if err != nil || len(replayed) != 3 {
 		t.Fatalf("events=%d err=%v", len(replayed), err)
@@ -73,3 +85,5 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 }
 
 func integrationUUID(value uint64) string { return fmt.Sprintf("00000000-0000-4000-8000-%012x", value) }
+
+func ptrTime(value time.Time) *time.Time { return &value }
