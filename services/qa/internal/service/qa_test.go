@@ -205,3 +205,95 @@ func TestCancelActiveRunCancelsAgentAndPersistsCancelledMessage(t *testing.T) {
 		t.Fatalf("assistant status=%q", got)
 	}
 }
+
+func TestTerminationReasonFromResult(t *testing.T) {
+	testCases := []struct {
+		name           string
+		runErr         error
+		timeoutCtx     context.Context
+		runCtx         context.Context
+		finishReason   string
+		wantReason     string
+	}{
+		{"completed", nil, context.Background(), context.Background(), "", "completed"},
+		{"cancelled via runErr", context.Canceled, context.Background(), context.Background(), "", "cancelled"},
+		{"cancelled via runCtx", nil, context.Background(), func() context.Context { ctx, cancel := context.WithCancel(context.Background()); cancel(); return ctx }(), "", "cancelled"},
+		{"timeout", nil, func() context.Context { ctx, _ := context.WithTimeout(context.Background(), 0); return ctx }(), context.Background(), "", "timeout"},
+		{"max_iterations", agent.ErrMaxIterations, context.Background(), context.Background(), "", "max_iterations"},
+		{"model_error", errors.New("model failure"), context.Background(), context.Background(), "", "model_error"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := terminationReasonFromResult(tc.runErr, tc.timeoutCtx, tc.runCtx, tc.finishReason)
+			if got != tc.wantReason {
+				t.Errorf("terminationReasonFromResult() = %q, want %q", got, tc.wantReason)
+			}
+		})
+	}
+}
+
+type errorAgentRunner struct{ err error }
+
+func (r errorAgentRunner) RunWithObserver(_ context.Context, _ []agent.Message, observer agent.Observer) (agent.Result, error) {
+	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
+	return agent.Result{}, r.err
+}
+
+func TestAskRecordsModelInvocationOnSuccess(t *testing.T) {
+	now := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}
+	runner := &fakeAgentRunner{}
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: runner, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa.now = func() time.Time { return now }
+	_, err = qa.Ask(context.Background(), "user-id", "conversation-id", AskInput{Message: "测试问题"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repository.savedSteps) != 2 {
+		t.Fatalf("expected 2 reasoning steps, got %d", len(repository.savedSteps))
+	}
+	if repository.savedEvents[0].EventType != "message.created" {
+		t.Fatalf("first event = %q, want message.created", repository.savedEvents[0].EventType)
+	}
+}
+
+func TestAskReturnsErrorOnModelFailure(t *testing.T) {
+	now := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}
+	runner := errorAgentRunner{err: errors.New("model connection failed")}
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: runner, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa.now = func() time.Time { return now }
+	_, err = qa.Ask(context.Background(), "user-id", "conversation-id", AskInput{Message: "测试问题"}, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if repository.messages[1].Status != "failed" {
+		t.Fatalf("assistant status=%q, want failed", repository.messages[1].Status)
+	}
+}
+
+func TestAskTimesOut(t *testing.T) {
+	now := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}
+	runner := blockingAgentRunner{started: make(chan struct{})}
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: runner, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa.now = func() time.Time { return now }
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	_, err = qa.Ask(ctx, "user-id", "conversation-id", AskInput{Message: "测试问题"}, nil)
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if repository.messages[1].Status != "failed" {
+		t.Fatalf("assistant status=%q, want failed", repository.messages[1].Status)
+	}
+}

@@ -116,36 +116,6 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /internal/v1/qa-sessions/{sessionId}/messages", s.handleAsk)
 	s.registerResourceRoutes()
 	s.mux.HandleFunc("/", s.handleNotFound)
-	s.registerPublicRoutes()
-}
-
-func (s *Server) registerPublicRoutes() {
-	s.mux.HandleFunc("POST /api/v1/qa-sessions", s.handleCreateConversation)
-	s.mux.HandleFunc("GET /api/v1/qa-sessions", s.handleListConversations)
-	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}", s.handleGetConversation)
-	s.mux.HandleFunc("PATCH /api/v1/qa-sessions/{sessionId}", s.handleUpdateConversation)
-	s.mux.HandleFunc("DELETE /api/v1/qa-sessions/{sessionId}", s.handleDeleteConversation)
-	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}/messages", s.handleListMessages)
-	s.mux.HandleFunc("POST /api/v1/qa-sessions/{sessionId}/messages", s.handleAsk)
-	s.registerPublicResourceRoutes()
-}
-
-func (s *Server) registerPublicResourceRoutes() {
-	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}/events", s.handleListEvents)
-	s.mux.HandleFunc("GET /api/v1/messages/{messageId}/citations", s.handleListCitations)
-	s.mux.HandleFunc("GET /api/v1/citations/{citationId}", s.handleGetCitation)
-	s.mux.HandleFunc("POST /api/v1/citation-lookups", s.handleCitationLookup)
-	s.mux.HandleFunc("GET /api/v1/qa-config-versions/current", s.handleGetQAConfigVersion)
-	s.mux.HandleFunc("POST /api/v1/qa-config-versions", s.handleCreateQAConfigVersion)
-	s.mux.HandleFunc("GET /api/v1/llm-config-versions/current", s.handleGetLLMConfigVersion)
-	s.mux.HandleFunc("POST /api/v1/llm-config-versions", s.handleCreateLLMConfigVersion)
-	s.mux.HandleFunc("POST /api/v1/llm-connection-tests", s.handleProfileConnectionTest)
-	s.mux.HandleFunc("POST /api/v1/retrieval-test-runs", s.handleCreateRetrievalTest)
-	s.mux.HandleFunc("GET /api/v1/retrieval-test-runs/{testRunId}", s.handleGetRetrievalTest)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/overview", s.handleMetricsOverview)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/trend", s.handleMetricsTrend)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/top-queries", s.handleTopQueries)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/intent-distribution", s.handleIntentDistribution)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,7 @@
 -- +goose Up
 -- Add termination_reason column to response_runs for agent run tracking
 ALTER TABLE response_runs
-    ADD COLUMN termination_reason TEXT CHECK (termination_reason IN ('completed', 'max_iterations', 'timeout', 'cancelled', 'model_error'));
+    ADD COLUMN termination_reason TEXT CHECK (termination_reason IN ('completed', 'max_iterations', 'timeout', 'cancelled', 'tool_error', 'model_error', 'policy_denied'));
 
 -- Migrate existing stop_reason values to termination_reason if any exist
 UPDATE response_runs
