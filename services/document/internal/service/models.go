@@ -335,3 +335,70 @@ type ReportSectionVersion struct {
 	CreatedBy    string
 	CreatedAt    time.Time
 }
+
+// ReportSettings holds the singleton report generation configuration row.
+type ReportSettings struct {
+	ID                   string
+	LLMProfileID         *string
+	DefaultTemplateID    *string
+	DefaultFileFormat    string
+	DefaultNumberingMode string
+	UpdatedAt            time.Time
+	CreatedAt            time.Time
+}
+
+// UpdateReportSettingsInput carries optional patch fields for PATCH /report-settings.
+type UpdateReportSettingsInput struct {
+	LLMProfileID         *string
+	DefaultTemplateID    *string
+	DefaultFileFormat    *string
+	DefaultNumberingMode *string
+}
+
+// ReportStatisticsOverview is the response body for GET /report-statistics/overview.
+type ReportStatisticsOverview struct {
+	TemplateCount  int          `json:"templateCount"`
+	ReportCount    int          `json:"reportCount"`
+	GeneratedCount int          `json:"generatedCount"`
+	FailedCount    int          `json:"failedCount"`
+	Trend30d       []DailyTrend `json:"trend30d"`
+}
+
+// DailyTrend holds a single day's generated-report count.
+type DailyTrend struct {
+	Date           time.Time `json:"date"`
+	GeneratedCount int       `json:"generatedCount"`
+}
+
+// OperationLog mirrors the report_operation_logs table (read-only from the API).
+type OperationLog struct {
+	ID               string
+	OperatorID       *string
+	OperatorName     *string
+	OperationType    string
+	TargetType       string
+	TargetID         string
+	RequestID        *string
+	RequestSource    *string
+	ToolName         *string
+	ParameterSummary map[string]any
+	OperationResult  string
+	ErrorMessage     *string
+	Metadata         map[string]any
+	CreatedAt        time.Time
+}
+
+// OperationLogListFilter carries query parameters for GET /report-operation-logs.
+type OperationLogListFilter struct {
+	Page          int
+	PageSize      int
+	OperationType string
+	TargetID      string
+	RequestSource string
+}
+
+// OperationLogListResult wraps the paginated log list.
+type OperationLogListResult struct {
+	Items []OperationLog
+	Page  PageMeta
+}

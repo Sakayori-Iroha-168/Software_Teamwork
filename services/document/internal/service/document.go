@@ -31,6 +31,11 @@ type Repository interface {
 	CreateReportMaterial(ctx context.Context, value ReportMaterial) (ReportMaterial, error)
 	FindReportMaterialByID(ctx context.Context, id string) (ReportMaterial, error)
 	DeleteReportMaterial(ctx context.Context, id string, deletedAt time.Time) error
+	// C-08
+	GetReportSettings(ctx context.Context) (ReportSettings, error)
+	UpdateReportSettings(ctx context.Context, input UpdateReportSettingsInput) (ReportSettings, error)
+	GetReportStatisticsOverview(ctx context.Context) (ReportStatisticsOverview, error)
+	ListOperationLogs(ctx context.Context, filter OperationLogListFilter) (OperationLogListResult, error)
 }
 
 type FileClient interface {
