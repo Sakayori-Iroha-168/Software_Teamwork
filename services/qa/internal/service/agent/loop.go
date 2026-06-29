@@ -174,7 +174,7 @@ func (r *Runner) RunWithOptions(ctx context.Context, input []Message, observer O
 		}
 	}
 
-	return Result{Messages: messages, Iterations: r.cfg.MaxIterations}, ErrMaxIterations
+	return Result{Messages: messages, Iterations: maxIter}, ErrMaxIterations
 }
 
 func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[string]struct{}, call ToolCall, observer Observer) Message {

@@ -323,6 +323,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 
 	var maxIterations, overallTimeoutSeconds int
 	var enabledToolNames []string
+	var knowledgeBaseIDs []string
 	var retrieval RetrievalSettings
 	if s.resourceRepo != nil {
 		qaConfig, qaErr := s.resourceRepo.GetActiveQAConfigVersion(ctx)
@@ -331,13 +332,35 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 			overallTimeoutSeconds = qaConfig.Agent.OverallTimeoutSeconds
 			enabledToolNames = qaConfig.Agent.EnabledToolNames
 			retrieval = qaConfig.Retrieval
+			knowledgeBaseIDs = qaConfig.DefaultKnowledgeBaseIDs
 		}
 		_, _ = s.resourceRepo.GetActiveLLMConfigVersion(ctx)
 	}
+	if len(input.KnowledgeBaseIDs) > 0 {
+		knowledgeBaseIDs = input.KnowledgeBaseIDs
+	}
+	if len(input.KnowledgeBases) > 0 && len(knowledgeBaseIDs) == 0 {
+		knowledgeBaseIDs = input.KnowledgeBases
+	}
 	if input.Agent.MaxIterations > 0 {
+		if maxIterations > 0 && input.Agent.MaxIterations > maxIterations {
+			return AskResult{}, ValidationError(map[string]string{"agent.maxIterations": "exceeds configured limit"})
+		}
 		maxIterations = input.Agent.MaxIterations
 	}
-	if len(input.Agent.EnabledToolNames) > 0 {
+	if len(enabledToolNames) > 0 && len(input.Agent.EnabledToolNames) > 0 {
+		configSet := make(map[string]struct{}, len(enabledToolNames))
+		for _, name := range enabledToolNames {
+			configSet[name] = struct{}{}
+		}
+		filtered := make([]string, 0, len(input.Agent.EnabledToolNames))
+		for _, name := range input.Agent.EnabledToolNames {
+			if _, ok := configSet[name]; ok {
+				filtered = append(filtered, name)
+			}
+		}
+		enabledToolNames = filtered
+	} else if len(input.Agent.EnabledToolNames) > 0 && len(enabledToolNames) == 0 {
 		enabledToolNames = input.Agent.EnabledToolNames
 	}
 	if input.Retrieval.TopK > 0 {
@@ -412,7 +435,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	defer release()
 	messages := make([]agent.Message, 0, len(history.Items)+3)
 	messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: runtime.SystemPrompt})
-	if directive := requestDirective(input, retrieval); directive != "" {
+	if directive := requestDirective(input.Mode, knowledgeBaseIDs, retrieval); directive != "" {
 		messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: directive})
 	}
 	for _, item := range history.Items {
@@ -521,7 +544,9 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err := s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events); err != nil {
 		return AskResult{}, fmt.Errorf("save stream events: %w", err)
 	}
-	_, _ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
+	if _, err := s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens); err != nil {
+		return AskResult{}, fmt.Errorf("update response run termination: %w", err)
+	}
 	if completed, err := s.repository.GetResponseRun(cleanupCtx, userID, run.ID); err == nil {
 		run = completed
 	}
@@ -637,13 +662,13 @@ func validateAskInput(input AskInput) error {
 	return nil
 }
 
-func requestDirective(input AskInput, retrieval RetrievalSettings) string {
+func requestDirective(mode string, knowledgeBaseIDs []string, retrieval RetrievalSettings) string {
 	var parts []string
-	if input.Mode != "" && input.Mode != "unknown" {
-		parts = append(parts, "The requested QA mode is "+input.Mode+".")
+	if mode != "" && mode != "unknown" {
+		parts = append(parts, "The requested QA mode is "+mode+".")
 	}
-	if len(input.KnowledgeBaseIDs) > 0 {
-		parts = append(parts, "When a knowledge tool supports knowledge-base filtering, restrict it to: "+strings.Join(input.KnowledgeBaseIDs, ", ")+".")
+	if len(knowledgeBaseIDs) > 0 {
+		parts = append(parts, "When a knowledge tool supports knowledge-base filtering, restrict it to: "+strings.Join(knowledgeBaseIDs, ", ")+".")
 	}
 	if retrieval.TopK > 0 {
 		parts = append(parts, fmt.Sprintf("When using knowledge retrieval tools, set top_k to %d.", retrieval.TopK))

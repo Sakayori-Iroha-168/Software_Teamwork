@@ -175,7 +175,8 @@ SET status = $1,
     prompt_tokens = $3,
     completion_tokens = $4,
     reasoning_tokens = $5,
-    completed_at = $6
+    completed_at = $6,
+    latency_ms = EXTRACT(EPOCH FROM ($6 - rr.started_at)) * 1000
 FROM conversations c
 WHERE rr.id::text = $7::text
     AND c.id = rr.conversation_id
