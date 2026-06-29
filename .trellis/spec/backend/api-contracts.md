@@ -670,6 +670,22 @@ The cached value must include enough fields to inject `X-User-Id`,
 business request. The Redis TTL must not outlive `data.session.expiresAt`.
 Redis is not the durable source of user, role, permission, or session truth.
 
+Gateway implementation must keep session-cache wiring service-local and
+explicitly configurable:
+
+| Environment key | Required | Purpose |
+| --- | --- | --- |
+| `GATEWAY_REDIS_ADDR` | yes, with local default allowed | Redis endpoint for session cache access. |
+| `GATEWAY_REDIS_PASSWORD` | no | Redis password; never log this value. |
+| `GATEWAY_REDIS_DB` | no | Redis DB index for local or isolated deployments. |
+| `GATEWAY_TOKEN_HASH_SECRET` | yes | HMAC secret used to derive token hashes. |
+| `GATEWAY_TOKEN_HASH_KEY_VERSION` | no | Version segment in `hmac-sha256:<version>:<hex>`. |
+
+Do not read these environment variables outside `services/gateway/internal/config`.
+Production Redis access should be hidden behind a small session-store interface
+so handler tests can cover Redis hits, misses, malformed entries, expiry, and
+dependency failures without a live Redis process.
+
 ### 4. Validation & Error Matrix
 
 | Condition | Public response |
@@ -704,6 +720,8 @@ When implementation exists:
 - Gateway downstream client tests assert `X-User-Id`, `X-User-Roles`,
   `X-User-Permissions`, and `X-Request-Id` are propagated.
 - Current-session deletion tests assert auth invalidation is called and Redis cache is deleted.
+- Gateway session creation tests assert the raw access token is returned to the
+  frontend only in the public response and is absent from the Redis cache entry.
 
 For documentation-only changes:
 
