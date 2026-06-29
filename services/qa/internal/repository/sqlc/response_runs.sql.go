@@ -181,7 +181,6 @@ FROM conversations c
 WHERE rr.id::text = $7::text
     AND c.id = rr.conversation_id
     AND c.external_user_id = $8
-    AND rr.status IN ('running', 'streaming')
 RETURNING rr.id::text
 `
 
