@@ -16,6 +16,8 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("GATEWAY_CORS_ALLOWED_METHODS", "")
 	t.Setenv("GATEWAY_CORS_ALLOWED_HEADERS", "")
 	t.Setenv("GATEWAY_CORS_ALLOW_CREDENTIALS", "")
+	t.Setenv("GATEWAY_AI_GATEWAY_BASE_URL", "")
+	t.Setenv("GATEWAY_AI_GATEWAY_SERVICE_TOKEN", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -33,6 +35,9 @@ func TestLoadDefaults(t *testing.T) {
 	if len(cfg.CORSAllowedOrigins) != 1 || cfg.CORSAllowedOrigins[0] != "*" {
 		t.Fatalf("CORSAllowedOrigins = %#v", cfg.CORSAllowedOrigins)
 	}
+	if cfg.AIGatewayBaseURL != DefaultAIGatewayBaseURL {
+		t.Fatalf("AIGatewayBaseURL = %q", cfg.AIGatewayBaseURL)
+	}
 }
 
 func TestLoadParsesEnvironment(t *testing.T) {
@@ -46,6 +51,8 @@ func TestLoadParsesEnvironment(t *testing.T) {
 	t.Setenv("GATEWAY_CORS_ALLOWED_METHODS", "get,post")
 	t.Setenv("GATEWAY_CORS_ALLOWED_HEADERS", "Authorization, X-Request-Id")
 	t.Setenv("GATEWAY_CORS_ALLOW_CREDENTIALS", "true")
+	t.Setenv("GATEWAY_AI_GATEWAY_BASE_URL", "http://ai-gateway:8086")
+	t.Setenv("GATEWAY_AI_GATEWAY_SERVICE_TOKEN", "service-token")
 
 	cfg, err := Load()
 	if err != nil {
@@ -62,6 +69,9 @@ func TestLoadParsesEnvironment(t *testing.T) {
 	}
 	if !cfg.CORSAllowCredentials {
 		t.Fatal("CORSAllowCredentials = false")
+	}
+	if cfg.AIGatewayBaseURL != "http://ai-gateway:8086" || cfg.AIGatewayServiceToken != "service-token" {
+		t.Fatalf("ai gateway config = %+v", cfg)
 	}
 }
 

@@ -10,15 +10,17 @@ import (
 )
 
 type Config struct {
-	Logger               *slog.Logger
-	ServiceVersion       string
-	Environment          string
-	RequestTimeout       time.Duration
-	MaxBodyBytes         int64
-	CORSAllowedOrigins   []string
-	CORSAllowedMethods   []string
-	CORSAllowedHeaders   []string
-	CORSAllowCredentials bool
+	Logger                *slog.Logger
+	ServiceVersion        string
+	Environment           string
+	RequestTimeout        time.Duration
+	MaxBodyBytes          int64
+	CORSAllowedOrigins    []string
+	CORSAllowedMethods    []string
+	CORSAllowedHeaders    []string
+	CORSAllowCredentials  bool
+	AIGatewayBaseURL      string
+	AIGatewayServiceToken string
 }
 
 type Server struct {
@@ -27,6 +29,7 @@ type Server struct {
 	environment    string
 	mux            *http.ServeMux
 	handler        http.Handler
+	modelProfiles  *modelProfileProxy
 }
 
 func NewServer(cfg Config) *Server {
@@ -38,6 +41,7 @@ func NewServer(cfg Config) *Server {
 		serviceVersion: cfg.ServiceVersion,
 		environment:    cfg.Environment,
 		mux:            http.NewServeMux(),
+		modelProfiles:  newModelProfileProxy(cfg.AIGatewayBaseURL, cfg.AIGatewayServiceToken, &http.Client{Timeout: cfg.RequestTimeout}),
 	}
 	s.routes()
 	s.handler = middleware.Chain(
@@ -59,6 +63,11 @@ func NewServer(cfg Config) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("GET /api/v1/admin/model-profiles", s.handleAdminModelProfiles)
+	s.mux.HandleFunc("POST /api/v1/admin/model-profiles", s.handleAdminModelProfiles)
+	s.mux.HandleFunc("GET /api/v1/admin/model-profiles/{profileId}", s.handleAdminModelProfiles)
+	s.mux.HandleFunc("PATCH /api/v1/admin/model-profiles/{profileId}", s.handleAdminModelProfiles)
+	s.mux.HandleFunc("DELETE /api/v1/admin/model-profiles/{profileId}", s.handleAdminModelProfiles)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 

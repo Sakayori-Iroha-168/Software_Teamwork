@@ -24,15 +24,17 @@ func main() {
 	}
 
 	handler := gatewayhttp.NewServer(gatewayhttp.Config{
-		Logger:               logger,
-		ServiceVersion:       cfg.ServiceVersion,
-		Environment:          cfg.Environment,
-		RequestTimeout:       cfg.RequestTimeout,
-		MaxBodyBytes:         cfg.MaxBodyBytes,
-		CORSAllowedOrigins:   cfg.CORSAllowedOrigins,
-		CORSAllowedMethods:   cfg.CORSAllowedMethods,
-		CORSAllowedHeaders:   cfg.CORSAllowedHeaders,
-		CORSAllowCredentials: cfg.CORSAllowCredentials,
+		Logger:                logger,
+		ServiceVersion:        cfg.ServiceVersion,
+		Environment:           cfg.Environment,
+		RequestTimeout:        cfg.RequestTimeout,
+		MaxBodyBytes:          cfg.MaxBodyBytes,
+		CORSAllowedOrigins:    cfg.CORSAllowedOrigins,
+		CORSAllowedMethods:    cfg.CORSAllowedMethods,
+		CORSAllowedHeaders:    cfg.CORSAllowedHeaders,
+		CORSAllowCredentials:  cfg.CORSAllowCredentials,
+		AIGatewayBaseURL:      cfg.AIGatewayBaseURL,
+		AIGatewayServiceToken: cfg.AIGatewayServiceToken,
 	})
 
 	server := &http.Server{

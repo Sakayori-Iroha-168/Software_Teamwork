@@ -64,7 +64,7 @@ AI Gateway 后续实现必须遵循 [技术选型基线](../../architecture/tech
 
 - 代码落地时使用独立 Go module，目录建议为 `services/ai-gateway/`。
 - 模型配置、凭据元数据、审计和调用摘要都以 PostgreSQL 为权威来源。
-- 不保存明文 provider API key。生产优先 secret manager；第一阶段可使用数据库加密列，但必须记录加密密钥版本和脱敏写入状态。
+- 不保存明文 provider API key。生产优先 secret manager；第一阶段可使用数据库加密列，但必须记录加密密钥版本和脱敏写入状态。当前 `services/ai-gateway` baseline 只实现 `encrypted_column` 写入，`secret_ref` 需要接入 secret manager 后再启用。
 - 本服务首期不拥有异步任务；如后续引入配额缓存、短期熔断状态或队列，缓存使用 `go-redis`，队列使用 `asynq`，PostgreSQL 仍是业务状态权威。
 - Provider client 应通过 fake HTTP server 覆盖错误归一化、超时、流式取消和脱敏。
 - AI Gateway、QA、document 生成链路是后续 OpenTelemetry tracing 重点。
@@ -522,7 +522,7 @@ AI Gateway 的环境变量应按结构化配置分组，服务启动时一次性
 | `AI_GATEWAY_HTTP_ADDR` | 是 | HTTP 监听地址，例如 `:8080`。 |
 | `AI_GATEWAY_DATABASE_URL` | 是 | PostgreSQL 连接串；不得写入日志。 |
 | `AI_GATEWAY_SERVICE_TOKEN_HASHES` | 是 | 允许的内部服务 token hash 列表，不能配置明文 token。 |
-| `AI_GATEWAY_SECRET_MODE` | 是 | `secret_ref` 或 `encrypted_column`。 |
+| `AI_GATEWAY_SECRET_MODE` | 是 | 当前 baseline 支持 `encrypted_column`；`secret_ref` 为后续 secret manager 模式。 |
 | `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF` | 条件 | `encrypted_column` 模式下的加密密钥引用或版本。 |
 | `AI_GATEWAY_DEFAULT_TIMEOUT_MS` | 否 | Provider 请求默认超时，profile 未配置时使用。 |
 | `AI_GATEWAY_MAX_REQUEST_BYTES` | 否 | JSON 请求体大小限制。 |

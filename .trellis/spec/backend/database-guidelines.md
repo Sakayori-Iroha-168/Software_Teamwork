@@ -320,3 +320,75 @@ asynq task executes -> Redis stores final job status -> API reads Redis as truth
 ```text
 API creates report_job -> asynq task id is stored for correlation -> worker updates report_jobs/report_job_attempts/report_events in PostgreSQL
 ```
+
+## Scenario: AI Gateway Model Profile Baseline
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing AI Gateway model profile persistence, provider credential write status, model profile revisions, readiness checks, or `/internal/v1/model-profiles/**` routes.
+- Applies to `services/ai-gateway/internal/service`, `services/ai-gateway/internal/http`, `services/ai-gateway/internal/repository`, `services/ai-gateway/migrations`, and `services/ai-gateway/sqlc.yaml`.
+
+### 2. Signatures
+
+- Internal API routes:
+  - `GET /internal/v1/model-profiles`.
+  - `POST /internal/v1/model-profiles`.
+  - `GET /internal/v1/model-profiles/{profileId}`.
+  - `PATCH /internal/v1/model-profiles/{profileId}`.
+  - `DELETE /internal/v1/model-profiles/{profileId}`.
+- Database files:
+  - `services/ai-gateway/sqlc.yaml`.
+  - `services/ai-gateway/internal/repository/queries/model_profiles.sql`.
+  - `services/ai-gateway/migrations/0001_create_model_profiles.sql` and later ordered migrations for credentials and revisions.
+- Required runtime environment keys:
+  - `AI_GATEWAY_DATABASE_URL`.
+  - `AI_GATEWAY_SERVICE_TOKEN_HASHES`.
+  - `AI_GATEWAY_SECRET_MODE`.
+  - `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF` when `AI_GATEWAY_SECRET_MODE=encrypted_column`.
+
+### 3. Contracts
+
+- `model_profiles` stores profile metadata only: purpose, provider, base URL, model, enablement, default status, timeout, capability fields, and sanitized default parameters.
+- `provider_credentials` stores credential metadata and non-plaintext secret material only; raw provider API keys must never be returned, logged, or stored as plaintext.
+- `model_profile_revisions` stores sanitized snapshots and changed field names only; snapshots may include `apiKeyConfigured` but not raw API keys, ciphertext, secret refs, fingerprints, or token values.
+- Each `purpose` may have at most one `enabled = true AND is_default = true AND deleted_at IS NULL` profile. Repository implementations must enforce this atomically.
+- Profile responses expose `apiKeyConfigured`, never `apiKey`, credential IDs, ciphertext, secret refs, fingerprints, or last-four metadata.
+
+### 4. Validation & Error Matrix
+
+| Condition | Response/error |
+| --- | --- |
+| Missing/invalid `X-Service-Token` or `X-Caller-Service` | `401 unauthorized` |
+| Invalid purpose/provider/base URL/timeout/default parameters | `400 validation_error` |
+| `baseUrl` contains sensitive query keys such as `token`, `secret`, or `api_key` | `400 validation_error` |
+| `defaultParameters` contains sensitive keys such as `api_key`, `token`, `secret`, `prompt`, or `database_url` | `400 validation_error` |
+| Missing profile | `404 not_found` |
+| Duplicate name within purpose or database default constraint conflict | `409 conflict` |
+| Profile store unavailable | `502 dependency_error` for CRUD, `503` readiness failure |
+
+### 5. Good/Base/Bad Cases
+
+- Good: service validates and sanitizes profile input, repository switches default profiles in one transaction, and handlers return only project envelopes with `apiKeyConfigured`.
+- Base: a first service slice may provide a file-backed local repository for smoke tests while migrations and sqlc contracts define the PostgreSQL shape.
+- Bad: handler stores raw `apiKey`, response includes credential metadata, or update logic allows two enabled default profiles for the same purpose.
+
+### 6. Tests Required
+
+- Service tests assert each purpose can have at most one enabled default profile after create/update.
+- Handler tests assert service token enforcement, project envelope shape, request ID propagation, and no raw API key in success or validation error responses.
+- Config tests assert required token hash and secret-mode env validation.
+- Repository or migration validation should apply migrations against an empty PostgreSQL database once database test tooling is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+POST /internal/v1/model-profiles -> handler persists apiKey -> response includes credential_id or secret metadata
+```
+
+#### Correct
+
+```text
+POST /internal/v1/model-profiles -> service validates and writes credential metadata -> response includes apiKeyConfigured only
+```

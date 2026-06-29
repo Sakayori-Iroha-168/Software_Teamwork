@@ -28,7 +28,7 @@ AI Gateway 数据库不得保存领域服务业务状态，包括但不限于：
 
 ### 2.2 Secret 存储
 
-Provider API key 是敏感配置。推荐由外部 secret manager 保存明文，AI Gateway 数据库只保存 secret 引用；如果第一阶段必须落库，也只能保存加密密文和密钥版本，不能保存明文。
+Provider API key 是敏感配置。推荐由外部 secret manager 保存明文，AI Gateway 数据库只保存 secret 引用；如果第一阶段必须落库，也只能保存加密密文和密钥版本，不能保存明文。当前 `services/ai-gateway` baseline 只实现 `encrypted_column` 写入，`secret_ref` 保留为后续 secret manager 模式。
 
 公开响应、错误响应、普通日志、指标标签和 gateway admin model-profile 响应都只能暴露：
 
@@ -78,7 +78,7 @@ AI Gateway 的物理实现以 [`docs/architecture/technology-decisions.md`](../.
 | 迁移 | 使用 `goose`，迁移文件放在 `services/ai-gateway/migrations/`，文件名使用 `0001_*.sql` 形式。 |
 | SQL 风格 | 查询显式列名，不使用 `SELECT *`；所有用户输入和请求字段都通过参数绑定进入 SQL。 |
 | JSONB | `default_parameters_json`、审计快照和低敏 metadata 可用 JSONB，但必须在应用层做字段黑名单、大小限制和脱敏。 |
-| Secret | Provider API key 不落明文。优先保存 secret manager 引用；第一阶段如使用加密列，只保存密文、加密密钥版本和脱敏状态。 |
+| Secret | Provider API key 不落明文。优先保存 secret manager 引用；当前 baseline 使用加密列时只保存密文、加密密钥版本和脱敏状态。 |
 | 调用日志 | PostgreSQL 只保存调用摘要、用量、耗时和归一化错误，不保存完整请求/响应体。 |
 
 建议 `sqlc.yaml` 覆盖 `model_profiles`、`provider_credentials`、`model_profile_revisions`、`provider_invocations` 和 `provider_invocation_attempts` 的基础 CRUD 查询；业务组合逻辑例如“切换默认 profile”必须由 service 层开启事务并调用 repository 方法完成。

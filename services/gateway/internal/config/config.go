@@ -9,38 +9,43 @@ import (
 )
 
 const (
-	DefaultHTTPAddr        = ":8080"
-	DefaultServiceVersion  = "0.1.0"
-	DefaultEnvironment     = "local"
-	DefaultMaxBodyBytes    = int64(10 << 20)
-	DefaultRequestTimeout  = 30 * time.Second
-	DefaultShutdownTimeout = 10 * time.Second
+	DefaultHTTPAddr         = ":8080"
+	DefaultServiceVersion   = "0.1.0"
+	DefaultEnvironment      = "local"
+	DefaultMaxBodyBytes     = int64(10 << 20)
+	DefaultRequestTimeout   = 30 * time.Second
+	DefaultShutdownTimeout  = 10 * time.Second
+	DefaultAIGatewayBaseURL = "http://localhost:8086"
 )
 
 type Config struct {
-	HTTPAddr             string
-	ServiceVersion       string
-	Environment          string
-	MaxBodyBytes         int64
-	RequestTimeout       time.Duration
-	ShutdownTimeout      time.Duration
-	CORSAllowedOrigins   []string
-	CORSAllowedMethods   []string
-	CORSAllowedHeaders   []string
-	CORSAllowCredentials bool
+	HTTPAddr              string
+	ServiceVersion        string
+	Environment           string
+	MaxBodyBytes          int64
+	RequestTimeout        time.Duration
+	ShutdownTimeout       time.Duration
+	CORSAllowedOrigins    []string
+	CORSAllowedMethods    []string
+	CORSAllowedHeaders    []string
+	CORSAllowCredentials  bool
+	AIGatewayBaseURL      string
+	AIGatewayServiceToken string
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		HTTPAddr:           stringValue("GATEWAY_HTTP_ADDR", DefaultHTTPAddr),
-		ServiceVersion:     stringValue("GATEWAY_SERVICE_VERSION", DefaultServiceVersion),
-		Environment:        stringValue("GATEWAY_ENV", DefaultEnvironment),
-		MaxBodyBytes:       DefaultMaxBodyBytes,
-		RequestTimeout:     DefaultRequestTimeout,
-		ShutdownTimeout:    DefaultShutdownTimeout,
-		CORSAllowedOrigins: csvValue("GATEWAY_CORS_ALLOWED_ORIGINS", []string{"*"}),
-		CORSAllowedMethods: csvValue("GATEWAY_CORS_ALLOWED_METHODS", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"}),
-		CORSAllowedHeaders: csvValue("GATEWAY_CORS_ALLOWED_HEADERS", []string{"Authorization", "Content-Type", "X-Request-Id"}),
+		HTTPAddr:              stringValue("GATEWAY_HTTP_ADDR", DefaultHTTPAddr),
+		ServiceVersion:        stringValue("GATEWAY_SERVICE_VERSION", DefaultServiceVersion),
+		Environment:           stringValue("GATEWAY_ENV", DefaultEnvironment),
+		MaxBodyBytes:          DefaultMaxBodyBytes,
+		RequestTimeout:        DefaultRequestTimeout,
+		ShutdownTimeout:       DefaultShutdownTimeout,
+		CORSAllowedOrigins:    csvValue("GATEWAY_CORS_ALLOWED_ORIGINS", []string{"*"}),
+		CORSAllowedMethods:    csvValue("GATEWAY_CORS_ALLOWED_METHODS", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"}),
+		CORSAllowedHeaders:    csvValue("GATEWAY_CORS_ALLOWED_HEADERS", []string{"Authorization", "Content-Type", "X-Request-Id"}),
+		AIGatewayBaseURL:      stringValue("GATEWAY_AI_GATEWAY_BASE_URL", DefaultAIGatewayBaseURL),
+		AIGatewayServiceToken: os.Getenv("GATEWAY_AI_GATEWAY_SERVICE_TOKEN"),
 	}
 
 	if raw := os.Getenv("GATEWAY_MAX_BODY_BYTES"); raw != "" {
@@ -80,6 +85,9 @@ func Load() (Config, error) {
 	}
 	if len(cfg.CORSAllowedOrigins) == 0 {
 		return Config{}, fmt.Errorf("GATEWAY_CORS_ALLOWED_ORIGINS must not be empty")
+	}
+	if strings.TrimSpace(cfg.AIGatewayBaseURL) == "" {
+		return Config{}, fmt.Errorf("GATEWAY_AI_GATEWAY_BASE_URL must not be empty")
 	}
 
 	return cfg, nil

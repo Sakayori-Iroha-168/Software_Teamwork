@@ -1,0 +1,439 @@
+openapi: 3.0.3
+info:
+  title: AI Gateway Internal API
+  version: 0.1.0
+  description: |
+    Service-local contract for the implemented AI Gateway baseline. This API is
+    internal only; frontend clients must use gateway `/api/v1/**` routes.
+servers:
+  - url: http://localhost:8086
+security:
+  - serviceTokenAuth: []
+tags:
+  - name: health
+    description: Process and readiness checks.
+  - name: model-profiles
+    description: Runtime model provider configuration.
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      summary: Liveness check
+      operationId: getHealthz
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /readyz:
+    get:
+      tags: [health]
+      summary: Readiness check
+      operationId: getReadyz
+      security: []
+      responses:
+        '200':
+          description: AI Gateway can serve all configured model purposes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: One or more required model purposes or the profile store is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+  /internal/v1/model-profiles:
+    parameters:
+      - $ref: '#/components/parameters/RequestIdHeader'
+      - $ref: '#/components/parameters/CallerServiceHeader'
+    get:
+      tags: [model-profiles]
+      summary: List model profiles
+      operationId: listModelProfiles
+      x-owner-service: ai-gateway
+      parameters:
+        - name: purpose
+          in: query
+          schema:
+            $ref: '#/components/schemas/ModelPurpose'
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Model profile list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [model-profiles]
+      summary: Create model profile
+      operationId: createModelProfile
+      x-owner-service: ai-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelProfileRequest'
+      responses:
+        '201':
+          description: Model profile created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+  /internal/v1/model-profiles/{profileId}:
+    parameters:
+      - $ref: '#/components/parameters/RequestIdHeader'
+      - $ref: '#/components/parameters/CallerServiceHeader'
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      tags: [model-profiles]
+      summary: Get model profile
+      operationId: getModelProfile
+      x-owner-service: ai-gateway
+      responses:
+        '200':
+          description: Model profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [model-profiles]
+      summary: Update model profile
+      operationId: updateModelProfile
+      x-owner-service: ai-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateModelProfileRequest'
+      responses:
+        '200':
+          description: Model profile updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [model-profiles]
+      summary: Delete model profile
+      operationId: deleteModelProfile
+      x-owner-service: ai-gateway
+      responses:
+        '204':
+          description: Model profile deleted.
+        '401':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+components:
+  securitySchemes:
+    serviceTokenAuth:
+      type: apiKey
+      in: header
+      name: X-Service-Token
+  parameters:
+    RequestIdHeader:
+      name: X-Request-Id
+      in: header
+      required: false
+      schema:
+        type: string
+    CallerServiceHeader:
+      name: X-Caller-Service
+      in: header
+      required: true
+      schema:
+        type: string
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Project envelope error response.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    HealthResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              example: ok
+        requestId:
+          type: string
+    ReadinessResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          type: object
+          required: [status, checks]
+          properties:
+            status:
+              type: string
+              enum: [ok, degraded, unavailable]
+            checks:
+              type: array
+              items:
+                $ref: '#/components/schemas/ReadinessCheck'
+        requestId:
+          type: string
+    ReadinessCheck:
+      type: object
+      required: [name, status]
+      properties:
+        name:
+          type: string
+        status:
+          type: string
+          enum: [ok, missing, failed]
+        message:
+          type: string
+          description: Secret-safe diagnostic message.
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          enum:
+            - validation_error
+            - unauthorized
+            - forbidden
+            - not_found
+            - conflict
+            - rate_limited
+            - dependency_error
+            - internal_error
+        message:
+          type: string
+        requestId:
+          type: string
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+    ModelPurpose:
+      type: string
+      enum: [chat, embedding, rerank]
+    ModelProvider:
+      type: string
+      enum: [openai_compatible, siliconflow, local_compatible]
+    ModelProfile:
+      type: object
+      required:
+        - id
+        - name
+        - purpose
+        - provider
+        - baseUrl
+        - model
+        - enabled
+        - isDefault
+        - timeoutMs
+        - apiKeyConfigured
+        - supportsStreaming
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        purpose:
+          $ref: '#/components/schemas/ModelPurpose'
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        baseUrl:
+          type: string
+          format: uri
+        model:
+          type: string
+        enabled:
+          type: boolean
+        isDefault:
+          type: boolean
+        timeoutMs:
+          type: integer
+          minimum: 1000
+        apiKeyConfigured:
+          type: boolean
+          description: Raw API keys are never returned.
+        supportsStreaming:
+          type: boolean
+        dimensions:
+          type: integer
+          minimum: 1
+          nullable: true
+        topN:
+          type: integer
+          minimum: 1
+          nullable: true
+        defaultParameters:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateModelProfileRequest:
+      type: object
+      required: [name, purpose, provider, baseUrl, model, apiKey]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        purpose:
+          $ref: '#/components/schemas/ModelPurpose'
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        baseUrl:
+          type: string
+          format: uri
+        model:
+          type: string
+        apiKey:
+          type: string
+          format: password
+          writeOnly: true
+        enabled:
+          type: boolean
+          default: true
+        isDefault:
+          type: boolean
+          default: false
+        timeoutMs:
+          type: integer
+          minimum: 1000
+          default: 60000
+        supportsStreaming:
+          type: boolean
+          default: false
+        dimensions:
+          type: integer
+          minimum: 1
+          nullable: true
+        topN:
+          type: integer
+          minimum: 1
+          nullable: true
+        defaultParameters:
+          type: object
+          additionalProperties: true
+    UpdateModelProfileRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        baseUrl:
+          type: string
+          format: uri
+        model:
+          type: string
+        apiKey:
+          type: string
+          format: password
+          writeOnly: true
+        enabled:
+          type: boolean
+        isDefault:
+          type: boolean
+        timeoutMs:
+          type: integer
+          minimum: 1000
+        supportsStreaming:
+          type: boolean
+        dimensions:
+          type: integer
+          minimum: 1
+          nullable: true
+        topN:
+          type: integer
+          minimum: 1
+          nullable: true
+        defaultParameters:
+          type: object
+          additionalProperties: true
+    ModelProfileResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/ModelProfile'
+        requestId:
+          type: string
+    ModelProfileListResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelProfile'
+        requestId:
+          type: string

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -120,6 +121,116 @@ func TestBodyLimitRejectsLargeRequest(t *testing.T) {
 	var body errorBody
 	decodeJSON(t, res.Body, &body)
 	if body.Error.Code != "validation_error" || body.Error.RequestID != "req_large" {
+		t.Fatalf("error body = %+v", body.Error)
+	}
+}
+
+func TestAdminModelProfilesProxyForwardsToAIGateway(t *testing.T) {
+	var gotPath string
+	var gotToken string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.RequestURI()
+		gotToken = r.Header.Get("X-Service-Token")
+		if got := r.Header.Get("X-Caller-Service"); got != "gateway" {
+			t.Fatalf("X-Caller-Service = %q", got)
+		}
+		response := `{"data":[{"id":"mp_1","name":"chat","purpose":"chat","provider":"openai_compatible","baseUrl":"https://api.example.com/v1","model":"gpt","enabled":true,"isDefault":true,"timeoutMs":60000,"apiKeyConfigured":true,"supportsStreaming":true,"createdAt":"2026-06-29T10:00:00Z","updatedAt":"2026-06-29T10:00:00Z"}],"requestId":"req_proxy"}`
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Request-Id", "req_proxy")
+		_, _ = w.Write([]byte(response))
+	}))
+	defer backend.Close()
+
+	server := gatewayhttp.NewServer(gatewayhttp.Config{
+		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ServiceVersion:        "test",
+		Environment:           "test",
+		RequestTimeout:        time.Second,
+		MaxBodyBytes:          1024,
+		CORSAllowedOrigins:    []string{"*"},
+		AIGatewayBaseURL:      backend.URL,
+		AIGatewayServiceToken: "internal-token",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-profiles?purpose=chat", nil)
+	req.Header.Set("X-Request-Id", "req_proxy")
+	req.Header.Set("X-User-Id", "user_admin")
+	req.Header.Set("X-User-Permissions", "admin:model-profiles:read")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if gotPath != "/internal/v1/model-profiles?purpose=chat" {
+		t.Fatalf("backend path = %q", gotPath)
+	}
+	if gotToken != "internal-token" {
+		t.Fatalf("X-Service-Token = %q", gotToken)
+	}
+	if strings.Contains(res.Body.String(), "apiKey\"") {
+		t.Fatalf("proxy response leaked apiKey: %s", res.Body.String())
+	}
+}
+
+func TestAdminModelProfilesProxyRequiresAdminPermission(t *testing.T) {
+	server := gatewayhttp.NewServer(gatewayhttp.Config{
+		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ServiceVersion:        "test",
+		Environment:           "test",
+		RequestTimeout:        time.Second,
+		MaxBodyBytes:          1024,
+		CORSAllowedOrigins:    []string{"*"},
+		AIGatewayBaseURL:      "http://ai-gateway.local",
+		AIGatewayServiceToken: "internal-token",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-profiles", nil)
+	req.Header.Set("X-Request-Id", "req_forbidden")
+	req.Header.Set("X-User-Id", "user_admin")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+}
+
+func TestAdminModelProfilesProxyNormalizesDownstreamError(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"unauthorized","message":"bad internal token","requestId":"req_downstream","fields":{"token":"internal-token"}}}`))
+	}))
+	defer backend.Close()
+
+	server := gatewayhttp.NewServer(gatewayhttp.Config{
+		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ServiceVersion:        "test",
+		Environment:           "test",
+		RequestTimeout:        time.Second,
+		MaxBodyBytes:          1024,
+		CORSAllowedOrigins:    []string{"*"},
+		AIGatewayBaseURL:      backend.URL,
+		AIGatewayServiceToken: "internal-token",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-profiles", nil)
+	req.Header.Set("X-Request-Id", "req_public")
+	req.Header.Set("X-User-Id", "user_admin")
+	req.Header.Set("X-User-Permissions", "admin:model-profiles:read")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if strings.Contains(res.Body.String(), "bad internal token") || strings.Contains(res.Body.String(), "internal-token") || strings.Contains(res.Body.String(), "req_downstream") {
+		t.Fatalf("proxy leaked downstream error: %s", res.Body.String())
+	}
+	var body errorBody
+	decodeJSON(t, res.Body, &body)
+	if body.Error.Code != "dependency_error" || body.Error.RequestID != "req_public" {
 		t.Fatalf("error body = %+v", body.Error)
 	}
 }
