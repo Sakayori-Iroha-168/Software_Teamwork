@@ -89,14 +89,15 @@ function formToCreateRequest(form: FormData) {
       .filter(Boolean)
   }
 
-  const defaultParams: Record<string, unknown> = {}
-  if (form.chunkSize > 0) defaultParams.chunk_size = form.chunkSize
-  if (form.chunkOverlap > 0) defaultParams.chunk_overlap = form.chunkOverlap
-  if (form.separators.trim()) {
-    defaultParams.separators = form.separators
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
+  params.defaultParameters = {
+    chunk_size: form.chunkSize,
+    chunk_overlap: form.chunkOverlap,
+    separators: form.separators.trim()
+      ? form.separators
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [],
   }
   return params
 }
