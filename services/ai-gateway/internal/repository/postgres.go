@@ -2,6 +2,8 @@ package repository
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -118,6 +120,24 @@ func (r *PostgresRepository) GetModelProfile(ctx context.Context, id string) (se
 	return profile, nil
 }
 
+func (r *PostgresRepository) GetActiveCredential(ctx context.Context, profileID string) (service.ProviderCredential, error) {
+	row := r.db.QueryRow(ctx, `
+		SELECT
+			id, profile_id, storage_mode, ciphertext, nonce, encryption_key_version,
+			fingerprint_sha256, COALESCE(key_last4, ''), status,
+			COALESCE(created_by_user_id, ''), created_at, rotated_at, disabled_at, deleted_at
+		FROM provider_credentials
+		WHERE profile_id = $1 AND status = 'active' AND deleted_at IS NULL`, profileID)
+	credential, err := scanProviderCredential(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return service.ProviderCredential{}, service.ErrNotFound
+		}
+		return service.ProviderCredential{}, fmt.Errorf("get active provider credential: %w", err)
+	}
+	return credential, nil
+}
+
 func (r *PostgresRepository) CreateModelProfile(ctx context.Context, profile service.ModelProfile, credential service.ProviderCredential, revision service.ModelProfileRevision) (service.ModelProfile, error) {
 	var created service.ModelProfile
 	err := r.withTx(ctx, func(tx *PostgresRepository) error {
@@ -194,6 +214,15 @@ func (r *PostgresRepository) SoftDeleteModelProfile(ctx context.Context, id stri
 	})
 }
 
+func (r *PostgresRepository) RecordProviderInvocation(ctx context.Context, invocation service.ProviderInvocation) error {
+	return r.withTx(ctx, func(tx *PostgresRepository) error {
+		if err := tx.insertProviderInvocation(ctx, invocation); err != nil {
+			return err
+		}
+		return tx.upsertUsageAggregate(ctx, invocation)
+	})
+}
+
 func (r *PostgresRepository) withTx(ctx context.Context, fn func(*PostgresRepository) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -206,6 +235,71 @@ func (r *PostgresRepository) withTx(ctx context.Context, fn func(*PostgresReposi
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit ai-gateway transaction: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) insertProviderInvocation(ctx context.Context, invocation service.ProviderInvocation) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO provider_invocations (
+			id, request_id, caller_service, external_user_id, operation, profile_id,
+			provider, model, stream, status, provider_status_code, prompt_tokens,
+			completion_tokens, total_tokens, input_count, embedding_dimensions,
+			rerank_top_n, duration_ms, attempt_count, normalized_error_code,
+			normalized_error_type, error_message, created_at, finished_at
+		)
+		VALUES (
+			$1, $2, $3, NULLIF($4, ''), $5, $6, $7, $8, $9, $10, $11,
+			$12, $13, $14, $15, $16, $17, $18, $19, $20, NULLIF($21, ''),
+			NULLIF($22, ''), $23, $24
+		)`,
+		invocation.ID, invocation.RequestID, invocation.CallerService, invocation.ExternalUserID,
+		string(invocation.Operation), invocation.ProfileID, string(invocation.Provider), invocation.Model,
+		invocation.Stream, string(invocation.Status), nullableInt(invocation.ProviderStatusCode),
+		nullableInt(invocation.PromptTokens), nullableInt(invocation.CompletionTokens),
+		nullableInt(invocation.TotalTokens), nullableInt(invocation.InputCount),
+		nullableInt(invocation.EmbeddingDimensions), nullableInt(invocation.RerankTopN),
+		invocation.DurationMS, invocation.AttemptCount, nullableCode(invocation.NormalizedErrorCode),
+		invocation.NormalizedErrorType, invocation.ErrorMessage, invocation.CreatedAt, invocation.FinishedAt)
+	if err != nil {
+		return fmt.Errorf("insert provider invocation: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresRepository) upsertUsageAggregate(ctx context.Context, invocation service.ProviderInvocation) error {
+	bucket := invocation.CreatedAt.UTC().Truncate(time.Hour)
+	successCount := 0
+	failureCount := 0
+	if invocation.Status == service.InvocationSucceeded {
+		successCount = 1
+	} else {
+		failureCount = 1
+	}
+	now := time.Now().UTC()
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO model_usage_aggregates (
+			id, bucket_start_at, bucket_granularity, caller_service, profile_id, operation,
+			request_count, success_count, failure_count, prompt_tokens, completion_tokens,
+			total_tokens, total_duration_ms, created_at, updated_at
+		)
+		VALUES ($1, $2, 'hour', $3, $4, $5, 1, $6, $7, $8, $9, $10, $11, $12, $12)
+		ON CONFLICT (bucket_start_at, bucket_granularity, caller_service, profile_id, operation)
+		DO UPDATE SET
+			request_count = model_usage_aggregates.request_count + EXCLUDED.request_count,
+			success_count = model_usage_aggregates.success_count + EXCLUDED.success_count,
+			failure_count = model_usage_aggregates.failure_count + EXCLUDED.failure_count,
+			prompt_tokens = model_usage_aggregates.prompt_tokens + EXCLUDED.prompt_tokens,
+			completion_tokens = model_usage_aggregates.completion_tokens + EXCLUDED.completion_tokens,
+			total_tokens = model_usage_aggregates.total_tokens + EXCLUDED.total_tokens,
+			total_duration_ms = model_usage_aggregates.total_duration_ms + EXCLUDED.total_duration_ms,
+			updated_at = EXCLUDED.updated_at`,
+		usageAggregateID(bucket, invocation.CallerService, invocation.ProfileID, invocation.Operation),
+		bucket, invocation.CallerService, invocation.ProfileID, string(invocation.Operation),
+		successCount, failureCount, intValue(invocation.PromptTokens),
+		intValue(invocation.CompletionTokens), intValue(invocation.TotalTokens), invocation.DurationMS, now)
+	if err != nil {
+		return fmt.Errorf("upsert model usage aggregate: %w", err)
 	}
 	return nil
 }
@@ -339,6 +433,30 @@ type scanner interface {
 	Scan(dest ...any) error
 }
 
+func scanProviderCredential(row scanner) (service.ProviderCredential, error) {
+	var value service.ProviderCredential
+	var status string
+	var rotatedAt, disabledAt, deletedAt pgtype.Timestamptz
+	if err := row.Scan(
+		&value.ID, &value.ProfileID, &value.StorageMode, &value.Ciphertext, &value.Nonce,
+		&value.EncryptionKeyVersion, &value.FingerprintSHA256, &value.KeyLast4,
+		&status, &value.CreatedByUserID, &value.CreatedAt, &rotatedAt, &disabledAt, &deletedAt,
+	); err != nil {
+		return service.ProviderCredential{}, err
+	}
+	value.Status = service.CredentialStatus(status)
+	if rotatedAt.Valid {
+		value.RotatedAt = &rotatedAt.Time
+	}
+	if disabledAt.Valid {
+		value.DisabledAt = &disabledAt.Time
+	}
+	if deletedAt.Valid {
+		value.DeletedAt = &deletedAt.Time
+	}
+	return value, nil
+}
+
 func scanModelProfile(row scanner) (service.ModelProfile, error) {
 	var value service.ModelProfile
 	var purpose, provider string
@@ -394,4 +512,30 @@ func rawJSON(raw json.RawMessage) string {
 		return "{}"
 	}
 	return string(raw)
+}
+
+func nullableInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func nullableCode(value *service.Code) any {
+	if value == nil {
+		return nil
+	}
+	return string(*value)
+}
+
+func intValue(value *int) int {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func usageAggregateID(bucket time.Time, callerService, profileID string, operation service.Operation) string {
+	sum := sha256.Sum256([]byte(bucket.Format(time.RFC3339) + "\x00" + callerService + "\x00" + profileID + "\x00" + string(operation)))
+	return "usage_" + hex.EncodeToString(sum[:12])
 }

@@ -12,6 +12,7 @@ type memoryRepository struct {
 	mu          sync.Mutex
 	profiles    map[string]service.ModelProfile
 	credentials map[string]service.ProviderCredential
+	invocations []service.ProviderInvocation
 }
 
 func newMemoryRepository() *memoryRepository {
@@ -53,6 +54,20 @@ func (r *memoryRepository) GetModelProfile(ctx context.Context, id string) (serv
 		return service.ModelProfile{}, service.ErrNotFound
 	}
 	return profile, nil
+}
+
+func (r *memoryRepository) GetActiveCredential(ctx context.Context, profileID string) (service.ProviderCredential, error) {
+	if err := ctx.Err(); err != nil {
+		return service.ProviderCredential{}, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, credential := range r.credentials {
+		if credential.ProfileID == profileID && credential.Status == service.CredentialActive && credential.DeletedAt == nil {
+			return credential, nil
+		}
+	}
+	return service.ProviderCredential{}, service.ErrNotFound
 }
 
 func (r *memoryRepository) CreateModelProfile(ctx context.Context, profile service.ModelProfile, credential service.ProviderCredential, revision service.ModelProfileRevision) (service.ModelProfile, error) {
@@ -101,5 +116,15 @@ func (r *memoryRepository) SoftDeleteModelProfile(ctx context.Context, id string
 	profile.DeletedAt = &deletedAt
 	profile.Enabled = false
 	r.profiles[id] = profile
+	return nil
+}
+
+func (r *memoryRepository) RecordProviderInvocation(ctx context.Context, invocation service.ProviderInvocation) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.invocations = append(r.invocations, invocation)
 	return nil
 }

@@ -39,6 +39,23 @@ const (
 	RevisionDeleted           RevisionChangeType = "deleted"
 )
 
+type Operation string
+
+const (
+	OperationChatCompletion Operation = "chat_completion"
+	OperationEmbedding      Operation = "embedding"
+	OperationReranking      Operation = "reranking"
+)
+
+type InvocationStatus string
+
+const (
+	InvocationSucceeded InvocationStatus = "succeeded"
+	InvocationFailed    InvocationStatus = "failed"
+	InvocationCancelled InvocationStatus = "cancelled"
+	InvocationTimeout   InvocationStatus = "timeout"
+)
+
 type RequestContext struct {
 	RequestID     string
 	CallerService string
@@ -137,6 +154,125 @@ type UpdateModelProfileInput struct {
 	DefaultParameters *json.RawMessage
 }
 
+type TokenUsage struct {
+	PromptTokens     int `json:"prompt_tokens,omitempty"`
+	CompletionTokens int `json:"completion_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens,omitempty"`
+}
+
+type EmbeddingInput struct {
+	Model          string
+	ProfileID      string
+	Input          []string
+	Dimensions     *int
+	EncodingFormat string
+	User           string
+}
+
+type EmbeddingVector struct {
+	Object    string          `json:"object"`
+	Index     int             `json:"index"`
+	Embedding json.RawMessage `json:"embedding"`
+}
+
+type EmbeddingResponse struct {
+	Object string            `json:"object"`
+	Data   []EmbeddingVector `json:"data"`
+	Model  string            `json:"model"`
+	Usage  *TokenUsage       `json:"usage,omitempty"`
+}
+
+type RerankingDocument struct {
+	ID   string
+	Text string
+}
+
+type RerankingInput struct {
+	Model     string
+	ProfileID string
+	Query     string
+	Documents []RerankingDocument
+	TopN      *int
+	Metadata  map[string]string
+}
+
+type RerankingResult struct {
+	Index      int     `json:"index"`
+	DocumentID string  `json:"document_id"`
+	Score      float64 `json:"score"`
+}
+
+type RerankingResponse struct {
+	Object string            `json:"object"`
+	Data   []RerankingResult `json:"data"`
+	Model  string            `json:"model"`
+	Usage  *TokenUsage       `json:"usage,omitempty"`
+}
+
+type ProviderEmbeddingRequest struct {
+	RequestID         string
+	Provider          Provider
+	BaseURL           string
+	APIKey            string
+	TimeoutMS         int
+	Model             string
+	Input             []string
+	Dimensions        *int
+	EncodingFormat    string
+	User              string
+	DefaultParameters json.RawMessage
+}
+
+type ProviderRerankingRequest struct {
+	RequestID         string
+	Provider          Provider
+	BaseURL           string
+	APIKey            string
+	TimeoutMS         int
+	Model             string
+	Query             string
+	Documents         []RerankingDocument
+	TopN              *int
+	Metadata          map[string]string
+	DefaultParameters json.RawMessage
+}
+
+type ProviderCallMetadata struct {
+	StatusCode int
+}
+
+type ModelInvoker interface {
+	CreateEmbeddings(context.Context, ProviderEmbeddingRequest) (EmbeddingResponse, ProviderCallMetadata, error)
+	CreateReranking(context.Context, ProviderRerankingRequest) (RerankingResponse, ProviderCallMetadata, error)
+}
+
+type ProviderInvocation struct {
+	ID                  string
+	RequestID           string
+	CallerService       string
+	ExternalUserID      string
+	Operation           Operation
+	ProfileID           string
+	Provider            Provider
+	Model               string
+	Stream              bool
+	Status              InvocationStatus
+	ProviderStatusCode  *int
+	PromptTokens        *int
+	CompletionTokens    *int
+	TotalTokens         *int
+	InputCount          *int
+	EmbeddingDimensions *int
+	RerankTopN          *int
+	DurationMS          int
+	AttemptCount        int
+	NormalizedErrorCode *Code
+	NormalizedErrorType string
+	ErrorMessage        string
+	CreatedAt           time.Time
+	FinishedAt          time.Time
+}
+
 type ReadinessCheck struct {
 	Name    string `json:"name"`
 	Status  string `json:"status"`
@@ -152,7 +288,9 @@ type Repository interface {
 	CheckReady(context.Context) error
 	ListModelProfiles(context.Context, ListModelProfilesFilter) ([]ModelProfile, error)
 	GetModelProfile(context.Context, string) (ModelProfile, error)
+	GetActiveCredential(context.Context, string) (ProviderCredential, error)
 	CreateModelProfile(context.Context, ModelProfile, ProviderCredential, ModelProfileRevision) (ModelProfile, error)
 	UpdateModelProfile(context.Context, ModelProfile, *ProviderCredential, ModelProfileRevision) (ModelProfile, error)
 	SoftDeleteModelProfile(context.Context, string, time.Time, ModelProfileRevision) error
+	RecordProviderInvocation(context.Context, ProviderInvocation) error
 }

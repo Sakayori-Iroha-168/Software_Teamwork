@@ -21,14 +21,19 @@ const (
 type Service struct {
 	repo             Repository
 	encryptor        *CredentialEncryptor
+	invoker          ModelInvoker
 	defaultTimeoutMS int
 }
 
-func New(repo Repository, encryptor *CredentialEncryptor, defaultTimeoutMS int) *Service {
+func New(repo Repository, encryptor *CredentialEncryptor, defaultTimeoutMS int, invokers ...ModelInvoker) *Service {
 	if defaultTimeoutMS < 1000 {
 		defaultTimeoutMS = DefaultTimeoutMS
 	}
-	return &Service{repo: repo, encryptor: encryptor, defaultTimeoutMS: defaultTimeoutMS}
+	var invoker ModelInvoker
+	if len(invokers) > 0 {
+		invoker = invokers[0]
+	}
+	return &Service{repo: repo, encryptor: encryptor, invoker: invoker, defaultTimeoutMS: defaultTimeoutMS}
 }
 
 func (s *Service) ListModelProfiles(ctx context.Context, filter ListModelProfilesFilter) ([]ModelProfile, error) {

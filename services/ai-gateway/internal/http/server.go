@@ -24,6 +24,8 @@ type ModelProfileService interface {
 	UpdateModelProfile(context.Context, service.RequestContext, service.UpdateModelProfileInput) (service.ModelProfile, error)
 	DeleteModelProfile(context.Context, service.RequestContext, string) error
 	CheckReady(context.Context) (service.Readiness, error)
+	CreateEmbeddings(context.Context, service.RequestContext, service.EmbeddingInput) (service.EmbeddingResponse, error)
+	CreateReranking(context.Context, service.RequestContext, service.RerankingInput) (service.RerankingResponse, error)
 }
 
 type Config struct {
@@ -70,8 +72,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("PATCH /internal/v1/model-profiles/{profileId}", s.handleUpdateModelProfile)
 	s.mux.HandleFunc("DELETE /internal/v1/model-profiles/{profileId}", s.handleDeleteModelProfile)
 	s.mux.HandleFunc("POST /internal/v1/chat/completions", s.handleModelInvocationNotImplemented)
-	s.mux.HandleFunc("POST /internal/v1/embeddings", s.handleModelInvocationNotImplemented)
-	s.mux.HandleFunc("POST /internal/v1/rerankings", s.handleModelInvocationNotImplemented)
+	s.mux.HandleFunc("POST /internal/v1/embeddings", s.handleCreateEmbeddings)
+	s.mux.HandleFunc("POST /internal/v1/rerankings", s.handleCreateReranking)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 
@@ -209,12 +211,58 @@ func (s *Server) handleModelInvocationNotImplemented(w http.ResponseWriter, r *h
 	writeOpenAIError(w, http.StatusNotImplemented, "model invocation is not implemented", "not_implemented_error", "not_implemented")
 }
 
+func (s *Server) handleCreateEmbeddings(w http.ResponseWriter, r *http.Request) {
+	reqCtx, ok := s.modelInvocationContext(w, r)
+	if !ok || !s.requireModelService(w) {
+		return
+	}
+	var payload embeddingRequest
+	if !s.decodeModelJSON(w, r, &payload) {
+		return
+	}
+	response, err := s.profiles.CreateEmbeddings(r.Context(), reqCtx, embeddingInputFromRequest(payload))
+	if err != nil {
+		writeOpenAIAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleCreateReranking(w http.ResponseWriter, r *http.Request) {
+	reqCtx, ok := s.modelInvocationContext(w, r)
+	if !ok || !s.requireModelService(w) {
+		return
+	}
+	var payload rerankingRequest
+	if !s.decodeModelJSON(w, r, &payload) {
+		return
+	}
+	response, err := s.profiles.CreateReranking(r.Context(), reqCtx, rerankingInputFromRequest(payload))
+	if err != nil {
+		writeOpenAIAppError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
 	writeError(w, r, service.NotFoundError("route not found", nil))
 }
 
 func (s *Server) internalContext(w http.ResponseWriter, r *http.Request) (service.RequestContext, bool) {
 	if !s.authorizeInternal(w, r) {
+		return service.RequestContext{}, false
+	}
+	reqCtx := service.RequestContext{
+		RequestID:     requestIDFromContext(r.Context()),
+		CallerService: strings.TrimSpace(r.Header.Get("X-Caller-Service")),
+		UserID:        strings.TrimSpace(r.Header.Get("X-User-Id")),
+	}
+	return reqCtx, true
+}
+
+func (s *Server) modelInvocationContext(w http.ResponseWriter, r *http.Request) (service.RequestContext, bool) {
+	if !s.authorizeModelInvocation(w, r) {
 		return service.RequestContext{}, false
 	}
 	reqCtx := service.RequestContext{
@@ -276,6 +324,14 @@ func (s *Server) requireProfiles(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+func (s *Server) requireModelService(w http.ResponseWriter) bool {
+	if s.profiles != nil {
+		return true
+	}
+	writeOpenAIError(w, http.StatusBadGateway, "model profile service is not configured", "upstream_error", "dependency_error")
+	return false
+}
+
 func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) bool {
 	defer r.Body.Close()
 	r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
@@ -287,6 +343,22 @@ func (s *Server) decodeJSON(w http.ResponseWriter, r *http.Request, target any) 
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, r, service.ValidationError(map[string]string{"body": "must contain only one JSON object"}))
+		return false
+	}
+	return true
+}
+
+func (s *Server) decodeModelJSON(w http.ResponseWriter, r *http.Request, target any) bool {
+	defer r.Body.Close()
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxRequestBytes)
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, "request validation failed", "invalid_request_error", "validation_error")
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeOpenAIError(w, http.StatusBadRequest, "request validation failed", "invalid_request_error", "validation_error")
 		return false
 	}
 	return true
@@ -367,6 +439,14 @@ func writeOpenAIError(w http.ResponseWriter, status int, message, errorType, cod
 	}})
 }
 
+func writeOpenAIAppError(w http.ResponseWriter, err error) {
+	appErr, ok := service.Classify(err)
+	if !ok {
+		appErr = service.NewError(service.CodeInternal, "internal server error", err)
+	}
+	writeOpenAIError(w, statusForCode(appErr.Code), appErr.Message, service.OpenAIErrorTypeForCode(appErr.Code), string(appErr.Code))
+}
+
 func statusForCode(code service.Code) int {
 	switch code {
 	case service.CodeValidation:
@@ -383,6 +463,8 @@ func statusForCode(code service.Code) int {
 		return http.StatusTooManyRequests
 	case service.CodeDependency:
 		return http.StatusBadGateway
+	case service.CodeNotImplemented:
+		return http.StatusNotImplemented
 	default:
 		return http.StatusInternalServerError
 	}
