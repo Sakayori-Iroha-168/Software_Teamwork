@@ -1335,12 +1335,13 @@ func isUniqueViolation(err error) bool {
 
 func (r *PostgresRepository) GetReportSettings(ctx context.Context) (service.ReportSettings, error) {
 	row := r.pool.QueryRow(ctx, `
-		SELECT id, llm_profile_id, default_template_id,
+		SELECT id::text, llm_profile_id,
+		       default_template_id::text,
 		       default_file_format, default_numbering_mode,
 		       updated_at, created_at
 		FROM report_settings LIMIT 1`)
 	var s service.ReportSettings
-	var id pgtype.UUID
+	var id pgtype.Text
 	var llmProfileID, defaultTemplateID pgtype.Text
 	var updatedAt, createdAt pgtype.Timestamptz
 	if err := row.Scan(&id, &llmProfileID, &defaultTemplateID,
@@ -1348,7 +1349,7 @@ func (r *PostgresRepository) GetReportSettings(ctx context.Context) (service.Rep
 		&updatedAt, &createdAt); err != nil {
 		return service.ReportSettings{}, err
 	}
-	s.ID = uuidToString(id)
+	s.ID = id.String
 	if llmProfileID.Valid {
 		v := llmProfileID.String
 		s.LLMProfileID = &v
@@ -1414,11 +1415,11 @@ func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter servi
 	offset := (filter.Page - 1) * filter.PageSize
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, operator_id, operator_name,
+		SELECT id::text, operator_id, operator_name,
 		       operation_type, target_type, target_id,
 		       request_id, request_source, tool_name,
-		       parameter_summary, operation_result, error_message,
-		       metadata, created_at,
+		       parameter_summary_json, operation_result, error_message,
+		       metadata_json, created_at,
 		       COUNT(*) OVER() AS total
 		FROM report_operation_logs
 		WHERE ($1 = '' OR operation_type = $1)
@@ -1437,7 +1438,8 @@ func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter servi
 	var total int
 	for rows.Next() {
 		var l service.OperationLog
-		var id, targetID pgtype.UUID
+		var id pgtype.Text
+		var targetID pgtype.Text
 		var operatorID, operatorName, requestID, requestSource, toolName, errorMessage pgtype.Text
 		var paramSummaryRaw, metadataRaw []byte
 		var createdAt pgtype.Timestamptz
@@ -1450,8 +1452,8 @@ func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter servi
 		); err != nil {
 			return service.OperationLogListResult{}, err
 		}
-		l.ID = uuidToString(id)
-		l.TargetID = uuidToString(targetID)
+		l.ID = id.String
+		l.TargetID = targetID.String
 		if operatorID.Valid {
 			v := operatorID.String; l.OperatorID = &v
 		}

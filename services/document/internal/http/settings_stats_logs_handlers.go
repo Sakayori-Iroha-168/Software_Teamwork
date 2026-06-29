@@ -7,31 +7,46 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/service"
 )
 
-// reportSettingsResponse is the public shape of ReportSettings.
-// provider baseUrl and apiKey are never included.
+// ── GET /report-settings ─────────────────────────────────────────────────────
+
+// reportSettingsLLM is the public llm sub-object (no provider credentials).
+type reportSettingsLLM struct {
+	Provider  string  `json:"provider"`
+	ProfileID *string `json:"profileId,omitempty"`
+}
+
+// reportSettingsFile is the public file-defaults sub-object.
+type reportSettingsFile struct {
+	DefaultFormat        string `json:"defaultFormat"`
+	DefaultNumberingMode string `json:"defaultNumberingMode"`
+}
+
+// reportSettingsResponse matches the document OpenAPI ReportSettings schema.
 type reportSettingsResponse struct {
-	ID                   string  `json:"id"`
-	LLMProfileID         *string `json:"llmProfileId,omitempty"`
-	DefaultTemplateID    *string `json:"defaultTemplateId,omitempty"`
-	DefaultFileFormat    string  `json:"defaultFileFormat"`
-	DefaultNumberingMode string  `json:"defaultNumberingMode"`
-	UpdatedAt            string  `json:"updatedAt"`
-	CreatedAt            string  `json:"createdAt"`
+	LLM              *reportSettingsLLM `json:"llm,omitempty"`
+	DefaultTemplates map[string]string  `json:"defaultTemplates,omitempty"`
+	File             reportSettingsFile `json:"file"`
 }
 
 func reportSettingsFromDomain(s service.ReportSettings) reportSettingsResponse {
-	return reportSettingsResponse{
-		ID:                   s.ID,
-		LLMProfileID:         s.LLMProfileID,
-		DefaultTemplateID:    s.DefaultTemplateID,
-		DefaultFileFormat:    s.DefaultFileFormat,
-		DefaultNumberingMode: s.DefaultNumberingMode,
-		UpdatedAt:            s.UpdatedAt.Format(time.RFC3339),
-		CreatedAt:            s.CreatedAt.Format(time.RFC3339),
+	resp := reportSettingsResponse{
+		File: reportSettingsFile{
+			DefaultFormat:        s.DefaultFileFormat,
+			DefaultNumberingMode: s.DefaultNumberingMode,
+		},
 	}
+	if s.LLMProfileID != nil {
+		resp.LLM = &reportSettingsLLM{
+			Provider:  "ai-gateway",
+			ProfileID: s.LLMProfileID,
+		}
+	}
+	if s.DefaultTemplateID != nil {
+		resp.DefaultTemplates = map[string]string{"default": *s.DefaultTemplateID}
+	}
+	return resp
 }
 
-// handleGetReportSettings handles GET /report-settings.
 func (s *Server) handleGetReportSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDocumentService(w, r) {
 		return
@@ -44,14 +59,28 @@ func (s *Server) handleGetReportSettings(w http.ResponseWriter, r *http.Request)
 	writeData(w, r, http.StatusOK, reportSettingsFromDomain(settings))
 }
 
-type updateReportSettingsRequest struct {
-	LLMProfileID         *string `json:"llmProfileId"`
-	DefaultTemplateID    *string `json:"defaultTemplateId"`
-	DefaultFileFormat    *string `json:"defaultFileFormat"`
+// ── PATCH /report-settings ───────────────────────────────────────────────────
+
+type updateReportSettingsLLMRequest struct {
+	ProfileID *string `json:"profileId"`
+}
+
+type updateReportSettingsFileRequest struct {
+	DefaultFormat        *string `json:"defaultFormat"`
 	DefaultNumberingMode *string `json:"defaultNumberingMode"`
 }
 
-// handleUpdateReportSettings handles PATCH /report-settings.
+type updateReportSettingsRequest struct {
+	LLM              *updateReportSettingsLLMRequest `json:"llm"`
+	DefaultTemplates map[string]string               `json:"defaultTemplates"`
+	File             *updateReportSettingsFileRequest `json:"file"`
+}
+
+// updatedAtResponse matches the document OpenAPI UpdatedAt schema.
+type updatedAtResponse struct {
+	UpdatedAt string `json:"updatedAt"`
+}
+
 func (s *Server) handleUpdateReportSettings(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDocumentService(w, r) {
 		return
@@ -60,31 +89,44 @@ func (s *Server) handleUpdateReportSettings(w http.ResponseWriter, r *http.Reque
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	settings, err := s.documents.UpdateReportSettings(r.Context(), s.requestContext(r), service.UpdateReportSettingsInput{
-		LLMProfileID:         req.LLMProfileID,
-		DefaultTemplateID:    req.DefaultTemplateID,
-		DefaultFileFormat:    req.DefaultFileFormat,
-		DefaultNumberingMode: req.DefaultNumberingMode,
-	})
+
+	input := service.UpdateReportSettingsInput{}
+	if req.LLM != nil {
+		input.LLMProfileID = req.LLM.ProfileID
+	}
+	if req.DefaultTemplates != nil {
+		if v, ok := req.DefaultTemplates["default"]; ok {
+			input.DefaultTemplateID = &v
+		}
+	}
+	if req.File != nil {
+		input.DefaultFileFormat = req.File.DefaultFormat
+		input.DefaultNumberingMode = req.File.DefaultNumberingMode
+	}
+
+	updated, err := s.documents.UpdateReportSettings(r.Context(), s.requestContext(r), input)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	writeData(w, r, http.StatusOK, reportSettingsFromDomain(settings))
+	writeData(w, r, http.StatusOK, updatedAtResponse{
+		UpdatedAt: updated.UpdatedAt.Format(time.RFC3339),
+	})
 }
 
-// statisticsOverviewResponse is the public shape for GET /report-statistics/overview.
-type statisticsOverviewResponse struct {
-	TemplateCount  int            `json:"templateCount"`
-	ReportCount    int            `json:"reportCount"`
-	GeneratedCount int            `json:"generatedCount"`
-	FailedCount    int            `json:"failedCount"`
-	Trend30d       []dailyTrendResponse `json:"trend30d"`
-}
+// ── GET /report-statistics/overview ─────────────────────────────────────────
 
+// dailyTrendResponse matches the trend30d item in ReportStats.
 type dailyTrendResponse struct {
 	Date           string `json:"date"`
 	GeneratedCount int    `json:"generatedCount"`
+}
+
+// statisticsOverviewResponse matches the document OpenAPI ReportStats schema.
+type statisticsOverviewResponse struct {
+	TemplateCount int                  `json:"templateCount"`
+	ReportCount   int                  `json:"reportCount"`
+	Trend30d      []dailyTrendResponse `json:"trend30d"`
 }
 
 func statisticsOverviewFromDomain(o service.ReportStatisticsOverview) statisticsOverviewResponse {
@@ -96,15 +138,12 @@ func statisticsOverviewFromDomain(o service.ReportStatisticsOverview) statistics
 		}
 	}
 	return statisticsOverviewResponse{
-		TemplateCount:  o.TemplateCount,
-		ReportCount:    o.ReportCount,
-		GeneratedCount: o.GeneratedCount,
-		FailedCount:    o.FailedCount,
-		Trend30d:       trend,
+		TemplateCount: o.TemplateCount,
+		ReportCount:   o.ReportCount,
+		Trend30d:      trend,
 	}
 }
 
-// handleGetReportStatisticsOverview handles GET /report-statistics/overview.
 func (s *Server) handleGetReportStatisticsOverview(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDocumentService(w, r) {
 		return
@@ -117,41 +156,47 @@ func (s *Server) handleGetReportStatisticsOverview(w http.ResponseWriter, r *htt
 	writeData(w, r, http.StatusOK, statisticsOverviewFromDomain(overview))
 }
 
-// operationLogResponse is the public shape of OperationLog.
-// Sensitive fields (full parameter payloads, internal paths) are never included.
+// ── GET /report-operation-logs ───────────────────────────────────────────────
+
+// operationLogResponse matches the document OpenAPI ReportOperationLog schema.
+// Only the sanitized summary stored in parameter_summary_json is forwarded;
+// raw provider keys and internal paths are never included.
 type operationLogResponse struct {
-	ID              string         `json:"id"`
-	OperatorID      *string        `json:"operatorId,omitempty"`
-	OperatorName    *string        `json:"operatorName,omitempty"`
-	OperationType   string         `json:"operationType"`
-	TargetType      string         `json:"targetType"`
-	TargetID        string         `json:"targetId"`
-	RequestID       *string        `json:"requestId,omitempty"`
-	RequestSource   *string        `json:"requestSource,omitempty"`
-	ToolName        *string        `json:"toolName,omitempty"`
-	OperationResult string         `json:"operationResult"`
-	ErrorMessage    *string        `json:"errorMessage,omitempty"`
-	CreatedAt       string         `json:"createdAt"`
+	ID               string         `json:"id"`
+	OperatorID       *string        `json:"operatorId,omitempty"`
+	OperatorName     *string        `json:"operatorName,omitempty"`
+	OperationType    string         `json:"operationType"`
+	TargetType       string         `json:"targetType"`
+	TargetID         string         `json:"targetId"`
+	RequestID        *string        `json:"requestId,omitempty"`
+	RequestSource    *string        `json:"requestSource,omitempty"`
+	ToolName         *string        `json:"toolName,omitempty"`
+	ParameterSummary map[string]any `json:"parameterSummary,omitempty"`
+	OperationResult  string         `json:"operationResult"`
+	ErrorMessage     *string        `json:"errorMessage,omitempty"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+	CreatedAt        string         `json:"createdAt"`
 }
 
 func operationLogFromDomain(l service.OperationLog) operationLogResponse {
 	return operationLogResponse{
-		ID:              l.ID,
-		OperatorID:      l.OperatorID,
-		OperatorName:    l.OperatorName,
-		OperationType:   l.OperationType,
-		TargetType:      l.TargetType,
-		TargetID:        l.TargetID,
-		RequestID:       l.RequestID,
-		RequestSource:   l.RequestSource,
-		ToolName:        l.ToolName,
-		OperationResult: l.OperationResult,
-		ErrorMessage:    l.ErrorMessage,
-		CreatedAt:       l.CreatedAt.Format(time.RFC3339),
+		ID:               l.ID,
+		OperatorID:       l.OperatorID,
+		OperatorName:     l.OperatorName,
+		OperationType:    l.OperationType,
+		TargetType:       l.TargetType,
+		TargetID:         l.TargetID,
+		RequestID:        l.RequestID,
+		RequestSource:    l.RequestSource,
+		ToolName:         l.ToolName,
+		ParameterSummary: l.ParameterSummary,
+		OperationResult:  l.OperationResult,
+		ErrorMessage:     l.ErrorMessage,
+		Metadata:         l.Metadata,
+		CreatedAt:        l.CreatedAt.Format(time.RFC3339),
 	}
 }
 
-// handleListOperationLogs handles GET /report-operation-logs.
 func (s *Server) handleListOperationLogs(w http.ResponseWriter, r *http.Request) {
 	if !s.requireDocumentService(w, r) {
 		return
