@@ -120,10 +120,12 @@ type dailyTrendResponse struct {
 	GeneratedCount int    `json:"generatedCount"`
 }
 
-// statisticsOverviewResponse matches the document OpenAPI ReportStats schema.
+// statisticsOverviewResponse matches the gateway public ReportStatisticsOverview schema.
+// materialCount is required by the gateway contract; trend30d is additional detail.
 type statisticsOverviewResponse struct {
 	TemplateCount int                  `json:"templateCount"`
 	ReportCount   int                  `json:"reportCount"`
+	MaterialCount int                  `json:"materialCount"`
 	Trend30d      []dailyTrendResponse `json:"trend30d"`
 }
 
@@ -138,6 +140,7 @@ func statisticsOverviewFromDomain(o service.ReportStatisticsOverview) statistics
 	return statisticsOverviewResponse{
 		TemplateCount: o.TemplateCount,
 		ReportCount:   o.ReportCount,
+		MaterialCount: o.MaterialCount,
 		Trend30d:      trend,
 	}
 }

@@ -1,6 +1,12 @@
 package service
 
-import "context"
+import (
+	"context"
+	"strings"
+)
+
+var validFileFormats = map[string]bool{"docx": true}
+var validNumberingModes = map[string]bool{"global": true, "by_chapter": true}
 
 // GetReportSettings returns the singleton report settings row.
 func (s *Service) GetReportSettings(ctx context.Context, reqCtx RequestContext) (ReportSettings, error) {
@@ -20,11 +26,34 @@ func (s *Service) UpdateReportSettings(ctx context.Context, reqCtx RequestContex
 	if err := requireGatewayContext(reqCtx); err != nil {
 		return ReportSettings{}, err
 	}
+	if err := validateUpdateReportSettingsInput(input); err != nil {
+		return ReportSettings{}, err
+	}
 	settings, err := s.repo.UpdateReportSettings(ctx, input)
 	if err != nil {
 		return ReportSettings{}, dependencyError("update report settings", err)
 	}
 	return settings, nil
+}
+
+func validateUpdateReportSettingsInput(input UpdateReportSettingsInput) error {
+	fields := map[string]string{}
+	if input.DefaultFileFormat != nil {
+		v := strings.TrimSpace(*input.DefaultFileFormat)
+		if !validFileFormats[v] {
+			fields["defaultFormat"] = "must be one of: docx"
+		}
+	}
+	if input.DefaultNumberingMode != nil {
+		v := strings.TrimSpace(*input.DefaultNumberingMode)
+		if !validNumberingModes[v] {
+			fields["defaultNumberingMode"] = "must be one of: global, by_chapter"
+		}
+	}
+	if len(fields) > 0 {
+		return ValidationError(fields)
+	}
+	return nil
 }
 
 // GetReportStatisticsOverview returns aggregate counts and 30-day trend.

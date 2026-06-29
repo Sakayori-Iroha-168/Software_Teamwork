@@ -359,6 +359,7 @@ type UpdateReportSettingsInput struct {
 type ReportStatisticsOverview struct {
 	TemplateCount  int          `json:"templateCount"`
 	ReportCount    int          `json:"reportCount"`
+	MaterialCount  int          `json:"materialCount"`
 	GeneratedCount int          `json:"generatedCount"`
 	FailedCount    int          `json:"failedCount"`
 	Trend30d       []DailyTrend `json:"trend30d"`

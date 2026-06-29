@@ -1397,10 +1397,11 @@ func (r *PostgresRepository) GetReportStatisticsOverview(ctx context.Context) (s
 	err := r.pool.QueryRow(ctx, `
 		SELECT
 		  (SELECT COUNT(*) FROM report_templates WHERE deleted_at IS NULL)::int,
-		  (SELECT COUNT(*) FROM reports       WHERE deleted_at IS NULL)::int,
-		  (SELECT COUNT(*) FROM reports       WHERE status = 'generated' AND deleted_at IS NULL)::int,
-		  (SELECT COUNT(*) FROM reports       WHERE status = 'failed'    AND deleted_at IS NULL)::int`).
-		Scan(&o.TemplateCount, &o.ReportCount, &o.GeneratedCount, &o.FailedCount)
+		  (SELECT COUNT(*) FROM reports          WHERE deleted_at IS NULL)::int,
+		  (SELECT COUNT(*) FROM report_materials WHERE deleted_at IS NULL)::int,
+		  (SELECT COUNT(*) FROM reports          WHERE status = 'generated' AND deleted_at IS NULL)::int,
+		  (SELECT COUNT(*) FROM reports          WHERE status = 'failed'    AND deleted_at IS NULL)::int`).
+		Scan(&o.TemplateCount, &o.ReportCount, &o.MaterialCount, &o.GeneratedCount, &o.FailedCount)
 	if err != nil {
 		return service.ReportStatisticsOverview{}, err
 	}
