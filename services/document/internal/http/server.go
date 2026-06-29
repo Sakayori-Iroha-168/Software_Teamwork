@@ -21,12 +21,18 @@ type ReadyChecker interface {
 type Config struct {
 	Logger       *slog.Logger
 	ReadyChecker ReadyChecker
+	Settings     *SettingsHandler
+	Statistics   *StatisticsHandler
+	Logs         *LogHandler
 }
 
 type Server struct {
 	logger       *slog.Logger
 	readyChecker ReadyChecker
 	mux          *http.ServeMux
+	settings     *SettingsHandler
+	statistics   *StatisticsHandler
+	logs         *LogHandler
 }
 
 func NewServer(cfg Config) *Server {
@@ -37,6 +43,9 @@ func NewServer(cfg Config) *Server {
 		logger:       cfg.Logger,
 		readyChecker: cfg.ReadyChecker,
 		mux:          http.NewServeMux(),
+		settings:     cfg.Settings,
+		statistics:   cfg.Statistics,
+		logs:         cfg.Logs,
 	}
 	server.routes()
 	return server
@@ -45,6 +54,18 @@ func NewServer(cfg Config) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+
+	if s.settings != nil {
+		s.mux.HandleFunc("GET /report-settings", s.settings.handleGetSettings)
+		s.mux.HandleFunc("PATCH /report-settings", s.settings.handleUpdateSettings)
+	}
+	if s.statistics != nil {
+		s.mux.HandleFunc("GET /report-statistics/overview", s.statistics.handleGetOverview)
+	}
+	if s.logs != nil {
+		s.mux.HandleFunc("GET /report-operation-logs", s.logs.handleListLogs)
+	}
+
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 

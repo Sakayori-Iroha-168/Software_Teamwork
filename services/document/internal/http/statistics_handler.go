@@ -1,4 +1,4 @@
-package http
+package httpapi
 
 import (
 	"net/http"
@@ -6,7 +6,6 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/service"
 )
 
-// StatisticsHandler 处理 GET /report-statistics/overview 请求。
 type StatisticsHandler struct {
 	svc *service.StatisticsService
 }
@@ -15,12 +14,11 @@ func NewStatisticsHandler(svc *service.StatisticsService) *StatisticsHandler {
 	return &StatisticsHandler{svc: svc}
 }
 
-// GetOverview 处理 GET /report-statistics/overview
-func (h *StatisticsHandler) GetOverview(w http.ResponseWriter, r *http.Request) {
+func (h *StatisticsHandler) handleGetOverview(w http.ResponseWriter, r *http.Request) {
 	overview, err := h.svc.GetOverview(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, overview)
+	writeData(w, r, http.StatusOK, overview)
 }

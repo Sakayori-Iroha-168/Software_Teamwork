@@ -1,4 +1,4 @@
-package http
+package httpapi
 
 import (
 	"net/http"
@@ -7,7 +7,6 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/service"
 )
 
-// LogHandler 处理 GET /report-operation-logs 请求。
 type LogHandler struct {
 	svc *service.AuditService
 }
@@ -16,9 +15,7 @@ func NewLogHandler(svc *service.AuditService) *LogHandler {
 	return &LogHandler{svc: svc}
 }
 
-// ListLogs 处理 GET /report-operation-logs
-// 支持查询参数：operationType, targetId, requestSource, page, pageSize
-func (h *LogHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
+func (h *LogHandler) handleListLogs(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	input := service.ListLogsInput{
@@ -48,8 +45,8 @@ func (h *LogHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.svc.ListLogs(r.Context(), input)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		writeError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeData(w, r, http.StatusOK, result)
 }
