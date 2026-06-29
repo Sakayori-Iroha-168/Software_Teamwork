@@ -52,6 +52,7 @@ const menuItems: AdminMenuItem[] = [
       { key: 'knowledge', label: '知识管理', path: '/admin/knowledge' },
       { key: 'knowledge-config', label: '知识配置', path: '/admin/knowledge-config' },
       { key: 'knowledge-experience', label: '知识体验', path: '/admin/knowledge-experience' },
+      { key: 'qa-settings', label: 'QA / LLM 配置', path: '/admin/qa-settings' },
     ],
   },
   {
