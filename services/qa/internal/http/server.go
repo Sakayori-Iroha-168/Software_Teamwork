@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/http/middleware"
@@ -335,10 +336,13 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 	// SSE event channel to serialize writes to ResponseWriter
 	eventCh := make(chan service.ProgressEvent, 64)
 	sentErrorCh := make(chan bool, 1)
+	var writerWg sync.WaitGroup
 
 	// Single writer goroutine - ensures ResponseWriter is not accessed concurrently
 	writerDone := make(chan struct{})
+	writerWg.Add(1)
 	go func() {
+		defer writerWg.Done()
 		heartbeatTicker := time.NewTicker(15 * time.Second)
 		defer heartbeatTicker.Stop()
 		for {
@@ -385,8 +389,8 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 	_, err := s.qa.Ask(r.Context(), userID, r.PathValue("sessionId"), input, observe)
 	close(writerDone)
 
-	// Wait briefly for writer to drain remaining events
-	time.Sleep(10 * time.Millisecond)
+	// Wait for writer goroutine to finish draining events
+	writerWg.Wait()
 
 	if err != nil {
 		appErr, ok := service.Classify(err)

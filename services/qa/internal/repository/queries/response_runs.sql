@@ -78,6 +78,7 @@ SET status = sqlc.arg(status),
     termination_reason = sqlc.arg(termination_reason),
     prompt_tokens = sqlc.arg(prompt_tokens),
     completion_tokens = sqlc.arg(completion_tokens),
+    reasoning_tokens = sqlc.arg(reasoning_tokens),
     completed_at = sqlc.arg(completed_at)
 FROM conversations c
 WHERE rr.id::text = sqlc.arg(id)::text

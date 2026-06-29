@@ -67,7 +67,7 @@ func (r *fakeRepository) SaveReasoningSteps(_ context.Context, _, _ string, step
 func (r *fakeRepository) SaveModelInvocation(_ context.Context, _ string, invocation ModelInvocation) (string, error) {
 	return fmt.Sprintf("invocation-%d", invocation.IterationNo), nil
 }
-func (r *fakeRepository) UpdateResponseRunTermination(_ context.Context, _, _, _, _ string, _, _ int) error {
+func (r *fakeRepository) UpdateResponseRunTermination(_ context.Context, _, _, _, _ string, _, _, _ int) error {
 	return nil
 }
 

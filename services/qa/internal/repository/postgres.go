@@ -402,13 +402,13 @@ func (r *Postgres) GetResponseRun(ctx context.Context, userID, runID string) (se
 	return responseRunFromRow(row), nil
 }
 
-func (r *Postgres) UpdateResponseRunTermination(ctx context.Context, userID, runID, status, terminationReason string, promptTokens, completionTokens int) error {
+func (r *Postgres) UpdateResponseRunTermination(ctx context.Context, userID, runID, status, terminationReason string, promptTokens, completionTokens, reasoningTokens int) error {
 	now := time.Now().UTC()
 	var terminationReasonPtr *string
 	if terminationReason != "" {
 		terminationReasonPtr = &terminationReason
 	}
-	err := r.queries.UpdateResponseRunTermination(ctx, status, terminationReasonPtr, promptTokens, completionTokens, now, runID, userID)
+	err := r.queries.UpdateResponseRunTermination(ctx, status, terminationReasonPtr, promptTokens, completionTokens, reasoningTokens, now, runID, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return service.NewError(service.CodeNotFound, "response run not found", err)
 	}

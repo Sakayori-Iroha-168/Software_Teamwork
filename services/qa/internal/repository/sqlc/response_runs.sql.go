@@ -171,15 +171,16 @@ SET status = $1,
     termination_reason = $2,
     prompt_tokens = $3,
     completion_tokens = $4,
-    completed_at = $5
+    reasoning_tokens = $5,
+    completed_at = $6
 FROM conversations c
-WHERE rr.id::text = $6::text
+WHERE rr.id::text = $7::text
     AND c.id = rr.conversation_id
-    AND c.external_user_id = $7
+    AND c.external_user_id = $8
 `
 
-func (q *Queries) UpdateResponseRunTermination(ctx context.Context, status string, terminationReason *string, promptTokens int, completionTokens int, completedAt time.Time, id string, externalUserID string) error {
-	_, err := q.db.Exec(ctx, updateResponseRunTermination, status, terminationReason, promptTokens, completionTokens, completedAt, id, externalUserID)
+func (q *Queries) UpdateResponseRunTermination(ctx context.Context, status string, terminationReason *string, promptTokens int, completionTokens int, reasoningTokens int, completedAt time.Time, id string, externalUserID string) error {
+	_, err := q.db.Exec(ctx, updateResponseRunTermination, status, terminationReason, promptTokens, completionTokens, reasoningTokens, completedAt, id, externalUserID)
 	return err
 }
 
