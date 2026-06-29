@@ -12,7 +12,7 @@ type jobResponse struct {
 	JobType      string  `json:"jobType"`
 	Status       string  `json:"status"`
 	ReportID     string  `json:"reportId"`
-	RetryCount   int     `json:"retryCount"`
+	AttemptCount int     `json:"attemptCount"`
 	MaxAttempts  int     `json:"maxAttempts"`
 	ErrorCode    string  `json:"errorCode,omitempty"`
 	ErrorMessage string  `json:"errorMessage,omitempty"`
@@ -49,7 +49,7 @@ func toJobResponse(j service.ReportJob) jobResponse {
 		JobType:      string(j.JobType),
 		Status:       string(j.Status),
 		ReportID:     j.ReportID,
-		RetryCount:   j.RetryCount,
+		AttemptCount: j.RetryCount,
 		MaxAttempts:  j.MaxAttempts,
 		ErrorCode:    j.ErrorCode,
 		ErrorMessage: j.ErrorMessage,
@@ -108,6 +108,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
 		return
 	}
+	rctx := s.requestContext(r)
 	reportID := r.PathValue("reportId")
 	var req createJobRequest
 	if !decodeJSON(w, r, &req) {
@@ -119,11 +120,11 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	input := service.CreateJobInput{
 		RequestID: requestIDFromContext(r.Context()),
-		UserID:    r.Header.Get("X-User-Id"),
+		UserID:    rctx.UserID,
 		ReportID:  reportID,
 		JobType:   service.JobType(req.JobType),
 	}
-	job, err := s.jobSvc.CreateJob(r.Context(), input)
+	job, err := s.jobSvc.CreateJob(r.Context(), rctx, input)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -136,8 +137,9 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
 		return
 	}
+	rctx := s.requestContext(r)
 	reportID := r.PathValue("reportId")
-	jobs, err := s.jobSvc.ListJobs(r.Context(), reportID)
+	jobs, err := s.jobSvc.ListJobs(r.Context(), rctx, reportID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -154,8 +156,9 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
 		return
 	}
+	rctx := s.requestContext(r)
 	jobID := r.PathValue("jobId")
-	job, err := s.jobSvc.GetJob(r.Context(), jobID)
+	job, err := s.jobSvc.GetJob(r.Context(), rctx, jobID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -163,18 +166,29 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	writeData(w, r, http.StatusOK, toJobResponse(job))
 }
 
+type retryJobRequest struct {
+	Reason string `json:"reason"`
+}
+
 func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
 	if s.jobSvc == nil {
 		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
 		return
 	}
+	rctx := s.requestContext(r)
 	jobID := r.PathValue("jobId")
-	attempt, err := s.jobSvc.RetryJob(r.Context(), jobID)
+	var req retryJobRequest
+	if r.ContentLength != 0 {
+		if !decodeJSON(w, r, &req) {
+			return
+		}
+	}
+	attempt, err := s.jobSvc.RetryJob(r.Context(), rctx, jobID, req.Reason)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	writeData(w, r, http.StatusOK, toAttemptResponse(attempt))
+	writeData(w, r, http.StatusAccepted, toAttemptResponse(attempt))
 }
 
 func (s *Server) handleListAttempts(w http.ResponseWriter, r *http.Request) {
@@ -182,8 +196,9 @@ func (s *Server) handleListAttempts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
 		return
 	}
+	rctx := s.requestContext(r)
 	jobID := r.PathValue("jobId")
-	attempts, err := s.jobSvc.ListAttempts(r.Context(), jobID)
+	attempts, err := s.jobSvc.ListAttempts(r.Context(), rctx, jobID)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -200,8 +215,9 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, service.NewError(service.CodeDependency, "job service not configured", nil))
 		return
 	}
+	rctx := s.requestContext(r)
 	reportID := r.PathValue("reportId")
-	events, err := s.jobSvc.ListEvents(r.Context(), reportID)
+	events, err := s.jobSvc.ListEvents(r.Context(), rctx, reportID)
 	if err != nil {
 		writeError(w, r, err)
 		return

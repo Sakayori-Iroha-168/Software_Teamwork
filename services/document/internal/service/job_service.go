@@ -7,13 +7,15 @@ import (
 )
 
 type JobRepository interface {
+	GetReportByID(ctx context.Context, id string) (Report, error)
 	FindReportJobByID(ctx context.Context, id string) (ReportJob, error)
 	ListReportJobsByReportID(ctx context.Context, reportID string) ([]ReportJob, error)
 	CreateReportJob(ctx context.Context, value ReportJob) (ReportJob, error)
 	UpdateReportJobStatus(ctx context.Context, id string, status JobStatus, errorCode, errorMessage string, startedAt, finishedAt *time.Time) (ReportJob, error)
 	UpdateJobAsynqTaskID(ctx context.Context, id, taskID string) error
-	IncrementJobRetryCount(ctx context.Context, id string) (ReportJob, error)
-	CreateReportJobAttempt(ctx context.Context, value ReportJobAttempt) (ReportJobAttempt, error)
+	// ClaimRetry atomically validates status/retry_count, increments retry_count,
+	// and inserts the attempt — preventing double-retry races.
+	ClaimRetry(ctx context.Context, jobID, attemptID, triggerSource, reason string) (ReportJobAttempt, error)
 	ListReportJobAttemptsByJobID(ctx context.Context, jobID string) ([]ReportJobAttempt, error)
 	ListReportEventsByReportID(ctx context.Context, reportID string) ([]ReportEvent, error)
 }
@@ -32,11 +34,32 @@ func NewJobService(repo JobRepository, enqueuer TaskEnqueuer) *JobService {
 	return &JobService{repo: repo, enqueuer: enqueuer}
 }
 
-func (s *JobService) GetJob(ctx context.Context, id string) (ReportJob, error) {
-	return s.repo.FindReportJobByID(ctx, id)
+func (s *JobService) requireReportAccess(ctx context.Context, rctx RequestContext, reportID string) (Report, error) {
+	report, err := s.repo.GetReportByID(ctx, reportID)
+	if err != nil {
+		return Report{}, mapRepositoryReadError(err, "report not found")
+	}
+	if !rctx.CanAccessReport(report) {
+		return Report{}, NewError(CodeForbidden, "you do not have access to this report", nil)
+	}
+	return report, nil
 }
 
-func (s *JobService) ListJobs(ctx context.Context, reportID string) ([]ReportJob, error) {
+func (s *JobService) GetJob(ctx context.Context, rctx RequestContext, id string) (ReportJob, error) {
+	job, err := s.repo.FindReportJobByID(ctx, id)
+	if err != nil {
+		return ReportJob{}, err
+	}
+	if _, err := s.requireReportAccess(ctx, rctx, job.ReportID); err != nil {
+		return ReportJob{}, err
+	}
+	return job, nil
+}
+
+func (s *JobService) ListJobs(ctx context.Context, rctx RequestContext, reportID string) ([]ReportJob, error) {
+	if _, err := s.requireReportAccess(ctx, rctx, reportID); err != nil {
+		return nil, err
+	}
 	return s.repo.ListReportJobsByReportID(ctx, reportID)
 }
 
@@ -47,11 +70,14 @@ type CreateJobInput struct {
 	JobType   JobType
 }
 
-func (s *JobService) CreateJob(ctx context.Context, input CreateJobInput) (ReportJob, error) {
+func (s *JobService) CreateJob(ctx context.Context, rctx RequestContext, input CreateJobInput) (ReportJob, error) {
 	if input.JobType != JobTypeOutlineGeneration {
 		return ReportJob{}, ValidationError(map[string]string{
 			"jobType": "only outline_generation is supported in this version",
 		})
+	}
+	if _, err := s.requireReportAccess(ctx, rctx, input.ReportID); err != nil {
+		return ReportJob{}, err
 	}
 	now := time.Now().UTC()
 	job := ReportJob{
@@ -73,54 +99,51 @@ func (s *JobService) CreateJob(ctx context.Context, input CreateJobInput) (Repor
 	}
 	taskID, err := s.enqueuer.EnqueueOutlineGeneration(ctx, created.ID, input.RequestID, input.UserID)
 	if err != nil {
+		_, _ = s.repo.UpdateReportJobStatus(ctx, created.ID, JobStatusFailed, "enqueue_failed", "failed to enqueue task", nil, nil)
 		return ReportJob{}, fmt.Errorf("enqueue job task: %w", err)
 	}
 	if err := s.repo.UpdateJobAsynqTaskID(ctx, created.ID, taskID); err != nil {
-		return created, nil
+		return ReportJob{}, fmt.Errorf("job created (id=%s) but asynq_task_id not persisted: %w", created.ID, err)
 	}
 	created.AsynqTaskID = taskID
 	return created, nil
 }
 
-func (s *JobService) RetryJob(ctx context.Context, id string) (ReportJobAttempt, error) {
+func (s *JobService) RetryJob(ctx context.Context, rctx RequestContext, id, reason string) (ReportJobAttempt, error) {
 	job, err := s.repo.FindReportJobByID(ctx, id)
 	if err != nil {
 		return ReportJobAttempt{}, err
 	}
-	if job.Status != JobStatusFailed && job.Status != JobStatusCanceled {
-		return ReportJobAttempt{}, NewError(CodeValidation, "only failed or canceled jobs can be retried", nil)
+	if _, err := s.requireReportAccess(ctx, rctx, job.ReportID); err != nil {
+		return ReportJobAttempt{}, err
 	}
-	if job.RetryCount >= job.MaxAttempts {
-		return ReportJobAttempt{}, NewError(CodeValidation, "max retry attempts reached", nil)
-	}
-	attempt := ReportJobAttempt{
-		ID:            newID(),
-		JobID:         job.ID,
-		AttemptNumber: job.RetryCount + 1,
-		TriggerSource: "user",
-		Status:        JobStatusPending,
-		CreatedAt:     time.Now().UTC(),
-	}
-	attempt, err = s.repo.CreateReportJobAttempt(ctx, attempt)
+	// ClaimRetry atomically validates state and increments retry_count in one transaction.
+	attempt, err := s.repo.ClaimRetry(ctx, job.ID, newID(), "user", reason)
 	if err != nil {
-		return ReportJobAttempt{}, fmt.Errorf("create retry attempt: %w", err)
+		return ReportJobAttempt{}, err
 	}
-	taskID, err := s.enqueuer.EnqueueOutlineGeneration(ctx, job.ID, job.RequestID, "")
+	taskID, err := s.enqueuer.EnqueueOutlineGeneration(ctx, job.ID, job.RequestID, rctx.UserID)
 	if err != nil {
 		return ReportJobAttempt{}, fmt.Errorf("enqueue retry task: %w", err)
 	}
 	_ = taskID
-	if _, err = s.repo.IncrementJobRetryCount(ctx, id); err != nil {
-		return ReportJobAttempt{}, fmt.Errorf("increment retry count: %w", err)
-	}
 	return attempt, nil
 }
 
-func (s *JobService) ListAttempts(ctx context.Context, jobID string) ([]ReportJobAttempt, error) {
+func (s *JobService) ListAttempts(ctx context.Context, rctx RequestContext, jobID string) ([]ReportJobAttempt, error) {
+	job, err := s.repo.FindReportJobByID(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.requireReportAccess(ctx, rctx, job.ReportID); err != nil {
+		return nil, err
+	}
 	return s.repo.ListReportJobAttemptsByJobID(ctx, jobID)
 }
 
-func (s *JobService) ListEvents(ctx context.Context, reportID string) ([]ReportEvent, error) {
+func (s *JobService) ListEvents(ctx context.Context, rctx RequestContext, reportID string) ([]ReportEvent, error) {
+	if _, err := s.requireReportAccess(ctx, rctx, reportID); err != nil {
+		return nil, err
+	}
 	return s.repo.ListReportEventsByReportID(ctx, reportID)
 }
-

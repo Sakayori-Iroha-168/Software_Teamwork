@@ -830,6 +830,67 @@ func (r *PostgresRepository) IncrementJobRetryCount(ctx context.Context, id stri
 	return job, nil
 }
 
+func (r *PostgresRepository) ClaimRetry(ctx context.Context, jobID, attemptID, triggerSource, reason string) (service.ReportJobAttempt, error) {
+	id, err := parseUUID(jobID)
+	if err != nil {
+		return service.ReportJobAttempt{}, service.NewError(service.CodeValidation, "invalid job id", err)
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return service.ReportJobAttempt{}, fmt.Errorf("begin retry transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var status string
+	var retryCount, maxAttempts int
+	if err := tx.QueryRow(ctx,
+		`SELECT status, retry_count, max_attempts FROM report_jobs WHERE id = $1 FOR UPDATE`, id,
+	).Scan(&status, &retryCount, &maxAttempts); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return service.ReportJobAttempt{}, service.NewError(service.CodeNotFound, "report job not found", err)
+		}
+		return service.ReportJobAttempt{}, fmt.Errorf("lock report job: %w", err)
+	}
+	s := service.JobStatus(status)
+	if s != service.JobStatusFailed && s != service.JobStatusCanceled {
+		return service.ReportJobAttempt{}, service.NewError(service.CodeValidation, "only failed or canceled jobs can be retried", nil)
+	}
+	if retryCount >= maxAttempts {
+		return service.ReportJobAttempt{}, service.NewError(service.CodeValidation, "max retry attempts reached", nil)
+	}
+	attemptNumber := retryCount + 1
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE report_jobs SET retry_count = retry_count + 1, status = 'pending', error_code = NULL, error_message = NULL WHERE id = $1`, id,
+	); err != nil {
+		return service.ReportJobAttempt{}, fmt.Errorf("increment retry count: %w", err)
+	}
+
+	now := time.Now().UTC()
+	row := tx.QueryRow(ctx, `
+		INSERT INTO report_job_attempts (
+			id, job_id, attempt_number, trigger_source, reason, status, created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, 'pending', $6)
+		RETURNING
+			id::text, job_id::text, attempt_number, COALESCE(asynq_task_id, ''),
+			trigger_source, COALESCE(reason, ''), status, COALESCE(error_code, ''),
+			COALESCE(error_message, ''), started_at, finished_at, created_at`,
+		attemptID, id, attemptNumber, triggerSource, reason, now,
+	)
+	attempt, err := scanReportJobAttempt(row)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return service.ReportJobAttempt{}, service.NewError(service.CodeConflict, "retry attempt already exists", err)
+		}
+		return service.ReportJobAttempt{}, fmt.Errorf("insert retry attempt: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return service.ReportJobAttempt{}, fmt.Errorf("commit retry transaction: %w", err)
+	}
+	return attempt, nil
+}
+
 func (r *PostgresRepository) ListReportJobAttemptsByJobID(ctx context.Context, jobID string) ([]service.ReportJobAttempt, error) {
 	id, err := parseUUID(jobID)
 	if err != nil {

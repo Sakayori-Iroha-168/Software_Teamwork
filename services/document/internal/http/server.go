@@ -34,12 +34,12 @@ type DocumentService interface {
 }
 
 type JobSvc interface {
-	CreateJob(ctx context.Context, input service.CreateJobInput) (service.ReportJob, error)
-	GetJob(ctx context.Context, id string) (service.ReportJob, error)
-	ListJobs(ctx context.Context, reportID string) ([]service.ReportJob, error)
-	RetryJob(ctx context.Context, id string) (service.ReportJobAttempt, error)
-	ListAttempts(ctx context.Context, jobID string) ([]service.ReportJobAttempt, error)
-	ListEvents(ctx context.Context, reportID string) ([]service.ReportEvent, error)
+	CreateJob(ctx context.Context, rctx service.RequestContext, input service.CreateJobInput) (service.ReportJob, error)
+	GetJob(ctx context.Context, rctx service.RequestContext, id string) (service.ReportJob, error)
+	ListJobs(ctx context.Context, rctx service.RequestContext, reportID string) ([]service.ReportJob, error)
+	RetryJob(ctx context.Context, rctx service.RequestContext, id, reason string) (service.ReportJobAttempt, error)
+	ListAttempts(ctx context.Context, rctx service.RequestContext, jobID string) ([]service.ReportJobAttempt, error)
+	ListEvents(ctx context.Context, rctx service.RequestContext, reportID string) ([]service.ReportEvent, error)
 }
 
 const defaultMaxUploadBytes = int64(32 << 20)
