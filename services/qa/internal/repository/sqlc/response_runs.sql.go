@@ -181,7 +181,8 @@ FROM conversations c
 WHERE rr.id::text = $7::text
     AND c.id = rr.conversation_id
     AND c.external_user_id = $8
-RETURNING rr.id
+    AND rr.status IN ('running', 'streaming')
+RETURNING rr.id::text
 `
 
 func (q *Queries) UpdateResponseRunTermination(ctx context.Context, status string, terminationReason *string, promptTokens int, completionTokens int, reasoningTokens int, completedAt time.Time, id string, externalUserID string) (string, error) {

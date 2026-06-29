@@ -87,7 +87,8 @@ FROM conversations c
 WHERE rr.id::text = sqlc.arg(id)::text
     AND c.id = rr.conversation_id
     AND c.external_user_id = sqlc.arg(external_user_id)
-RETURNING rr.id;
+    AND rr.status IN ('running', 'streaming')
+RETURNING rr.id::text;
 
 -- name: CancelResponseRun :one
 UPDATE response_runs rr

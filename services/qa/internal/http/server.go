@@ -108,15 +108,20 @@ func NewServer(qa QAService, settings SettingsService, resources ResourceService
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
-	s.mux.HandleFunc("POST /internal/v1/qa-sessions", s.handleCreateConversation)
-	s.mux.HandleFunc("GET /internal/v1/qa-sessions", s.handleListConversations)
-	s.mux.HandleFunc("GET /internal/v1/qa-sessions/{sessionId}", s.handleGetConversation)
-	s.mux.HandleFunc("PATCH /internal/v1/qa-sessions/{sessionId}", s.handleUpdateConversation)
-	s.mux.HandleFunc("DELETE /internal/v1/qa-sessions/{sessionId}", s.handleDeleteConversation)
-	s.mux.HandleFunc("GET /internal/v1/qa-sessions/{sessionId}/messages", s.handleListMessages)
-	s.mux.HandleFunc("POST /internal/v1/qa-sessions/{sessionId}/messages", s.handleAsk)
+	s.registerQASessionRoutes("/internal/v1")
+	s.registerQASessionRoutes("/api/v1")
 	s.registerResourceRoutes()
 	s.mux.HandleFunc("/", s.handleNotFound)
+}
+
+func (s *Server) registerQASessionRoutes(prefix string) {
+	s.mux.HandleFunc("POST "+prefix+"/qa-sessions", s.handleCreateConversation)
+	s.mux.HandleFunc("GET "+prefix+"/qa-sessions", s.handleListConversations)
+	s.mux.HandleFunc("GET "+prefix+"/qa-sessions/{sessionId}", s.handleGetConversation)
+	s.mux.HandleFunc("PATCH "+prefix+"/qa-sessions/{sessionId}", s.handleUpdateConversation)
+	s.mux.HandleFunc("DELETE "+prefix+"/qa-sessions/{sessionId}", s.handleDeleteConversation)
+	s.mux.HandleFunc("GET "+prefix+"/qa-sessions/{sessionId}/messages", s.handleListMessages)
+	s.mux.HandleFunc("POST "+prefix+"/qa-sessions/{sessionId}/messages", s.handleAsk)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +350,7 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 				}
 				writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
 			case <-heartbeatTicker.C:
+				// heartbeat is transport-only, not persisted to stream events
 				writeSSE(w, flusher, "heartbeat", 0, map[string]any{})
 			case <-writerDone:
 				// Drain remaining events before exiting

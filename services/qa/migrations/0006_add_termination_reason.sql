@@ -17,7 +17,9 @@ END
 WHERE stop_reason IS NOT NULL AND termination_reason IS NULL;
 
 -- +goose Down
--- Clear termination_reason values (keep column for compatibility)
 UPDATE response_runs
 SET termination_reason = NULL
 WHERE termination_reason IS NOT NULL;
+
+ALTER TABLE response_runs
+    DROP COLUMN IF EXISTS termination_reason;
