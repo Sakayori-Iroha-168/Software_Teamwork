@@ -125,8 +125,7 @@ export function AdminSidebar() {
                         to={child.path!}
                         className={cn(
                           'block px-4 py-1.5 pl-10 text-sm text-muted-foreground transition-colors hover:bg-primary/5 hover:text-primary',
-                          isActive(child.path) &&
-                            'text-primary bg-primary/10 font-medium',
+                          isActive(child.path) && 'text-primary bg-primary/10 font-medium',
                         )}
                       >
                         {child.label}
