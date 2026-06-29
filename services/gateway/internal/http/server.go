@@ -21,6 +21,9 @@ type Config struct {
 	CORSAllowCredentials  bool
 	AIGatewayBaseURL      string
 	AIGatewayServiceToken string
+	AdminTokenHashes      []string
+	AdminUserID           string
+	AdminPermissions      []string
 }
 
 type Server struct {
@@ -30,6 +33,7 @@ type Server struct {
 	mux            *http.ServeMux
 	handler        http.Handler
 	modelProfiles  *modelProfileProxy
+	adminAuth      *adminAuthenticator
 }
 
 func NewServer(cfg Config) *Server {
@@ -42,6 +46,7 @@ func NewServer(cfg Config) *Server {
 		environment:    cfg.Environment,
 		mux:            http.NewServeMux(),
 		modelProfiles:  newModelProfileProxy(cfg.AIGatewayBaseURL, cfg.AIGatewayServiceToken, &http.Client{Timeout: cfg.RequestTimeout}),
+		adminAuth:      newAdminAuthenticator(cfg.AdminTokenHashes, cfg.AdminUserID, cfg.AdminPermissions),
 	}
 	s.routes()
 	s.handler = middleware.Chain(

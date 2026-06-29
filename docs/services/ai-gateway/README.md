@@ -1,6 +1,6 @@
 # AI Gateway 服务接口文档
 
-本文档定义 `ai-gateway` 服务在项目初期的职责边界和内部接口契约。当前文档不落地 `services/ai-gateway/` 代码。机器可读契约见 [`docs/services/ai-gateway/api/openapi.yaml`](api/openapi.yaml)，逻辑数据模型见 [`docs/data-models.md`](docs/data-models.md)。
+本文档定义 `ai-gateway` 服务在项目初期的职责边界和内部接口契约。当前 `services/ai-gateway/` 已落地 model profile baseline；如实现与本文档冲突，以本文档和机器可读契约为准并同步修正代码。机器可读契约见 [`docs/services/ai-gateway/api/openapi.yaml`](api/openapi.yaml)，逻辑数据模型见 [`docs/data-models.md`](docs/data-models.md)。
 
 `ai-gateway` 是内部服务，不直接面向前端。前端仍只调用 public `gateway` 的 `/api/v1/**` 接口；`qa`、`knowledge`、`document` 等领域服务在需要大模型、embedding 或 rerank 能力时，通过内部 HTTP API 调用 `ai-gateway`。管理员需要运行时管理模型配置时，也只能调用 public gateway 的 `/api/v1/admin/model-profiles` 资源，再由 gateway 调用本服务的 `/internal/v1/model-profiles`。
 

@@ -35,6 +35,9 @@ func main() {
 		CORSAllowCredentials:  cfg.CORSAllowCredentials,
 		AIGatewayBaseURL:      cfg.AIGatewayBaseURL,
 		AIGatewayServiceToken: cfg.AIGatewayServiceToken,
+		AdminTokenHashes:      cfg.AdminTokenHashes,
+		AdminUserID:           cfg.AdminUserID,
+		AdminPermissions:      cfg.AdminPermissions,
 	})
 
 	server := &http.Server{

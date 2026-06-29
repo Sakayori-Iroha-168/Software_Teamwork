@@ -62,6 +62,16 @@ Both endpoints return the project success envelope and include `X-Request-Id`:
 | `GATEWAY_CORS_ALLOWED_METHODS` | `GET,POST,PATCH,DELETE,OPTIONS` | Comma-separated allowed CORS methods. |
 | `GATEWAY_CORS_ALLOWED_HEADERS` | `Authorization,Content-Type,X-Request-Id` | Comma-separated allowed CORS headers. |
 | `GATEWAY_CORS_ALLOW_CREDENTIALS` | `false` | Whether CORS credentialed requests are allowed. |
+| `GATEWAY_AI_GATEWAY_BASE_URL` | `http://localhost:8086` | Internal AI Gateway base URL for admin model profile proxying. |
+| `GATEWAY_AI_GATEWAY_SERVICE_TOKEN` | empty | Service token forwarded only to AI Gateway internal routes. |
+| `GATEWAY_ADMIN_TOKEN_HASHES` | empty | Comma-separated SHA-256 hashes of trusted admin bearer tokens for the current baseline. |
+| `GATEWAY_ADMIN_USER_ID` | `admin` | Trusted user id injected downstream after admin bearer token validation. |
+| `GATEWAY_ADMIN_PERMISSIONS` | `admin:model-profiles:*` | Trusted permissions assigned to validated admin bearer tokens. |
+
+The gateway must not trust public `X-User-Id`, `X-User-Roles`, or
+`X-User-Permissions` request headers. Until the Redis session middleware is
+implemented, admin model profile routes use `Authorization: Bearer <token>` and
+validate that token against `GATEWAY_ADMIN_TOKEN_HASHES`.
 
 ## Tests
 

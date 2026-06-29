@@ -2,6 +2,8 @@ package httpapi_test
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -128,9 +130,13 @@ func TestBodyLimitRejectsLargeRequest(t *testing.T) {
 func TestAdminModelProfilesProxyForwardsToAIGateway(t *testing.T) {
 	var gotPath string
 	var gotToken string
+	var gotUserID string
+	var gotPermissions string
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.RequestURI()
 		gotToken = r.Header.Get("X-Service-Token")
+		gotUserID = r.Header.Get("X-User-Id")
+		gotPermissions = r.Header.Get("X-User-Permissions")
 		if got := r.Header.Get("X-Caller-Service"); got != "gateway" {
 			t.Fatalf("X-Caller-Service = %q", got)
 		}
@@ -150,11 +156,15 @@ func TestAdminModelProfilesProxyForwardsToAIGateway(t *testing.T) {
 		CORSAllowedOrigins:    []string{"*"},
 		AIGatewayBaseURL:      backend.URL,
 		AIGatewayServiceToken: "internal-token",
+		AdminTokenHashes:      []string{hashToken("admin-token")},
+		AdminUserID:           "admin_user",
+		AdminPermissions:      []string{"admin:model-profiles:*"},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-profiles?purpose=chat", nil)
 	req.Header.Set("X-Request-Id", "req_proxy")
-	req.Header.Set("X-User-Id", "user_admin")
-	req.Header.Set("X-User-Permissions", "admin:model-profiles:read")
+	req.Header.Set("Authorization", "Bearer admin-token")
+	req.Header.Set("X-User-Id", "spoofed_user")
+	req.Header.Set("X-User-Permissions", "admin:*")
 	res := httptest.NewRecorder()
 
 	server.ServeHTTP(res, req)
@@ -168,12 +178,55 @@ func TestAdminModelProfilesProxyForwardsToAIGateway(t *testing.T) {
 	if gotToken != "internal-token" {
 		t.Fatalf("X-Service-Token = %q", gotToken)
 	}
+	if gotUserID != "admin_user" {
+		t.Fatalf("X-User-Id = %q", gotUserID)
+	}
+	if gotPermissions != "admin:model-profiles:*" {
+		t.Fatalf("X-User-Permissions = %q", gotPermissions)
+	}
 	if strings.Contains(res.Body.String(), "apiKey\"") {
 		t.Fatalf("proxy response leaked apiKey: %s", res.Body.String())
 	}
 }
 
-func TestAdminModelProfilesProxyRequiresAdminPermission(t *testing.T) {
+func TestAdminModelProfilesProxyRejectsSpoofedUserHeaders(t *testing.T) {
+	backendCalled := false
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		backendCalled = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	server := gatewayhttp.NewServer(gatewayhttp.Config{
+		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ServiceVersion:        "test",
+		Environment:           "test",
+		RequestTimeout:        time.Second,
+		MaxBodyBytes:          1024,
+		CORSAllowedOrigins:    []string{"*"},
+		AIGatewayBaseURL:      backend.URL,
+		AIGatewayServiceToken: "internal-token",
+		AdminTokenHashes:      []string{hashToken("admin-token")},
+		AdminUserID:           "admin_user",
+		AdminPermissions:      []string{"admin:model-profiles:*"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-profiles", nil)
+	req.Header.Set("X-Request-Id", "req_spoof")
+	req.Header.Set("X-User-Id", "user_admin")
+	req.Header.Set("X-User-Permissions", "admin:*")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if backendCalled {
+		t.Fatal("backend was called for spoofed public headers")
+	}
+}
+
+func TestAdminModelProfilesProxyRequiresConfiguredAdminPermission(t *testing.T) {
 	server := gatewayhttp.NewServer(gatewayhttp.Config{
 		Logger:                slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ServiceVersion:        "test",
@@ -183,10 +236,13 @@ func TestAdminModelProfilesProxyRequiresAdminPermission(t *testing.T) {
 		CORSAllowedOrigins:    []string{"*"},
 		AIGatewayBaseURL:      "http://ai-gateway.local",
 		AIGatewayServiceToken: "internal-token",
+		AdminTokenHashes:      []string{hashToken("admin-token")},
+		AdminUserID:           "admin_user",
+		AdminPermissions:      []string{"admin:model-profiles:read"},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/model-profiles", nil)
 	req.Header.Set("X-Request-Id", "req_forbidden")
-	req.Header.Set("X-User-Id", "user_admin")
+	req.Header.Set("Authorization", "Bearer admin-token")
 	res := httptest.NewRecorder()
 
 	server.ServeHTTP(res, req)
@@ -213,11 +269,13 @@ func TestAdminModelProfilesProxyNormalizesDownstreamError(t *testing.T) {
 		CORSAllowedOrigins:    []string{"*"},
 		AIGatewayBaseURL:      backend.URL,
 		AIGatewayServiceToken: "internal-token",
+		AdminTokenHashes:      []string{hashToken("admin-token")},
+		AdminUserID:           "admin_user",
+		AdminPermissions:      []string{"admin:model-profiles:*"},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/model-profiles", nil)
 	req.Header.Set("X-Request-Id", "req_public")
-	req.Header.Set("X-User-Id", "user_admin")
-	req.Header.Set("X-User-Permissions", "admin:model-profiles:read")
+	req.Header.Set("Authorization", "Bearer admin-token")
 	res := httptest.NewRecorder()
 
 	server.ServeHTTP(res, req)
@@ -252,6 +310,11 @@ func decodeJSON(t *testing.T, reader io.Reader, target any) {
 	if err := json.NewDecoder(reader).Decode(target); err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
+}
+
+func hashToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }
 
 type healthBody struct {

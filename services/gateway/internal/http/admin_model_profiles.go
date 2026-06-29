@@ -2,6 +2,9 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"crypto/subtle"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,6 +20,17 @@ type modelProfileProxy struct {
 	client       *http.Client
 }
 
+type adminAuthenticator struct {
+	tokenHashes [][]byte
+	userID      string
+	permissions []string
+}
+
+type adminIdentity struct {
+	userID      string
+	permissions []string
+}
+
 func newModelProfileProxy(baseURL string, serviceToken string, timeoutClient *http.Client) *modelProfileProxy {
 	if timeoutClient == nil {
 		timeoutClient = http.DefaultClient
@@ -28,8 +42,23 @@ func newModelProfileProxy(baseURL string, serviceToken string, timeoutClient *ht
 	}
 }
 
+func newAdminAuthenticator(hexHashes []string, userID string, permissions []string) *adminAuthenticator {
+	auth := &adminAuthenticator{
+		userID:      strings.TrimSpace(userID),
+		permissions: normalizePermissions(permissions),
+	}
+	for _, raw := range hexHashes {
+		decoded, err := hex.DecodeString(strings.TrimSpace(raw))
+		if err == nil && len(decoded) == sha256.Size {
+			auth.tokenHashes = append(auth.tokenHashes, decoded)
+		}
+	}
+	return auth
+}
+
 func (s *Server) handleAdminModelProfiles(w http.ResponseWriter, r *http.Request) {
-	if !authorizeModelProfileAdmin(w, r) {
+	identity, ok := s.authorizeModelProfileAdmin(w, r)
+	if !ok {
 		return
 	}
 	if s.modelProfiles == nil || s.modelProfiles.baseURL == "" || strings.TrimSpace(s.modelProfiles.serviceToken) == "" {
@@ -44,37 +73,62 @@ func (s *Server) handleAdminModelProfiles(w http.ResponseWriter, r *http.Request
 	if profileID := strings.TrimSpace(r.PathValue("profileId")); profileID != "" {
 		targetPath += "/" + url.PathEscape(profileID)
 	}
-	s.modelProfiles.proxy(w, r, targetPath)
+	s.modelProfiles.proxy(w, r, targetPath, identity)
 }
 
-func authorizeModelProfileAdmin(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) authorizeModelProfileAdmin(w http.ResponseWriter, r *http.Request) (adminIdentity, bool) {
 	requestID := middleware.RequestIDFromContext(r.Context())
-	if strings.TrimSpace(r.Header.Get("X-User-Id")) == "" {
+	identity, authenticated := s.adminAuth.authenticate(r)
+	if !authenticated {
 		response.WriteError(w, http.StatusUnauthorized, response.ErrorDetail{
 			Code:      response.CodeUnauthorized,
 			Message:   "authentication is required",
 			RequestID: requestID,
 		})
-		return false
+		return adminIdentity{}, false
 	}
 	required := "admin:model-profiles:read"
 	if r.Method != http.MethodGet {
 		required = "admin:model-profiles:write"
 	}
-	if !hasPermission(r.Header.Get("X-User-Permissions"), required) {
+	if !hasPermission(identity.permissions, required) {
 		response.WriteError(w, http.StatusForbidden, response.ErrorDetail{
 			Code:      response.CodeForbidden,
 			Message:   "admin model profile permission is required",
 			RequestID: requestID,
 		})
-		return false
+		return adminIdentity{}, false
 	}
-	return true
+	return identity, true
 }
 
-func hasPermission(raw string, required string) bool {
-	for _, part := range strings.Split(raw, ",") {
-		permission := strings.TrimSpace(part)
+func (a *adminAuthenticator) authenticate(r *http.Request) (adminIdentity, bool) {
+	if a == nil || len(a.tokenHashes) == 0 {
+		return adminIdentity{}, false
+	}
+	token := bearerToken(r.Header.Get("Authorization"))
+	if token == "" {
+		return adminIdentity{}, false
+	}
+	sum := sha256.Sum256([]byte(token))
+	for _, hash := range a.tokenHashes {
+		if subtle.ConstantTimeCompare(sum[:], hash) == 1 {
+			return adminIdentity{userID: a.userID, permissions: a.permissions}, true
+		}
+	}
+	return adminIdentity{}, false
+}
+
+func bearerToken(header string) string {
+	parts := strings.Fields(strings.TrimSpace(header))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
+func hasPermission(permissions []string, required string) bool {
+	for _, permission := range permissions {
 		if permission == required || permission == "admin:model-profiles:*" || permission == "admin:*" {
 			return true
 		}
@@ -82,7 +136,18 @@ func hasPermission(raw string, required string) bool {
 	return false
 }
 
-func (p *modelProfileProxy) proxy(w http.ResponseWriter, r *http.Request, targetPath string) {
+func normalizePermissions(values []string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		permission := strings.TrimSpace(value)
+		if permission != "" {
+			result = append(result, permission)
+		}
+	}
+	return result
+}
+
+func (p *modelProfileProxy) proxy(w http.ResponseWriter, r *http.Request, targetPath string, identity adminIdentity) {
 	var body io.Reader
 	if r.Body != nil {
 		defer r.Body.Close()
@@ -117,8 +182,11 @@ func (p *modelProfileProxy) proxy(w http.ResponseWriter, r *http.Request, target
 	req.Header.Set("X-Request-Id", middleware.RequestIDFromContext(r.Context()))
 	req.Header.Set("X-Caller-Service", "gateway")
 	req.Header.Set("X-Service-Token", p.serviceToken)
-	if userID := strings.TrimSpace(r.Header.Get("X-User-Id")); userID != "" {
-		req.Header.Set("X-User-Id", userID)
+	if identity.userID != "" {
+		req.Header.Set("X-User-Id", identity.userID)
+	}
+	if len(identity.permissions) > 0 {
+		req.Header.Set("X-User-Permissions", strings.Join(identity.permissions, ","))
 	}
 
 	res, err := p.client.Do(req)

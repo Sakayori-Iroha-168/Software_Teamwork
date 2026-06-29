@@ -3,18 +3,22 @@ info:
   title: Gateway Service API
   version: 0.1.0
   description: >
-    Service-local API contract for the runnable gateway skeleton. The stable
+    Service-local API contract for the runnable gateway baseline. The stable
     frontend-facing gateway contract remains docs/services/gateway/api/openapi.yaml.
 servers:
   - url: http://localhost:8080
+security:
+  - bearerAuth: []
 tags:
   - name: operations
+  - name: admin-runtime-config
 paths:
   /healthz:
     get:
       tags: [operations]
       summary: Liveness check
       operationId: getGatewayHealth
+      security: []
       responses:
         '200':
           description: Gateway process is alive.
@@ -31,6 +35,7 @@ paths:
       tags: [operations]
       summary: Readiness check
       operationId: getGatewayReadiness
+      security: []
       responses:
         '200':
           description: Gateway is ready to serve traffic.
@@ -42,19 +47,164 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+  /api/v1/admin/model-profiles:
+    get:
+      tags: [admin-runtime-config]
+      summary: List runtime model profiles
+      operationId: listAdminModelProfiles
+      x-owner-service: ai-gateway
+      parameters:
+        - name: purpose
+          in: query
+          schema:
+            $ref: '#/components/schemas/ModelPurpose'
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Runtime model profiles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileListResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+    post:
+      tags: [admin-runtime-config]
+      summary: Create runtime model profile
+      operationId: createAdminModelProfile
+      x-owner-service: ai-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelProfileRequest'
+      responses:
+        '201':
+          description: Runtime model profile created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+  /api/v1/admin/model-profiles/{profileId}:
+    parameters:
+      - $ref: '#/components/parameters/ProfileId'
+    get:
+      tags: [admin-runtime-config]
+      summary: Get runtime model profile
+      operationId: getAdminModelProfile
+      x-owner-service: ai-gateway
+      responses:
+        '200':
+          description: Runtime model profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+    patch:
+      tags: [admin-runtime-config]
+      summary: Update runtime model profile
+      operationId: updateAdminModelProfile
+      x-owner-service: ai-gateway
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateModelProfileRequest'
+      responses:
+        '200':
+          description: Runtime model profile updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelProfileResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
+    delete:
+      tags: [admin-runtime-config]
+      summary: Delete runtime model profile
+      operationId: deleteAdminModelProfile
+      x-owner-service: ai-gateway
+      responses:
+        '204':
+          description: Runtime model profile deleted.
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        Current baseline validates trusted admin bearer token hashes configured
+        through GATEWAY_ADMIN_TOKEN_HASHES. Public X-User-* request headers are
+        ignored.
+  parameters:
+    ProfileId:
+      name: profileId
+      in: path
+      required: true
+      schema:
+        type: string
+  responses:
+    Error:
+      description: Gateway error envelope.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
     HealthResponse:
       type: object
-      required:
-        - data
-        - requestId
+      required: [data, requestId]
       properties:
         data:
           type: object
-          required:
-            - status
-            - service
+          required: [status, service]
           properties:
             status:
               type: string
@@ -71,3 +221,196 @@ components:
         requestId:
           type: string
           example: req_123
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+    ErrorDetail:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code:
+          type: string
+          enum:
+            - validation_error
+            - unauthorized
+            - forbidden
+            - not_found
+            - conflict
+            - rate_limited
+            - dependency_error
+            - internal_error
+        message:
+          type: string
+        requestId:
+          type: string
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+    ModelPurpose:
+      type: string
+      enum: [chat, embedding, rerank]
+    ModelProvider:
+      type: string
+      enum: [openai_compatible, siliconflow, local_compatible]
+    ModelProfile:
+      type: object
+      required:
+        - id
+        - name
+        - purpose
+        - provider
+        - baseUrl
+        - model
+        - enabled
+        - isDefault
+        - timeoutMs
+        - apiKeyConfigured
+        - supportsStreaming
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        purpose:
+          $ref: '#/components/schemas/ModelPurpose'
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        baseUrl:
+          type: string
+          format: uri
+        model:
+          type: string
+        enabled:
+          type: boolean
+        isDefault:
+          type: boolean
+        timeoutMs:
+          type: integer
+          minimum: 1000
+        apiKeyConfigured:
+          type: boolean
+          description: Raw API keys are never returned.
+        supportsStreaming:
+          type: boolean
+        dimensions:
+          type: integer
+          minimum: 1
+          nullable: true
+        topN:
+          type: integer
+          minimum: 1
+          nullable: true
+        defaultParameters:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateModelProfileRequest:
+      type: object
+      required: [name, purpose, provider, baseUrl, model, apiKey]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        purpose:
+          $ref: '#/components/schemas/ModelPurpose'
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        baseUrl:
+          type: string
+          format: uri
+        model:
+          type: string
+        apiKey:
+          type: string
+          format: password
+          writeOnly: true
+        enabled:
+          type: boolean
+          default: true
+        isDefault:
+          type: boolean
+          default: false
+        timeoutMs:
+          type: integer
+          minimum: 1000
+          default: 60000
+        supportsStreaming:
+          type: boolean
+          default: false
+        dimensions:
+          type: integer
+          minimum: 1
+          nullable: true
+        topN:
+          type: integer
+          minimum: 1
+          nullable: true
+        defaultParameters:
+          type: object
+          additionalProperties: true
+    UpdateModelProfileRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+        provider:
+          $ref: '#/components/schemas/ModelProvider'
+        baseUrl:
+          type: string
+          format: uri
+        model:
+          type: string
+        apiKey:
+          type: string
+          format: password
+          writeOnly: true
+        enabled:
+          type: boolean
+        isDefault:
+          type: boolean
+        timeoutMs:
+          type: integer
+          minimum: 1000
+        supportsStreaming:
+          type: boolean
+        dimensions:
+          type: integer
+          minimum: 1
+          nullable: true
+        topN:
+          type: integer
+          minimum: 1
+          nullable: true
+        defaultParameters:
+          type: object
+          additionalProperties: true
+    ModelProfileResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          $ref: '#/components/schemas/ModelProfile'
+        requestId:
+          type: string
+    ModelProfileListResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelProfile'
+        requestId:
+          type: string

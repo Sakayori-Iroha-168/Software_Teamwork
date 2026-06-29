@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -16,6 +17,7 @@ const (
 	DefaultRequestTimeout   = 30 * time.Second
 	DefaultShutdownTimeout  = 10 * time.Second
 	DefaultAIGatewayBaseURL = "http://localhost:8086"
+	DefaultAdminUserID      = "admin"
 )
 
 type Config struct {
@@ -31,6 +33,9 @@ type Config struct {
 	CORSAllowCredentials  bool
 	AIGatewayBaseURL      string
 	AIGatewayServiceToken string
+	AdminTokenHashes      []string
+	AdminUserID           string
+	AdminPermissions      []string
 }
 
 func Load() (Config, error) {
@@ -46,6 +51,9 @@ func Load() (Config, error) {
 		CORSAllowedHeaders:    csvValue("GATEWAY_CORS_ALLOWED_HEADERS", []string{"Authorization", "Content-Type", "X-Request-Id"}),
 		AIGatewayBaseURL:      stringValue("GATEWAY_AI_GATEWAY_BASE_URL", DefaultAIGatewayBaseURL),
 		AIGatewayServiceToken: os.Getenv("GATEWAY_AI_GATEWAY_SERVICE_TOKEN"),
+		AdminTokenHashes:      csvValue("GATEWAY_ADMIN_TOKEN_HASHES", nil),
+		AdminUserID:           stringValue("GATEWAY_ADMIN_USER_ID", DefaultAdminUserID),
+		AdminPermissions:      csvValue("GATEWAY_ADMIN_PERMISSIONS", []string{"admin:model-profiles:*"}),
 	}
 
 	if raw := os.Getenv("GATEWAY_MAX_BODY_BYTES"); raw != "" {
@@ -88,6 +96,20 @@ func Load() (Config, error) {
 	}
 	if strings.TrimSpace(cfg.AIGatewayBaseURL) == "" {
 		return Config{}, fmt.Errorf("GATEWAY_AI_GATEWAY_BASE_URL must not be empty")
+	}
+	for _, hash := range cfg.AdminTokenHashes {
+		decoded, err := hex.DecodeString(strings.TrimSpace(hash))
+		if err != nil || len(decoded) != 32 {
+			return Config{}, fmt.Errorf("GATEWAY_ADMIN_TOKEN_HASHES must contain SHA-256 hex hashes")
+		}
+	}
+	if len(cfg.AdminTokenHashes) > 0 {
+		if strings.TrimSpace(cfg.AdminUserID) == "" {
+			return Config{}, fmt.Errorf("GATEWAY_ADMIN_USER_ID must not be empty when admin tokens are configured")
+		}
+		if len(cfg.AdminPermissions) == 0 {
+			return Config{}, fmt.Errorf("GATEWAY_ADMIN_PERMISSIONS must not be empty when admin tokens are configured")
+		}
 	}
 
 	return cfg, nil

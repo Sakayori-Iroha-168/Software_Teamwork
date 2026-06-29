@@ -18,6 +18,9 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("GATEWAY_CORS_ALLOW_CREDENTIALS", "")
 	t.Setenv("GATEWAY_AI_GATEWAY_BASE_URL", "")
 	t.Setenv("GATEWAY_AI_GATEWAY_SERVICE_TOKEN", "")
+	t.Setenv("GATEWAY_ADMIN_TOKEN_HASHES", "")
+	t.Setenv("GATEWAY_ADMIN_USER_ID", "")
+	t.Setenv("GATEWAY_ADMIN_PERMISSIONS", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -53,6 +56,9 @@ func TestLoadParsesEnvironment(t *testing.T) {
 	t.Setenv("GATEWAY_CORS_ALLOW_CREDENTIALS", "true")
 	t.Setenv("GATEWAY_AI_GATEWAY_BASE_URL", "http://ai-gateway:8086")
 	t.Setenv("GATEWAY_AI_GATEWAY_SERVICE_TOKEN", "service-token")
+	t.Setenv("GATEWAY_ADMIN_TOKEN_HASHES", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	t.Setenv("GATEWAY_ADMIN_USER_ID", "admin_user")
+	t.Setenv("GATEWAY_ADMIN_PERMISSIONS", "admin:model-profiles:read,admin:model-profiles:write")
 
 	cfg, err := Load()
 	if err != nil {
@@ -73,6 +79,9 @@ func TestLoadParsesEnvironment(t *testing.T) {
 	if cfg.AIGatewayBaseURL != "http://ai-gateway:8086" || cfg.AIGatewayServiceToken != "service-token" {
 		t.Fatalf("ai gateway config = %+v", cfg)
 	}
+	if cfg.AdminUserID != "admin_user" || len(cfg.AdminTokenHashes) != 1 || len(cfg.AdminPermissions) != 2 {
+		t.Fatalf("admin config = %+v", cfg)
+	}
 }
 
 func TestLoadRejectsInvalidValues(t *testing.T) {
@@ -85,6 +94,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		{name: "request timeout", key: "GATEWAY_REQUEST_TIMEOUT", val: "-1s"},
 		{name: "shutdown timeout", key: "GATEWAY_SHUTDOWN_TIMEOUT", val: "bad"},
 		{name: "cors credentials", key: "GATEWAY_CORS_ALLOW_CREDENTIALS", val: "maybe"},
+		{name: "admin token hash", key: "GATEWAY_ADMIN_TOKEN_HASHES", val: "not-a-sha256"},
 	}
 
 	for _, tt := range tests {
