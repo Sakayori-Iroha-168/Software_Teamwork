@@ -426,12 +426,11 @@ func (s *ReportService) CreateSection(ctx context.Context, reqCtx RequestContext
 		}
 	}
 
-	contentSource := ContentSource("")
-	manualEdited := false
-	if strings.TrimSpace(input.Content) != "" {
-		contentSource = ContentSourceManual
-		manualEdited = true
-	}
+	// content_source is NOT NULL in the database, and this endpoint only
+	// ever creates sections manually (AI generation is out of scope for
+	// C-03), so it is always "manual" regardless of whether content is
+	// provided yet.
+	manualEdited := strings.TrimSpace(input.Content) != ""
 
 	now := s.now()
 	id := newID()
@@ -449,7 +448,7 @@ func (s *ReportService) CreateSection(ctx context.Context, reqCtx RequestContext
 		Content:          input.Content,
 		Tables:           input.Tables,
 		GenerationStatus: JobStatusPending,
-		ContentSource:    contentSource,
+		ContentSource:    ContentSourceManual,
 		ManualEdited:     manualEdited,
 		Version:          1,
 		CreatedAt:        now,
@@ -506,14 +505,17 @@ func (s *ReportService) UpdateSection(ctx context.Context, reqCtx RequestContext
 	}
 	if contentChanged {
 		section.Version++
+		// A content/table edit is always a manual edit, and must not be
+		// reversible by also passing manualEdited:false in the same
+		// request: that would defeat the "generation must not silently
+		// overwrite manual edits" guarantee.
 		section.ManualEdited = true
 		if section.ContentSource == ContentSourceAI {
 			section.ContentSource = ContentSourceMixed
 		} else {
 			section.ContentSource = ContentSourceManual
 		}
-	}
-	if input.ManualEdited != nil {
+	} else if input.ManualEdited != nil {
 		section.ManualEdited = *input.ManualEdited
 	}
 	section.UpdatedAt = s.now()
