@@ -23,7 +23,7 @@ type QAService interface {
 	GetConversation(context.Context, string, string) (service.Conversation, error)
 	UpdateConversation(context.Context, string, string, string, string) (service.Conversation, error)
 	DeleteConversation(context.Context, string, string) error
-	ListMessages(context.Context, string, string, int, int) (service.Page[service.Message], error)
+	ListMessages(context.Context, string, string, int, int, bool, bool) (service.Page[service.Message], error)
 	Ask(context.Context, string, string, service.AskInput, service.ProgressObserver) (service.AskResult, error)
 }
 
@@ -275,7 +275,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	result, err := s.qa.ListMessages(r.Context(), userID, r.PathValue("sessionId"), page, pageSize)
+	includeThinking := r.URL.Query().Get("includeThinking") != "false"
+	includeCitations := r.URL.Query().Get("includeCitations") != "false"
+	result, err := s.qa.ListMessages(r.Context(), userID, r.PathValue("sessionId"), page, pageSize, includeThinking, includeCitations)
 	if err != nil {
 		writeError(w, r, err)
 		return

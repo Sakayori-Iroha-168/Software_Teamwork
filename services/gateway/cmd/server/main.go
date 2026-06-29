@@ -33,6 +33,7 @@ func main() {
 		CORSAllowedMethods:   cfg.CORSAllowedMethods,
 		CORSAllowedHeaders:   cfg.CORSAllowedHeaders,
 		CORSAllowCredentials: cfg.CORSAllowCredentials,
+		QAServiceURL:         cfg.QAServiceURL,
 	})
 
 	server := &http.Server{

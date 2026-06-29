@@ -181,7 +181,7 @@ type Repository interface {
 	GetConversation(context.Context, string, string) (Conversation, error)
 	UpdateConversation(context.Context, string, Conversation) (Conversation, error)
 	DeleteConversation(context.Context, string, string) error
-	ListMessages(context.Context, string, string, int, int) (Page[Message], error)
+	ListMessages(context.Context, string, string, int, int, bool, bool) (Page[Message], error)
 	AppendMessages(context.Context, string, string, string, string, int, ...Message) (ResponseRun, error)
 	UpdateMessage(context.Context, string, Message) error
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
@@ -278,8 +278,8 @@ func (s *QAService) DeleteConversation(ctx context.Context, userID, id string) e
 	return s.repository.DeleteConversation(ctx, userID, id)
 }
 
-func (s *QAService) ListMessages(ctx context.Context, userID, conversationID string, page, pageSize int) (Page[Message], error) {
-	return s.repository.ListMessages(ctx, userID, conversationID, page, pageSize)
+func (s *QAService) ListMessages(ctx context.Context, userID, conversationID string, page, pageSize int, includeThinking, includeCitations bool) (Page[Message], error) {
+	return s.repository.ListMessages(ctx, userID, conversationID, page, pageSize, includeThinking, includeCitations)
 }
 
 func (s *QAService) Ask(ctx context.Context, userID, conversationID string, input AskInput, observe ProgressObserver) (AskResult, error) {
@@ -290,7 +290,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err != nil {
 		return AskResult{}, err
 	}
-	history, err := s.repository.ListMessages(ctx, userID, conversationID, 1, 100)
+	history, err := s.repository.ListMessages(ctx, userID, conversationID, 1, 100, false, false)
 	if err != nil {
 		return AskResult{}, err
 	}
@@ -487,7 +487,13 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "answer generation failed"})
 	} else {
 		emit("answer.delta", map[string]any{"messageId": assistantMessage.ID, "text": assistantMessage.Content, "index": 0})
-		emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
+		if len(result.Citations) > 0 {
+			for i, citation := range result.Citations {
+				emit("citation.delta", map[string]any{"messageId": assistantMessage.ID, "citation": citation, "index": i})
+			}
+		}
+		emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID, "totalTokens": totalTokens, "promptTokens": totalPromptTokens, "completionTokens": totalCompletionTokens, "latencyMs": totalLatencyMs})
+		emit("heartbeat", map[string]any{"responseRunId": run.ID, "timestamp": completedAt.Format(time.RFC3339)})
 	}
 
 	if err := s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events); err != nil {

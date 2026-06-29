@@ -33,7 +33,7 @@ func (r *fakeRepository) UpdateConversation(_ context.Context, _ string, value C
 	return value, nil
 }
 func (*fakeRepository) DeleteConversation(context.Context, string, string) error { return nil }
-func (r *fakeRepository) ListMessages(context.Context, string, string, int, int) (Page[Message], error) {
+func (r *fakeRepository) ListMessages(context.Context, string, string, int, int, bool, bool) (Page[Message], error) {
 	return Page[Message]{Items: append([]Message(nil), r.messages...), Page: 1, PageSize: 100, Total: len(r.messages)}, nil
 }
 func (r *fakeRepository) AppendMessages(_ context.Context, _, sessionID, _, _ string, maxIterations int, values ...Message) (ResponseRun, error) {

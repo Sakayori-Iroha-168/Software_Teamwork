@@ -28,6 +28,7 @@ type Config struct {
 	CORSAllowedMethods   []string
 	CORSAllowedHeaders   []string
 	CORSAllowCredentials bool
+	QAServiceURL         string
 }
 
 func Load() (Config, error) {
@@ -41,6 +42,7 @@ func Load() (Config, error) {
 		CORSAllowedOrigins: csvValue("GATEWAY_CORS_ALLOWED_ORIGINS", []string{"*"}),
 		CORSAllowedMethods: csvValue("GATEWAY_CORS_ALLOWED_METHODS", []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"}),
 		CORSAllowedHeaders: csvValue("GATEWAY_CORS_ALLOWED_HEADERS", []string{"Authorization", "Content-Type", "X-Request-Id"}),
+		QAServiceURL:       os.Getenv("GATEWAY_QA_SERVICE_URL"),
 	}
 
 	if raw := os.Getenv("GATEWAY_MAX_BODY_BYTES"); raw != "" {

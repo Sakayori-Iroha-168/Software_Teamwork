@@ -57,6 +57,7 @@ type Result struct {
 	Messages   []Message
 	Final      Message
 	Iterations int
+	Citations  []any
 }
 
 func NewRunner(model ModelClient, tools ToolClient, cfg Config) (*Runner, error) {

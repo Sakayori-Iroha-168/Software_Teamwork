@@ -132,7 +132,7 @@ func (r *Postgres) DeleteConversation(ctx context.Context, userID, id string) er
 	return nil
 }
 
-func (r *Postgres) ListMessages(ctx context.Context, userID, conversationID string, page, pageSize int) (service.Page[service.Message], error) {
+func (r *Postgres) ListMessages(ctx context.Context, userID, conversationID string, page, pageSize int, includeThinking, includeCitations bool) (service.Page[service.Message], error) {
 	var total int
 	err := r.pool.QueryRow(ctx, `
 		SELECT count(*)
