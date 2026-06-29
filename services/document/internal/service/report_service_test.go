@@ -361,6 +361,47 @@ func TestUpdateSectionMarksManualEditedAndBumpsVersion(t *testing.T) {
 	}
 }
 
+func TestUpdateSectionContentEditCannotBeUnmarkedAsManual(t *testing.T) {
+	svc, _ := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+
+	section, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "Intro"})
+	if err != nil {
+		t.Fatalf("CreateSection() error = %v", err)
+	}
+
+	newContent := "edited body"
+	manualEdited := false
+	updated, err := svc.UpdateSection(context.Background(), actor, report.ID, section.ID, UpdateSectionInput{
+		Content:      &newContent,
+		ManualEdited: &manualEdited,
+	})
+	if err != nil {
+		t.Fatalf("UpdateSection() error = %v", err)
+	}
+	if !updated.ManualEdited {
+		t.Fatalf("expected manualEdited to stay true even though the request set manualEdited:false alongside a content change")
+	}
+}
+
+func TestCreateSectionWithoutContentDefaultsToManualSource(t *testing.T) {
+	svc, _ := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+
+	section, err := svc.CreateSection(context.Background(), actor, report.ID, CreateSectionInput{Title: "Intro"})
+	if err != nil {
+		t.Fatalf("CreateSection() error = %v", err)
+	}
+	if section.ContentSource != ContentSourceManual {
+		t.Fatalf("expected contentSource manual for a content-less section, got %q", section.ContentSource)
+	}
+	if section.ManualEdited {
+		t.Fatalf("expected manualEdited = false for a section created without content")
+	}
+}
+
 func TestUpdateSectionConflictsWhileGenerationRunning(t *testing.T) {
 	svc, repo := newTestService()
 	report := mustCreateReport(t, svc, "owner-1")
