@@ -21,7 +21,6 @@ const (
 
 	credentialStorageModeEncrypted = "encrypted_column"
 	credentialStatusActive         = "active"
-	localCredentialKeyVersion      = "local-development-key"
 )
 
 type ProfileRepository interface {
@@ -38,6 +37,7 @@ type Service struct {
 	now                  func() time.Time
 	newID                func(prefix string) (string, error)
 	encryptionKeyVersion string
+	credentialKey        []byte
 	defaultTimeoutMs     int
 }
 
@@ -75,6 +75,12 @@ func WithIDGenerator(newID func(prefix string) (string, error)) Option {
 func WithEncryptionKeyVersion(version string) Option {
 	return func(s *Service) {
 		s.encryptionKeyVersion = strings.TrimSpace(version)
+	}
+}
+
+func WithCredentialEncryptionKey(key []byte) Option {
+	return func(s *Service) {
+		s.credentialKey = append([]byte(nil), key...)
 	}
 }
 
@@ -362,8 +368,13 @@ func (s *Service) credentialFromAPIKey(profileID string, apiKey string, userID s
 }
 
 func (s *Service) encryptCredential(value string) ([]byte, error) {
-	keyMaterial := sha256.Sum256([]byte(s.credentialKeyVersion()))
-	block, err := aes.NewCipher(keyMaterial[:])
+	if len(s.credentialKey) != 32 {
+		return nil, fmt.Errorf("credential encryption key must be 32 bytes")
+	}
+	if s.credentialKeyVersion() == "" {
+		return nil, fmt.Errorf("credential encryption key version is required")
+	}
+	block, err := aes.NewCipher(s.credentialKey)
 	if err != nil {
 		return nil, err
 	}
@@ -377,14 +388,11 @@ func (s *Service) encryptCredential(value string) ([]byte, error) {
 	}
 	out := make([]byte, 0, len(nonce)+len(value)+gcm.Overhead())
 	out = append(out, nonce...)
-	out = gcm.Seal(out, nonce, []byte(value), nil)
+	out = gcm.Seal(out, nonce, []byte(value), []byte(s.credentialKeyVersion()))
 	return out, nil
 }
 
 func (s *Service) credentialKeyVersion() string {
-	if s.encryptionKeyVersion == "" {
-		return localCredentialKeyVersion
-	}
 	return s.encryptionKeyVersion
 }
 

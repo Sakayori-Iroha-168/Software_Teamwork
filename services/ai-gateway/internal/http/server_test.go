@@ -115,7 +115,7 @@ func newHTTPServer(t *testing.T) http.Handler {
 	repo := repository.NewMemoryRepository()
 	svc := service.New(repo, service.WithClock(func() time.Time {
 		return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
-	}))
+	}), service.WithEncryptionKeyVersion("test-key-v1"), service.WithCredentialEncryptionKey(testCredentialKey()))
 	return aihttp.NewServer(svc, aihttp.Config{
 		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		MaxRequestBytes: 4096,
@@ -135,6 +135,10 @@ func authorizedRequest(method string, path string, body string) *http.Request {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func testCredentialKey() []byte {
+	return []byte("0123456789abcdef0123456789abcdef")
 }
 
 func decodeJSON(t *testing.T, reader io.Reader, target any) {

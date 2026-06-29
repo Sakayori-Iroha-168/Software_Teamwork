@@ -28,7 +28,7 @@ AI Gateway 数据库不得保存领域服务业务状态，包括但不限于：
 
 ### 2.2 Secret 存储
 
-Provider API key 是敏感配置。推荐由外部 secret manager 保存明文，AI Gateway 数据库只保存 secret 引用；如果第一阶段必须落库，也只能保存加密密文和密钥版本，不能保存明文。当前 `services/ai-gateway` baseline 只实现 `encrypted_column` 写入，`secret_ref` 保留为后续 secret manager 模式。
+Provider API key 是敏感配置。推荐由外部 secret manager 保存明文，AI Gateway 数据库只保存 secret 引用；如果第一阶段必须落库，也只能保存由真实密钥材料加密后的密文和密钥版本，不能保存明文。当前 `services/ai-gateway` baseline 只实现 `encrypted_column` 写入，`secret_ref` 保留为后续 secret manager 模式。`encryption_key_version` / key ref 只用于标识密钥版本，不得派生或替代实际加密密钥。
 
 公开响应、错误响应、普通日志、指标标签和 gateway admin model-profile 响应都只能暴露：
 
@@ -78,7 +78,7 @@ AI Gateway 的物理实现以 [`docs/architecture/technology-decisions.md`](../.
 | 迁移 | 使用 `goose`，迁移文件放在 `services/ai-gateway/migrations/`，文件名使用 `0001_*.sql` 形式。 |
 | SQL 风格 | 查询显式列名，不使用 `SELECT *`；所有用户输入和请求字段都通过参数绑定进入 SQL。 |
 | JSONB | `default_parameters_json`、审计快照和低敏 metadata 可用 JSONB，但必须在应用层做字段黑名单、大小限制和脱敏。 |
-| Secret | Provider API key 不落明文。优先保存 secret manager 引用；当前 baseline 使用加密列时只保存密文、加密密钥版本和脱敏状态。 |
+| Secret | Provider API key 不落明文。优先保存 secret manager 引用；当前 baseline 使用加密列时只保存密文、加密密钥版本和脱敏状态，实际加密密钥从独立 secret 环境变量或后续 KMS/secret manager 获取。 |
 | 调用日志 | PostgreSQL 只保存调用摘要、用量、耗时和归一化错误，不保存完整请求/响应体。 |
 
 建议 `sqlc.yaml` 覆盖 `model_profiles`、`provider_credentials`、`model_profile_revisions`、`provider_invocations` 和 `provider_invocation_attempts` 的基础 CRUD 查询；业务组合逻辑例如“切换默认 profile”必须由 service 层开启事务并调用 repository 方法完成。
@@ -226,7 +226,7 @@ Provider 凭据记录。该表只保存 secret 引用或加密密文元数据，
 - `storage_mode` 只能取 `secret_ref` 或 `encrypted_column`；不得新增 `plaintext`、`env` 或其他会暴露明文的模式。
 - `fingerprint_sha256` 不得作为认证用途，只用于审计和变更检测。
 - 响应、日志和错误不得输出 `secret_ref`、`ciphertext`、`fingerprint_sha256` 或 `key_last4`。
-- `encryption_key_version` 只记录版本标识，不记录原始密钥、KMS token 或本地密钥文件路径。
+- `encryption_key_version` 只记录版本标识，不记录原始密钥、KMS token 或本地密钥文件路径，也不得作为派生加密密钥的输入。
 
 密钥轮换语义：
 
@@ -505,7 +505,7 @@ running -> cancelled
 ## 12. 安全与脱敏规则
 
 - 数据库、日志、错误响应和 metrics 不得保存或输出 API key 明文。
-- 数据库连接串、内部服务 token、secret ref、加密密钥引用和 provider bearer token 与 API key 同级处理，不得出现在日志、响应、审计快照或指标标签中。
+- 数据库连接串、内部服务 token、secret ref、加密密钥引用、加密密钥材料和 provider bearer token 与 API key 同级处理，不得出现在日志、响应、审计快照或指标标签中。
 - Provider base URL 入库前必须校验并拒绝含敏感 query 参数的 URL。
 - 调用日志不得保存完整 prompt、完整 generated answer、完整 embedding 数组、用户上传文档全文、MCP 原始参数或 provider 原始响应体。
 - `default_parameters_json` 不得包含密钥、token、内部 URL、prompt 模板或文档内容。

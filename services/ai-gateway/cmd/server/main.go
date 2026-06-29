@@ -40,6 +40,7 @@ func main() {
 	}
 	profileService := service.New(repo,
 		service.WithEncryptionKeyVersion(cfg.CredentialEncryptionKeyRef),
+		service.WithCredentialEncryptionKey(cfg.CredentialEncryptionKey),
 		service.WithDefaultTimeoutMs(int(cfg.DefaultTimeout.Milliseconds())),
 	)
 	handler := aihttp.NewServer(profileService, aihttp.Config{

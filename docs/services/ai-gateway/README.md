@@ -524,18 +524,19 @@ AI Gateway 的环境变量应按结构化配置分组，服务启动时一次性
 | `AI_GATEWAY_SERVICE_TOKEN_HASHES` | 是 | 允许的内部服务 token hash 列表，不能配置明文 token。 |
 | `AI_GATEWAY_SECRET_MODE` | 是 | 当前 baseline 支持 `encrypted_column`；`secret_ref` 为后续 secret manager 模式。 |
 | `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF` | 条件 | `encrypted_column` 模式下的加密密钥引用或版本。 |
+| `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY` | 条件 | `encrypted_column` 模式下的真实 32 字节 AES-GCM 密钥材料，使用 base64 或 64 位 hex 编码；不得记录到日志、响应或指标。 |
 | `AI_GATEWAY_DEFAULT_TIMEOUT_MS` | 否 | Provider 请求默认超时，profile 未配置时使用。 |
 | `AI_GATEWAY_MAX_REQUEST_BYTES` | 否 | JSON 请求体大小限制。 |
 | `AI_GATEWAY_METRICS_ADDR` | 否 | 独立 metrics 监听地址；为空时可复用主服务。 |
 
-配置校验失败时服务应启动失败，不应以缺省空 token、空数据库连接串或明文密钥配置继续运行。启动日志只能输出配置项是否存在、超时和非敏感开关，不能输出 token、数据库连接串、secret ref、加密密钥引用或 provider API key。
+配置校验失败时服务应启动失败，不应以缺省空 token、空数据库连接串、缺省加密密钥或明文密钥配置继续运行。`AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF` 只表示密钥引用或版本，不得作为加密密钥材料使用。启动日志只能输出配置项是否存在、超时和非敏感开关，不能输出 token、数据库连接串、secret ref、加密密钥引用、加密密钥材料或 provider API key。
 
 ## 安全与日志规则
 
 - 配置写接口必须要求内部服务认证，后续还需叠加管理员权限或配置服务授权。
 - `apiKey` 是 write-only 字段；任何响应中都只能返回 `apiKeyConfigured`。
 - 内部服务 token 按 opaque token 处理；服务侧只保存和比对 token hash，不记录原始 token。
-- 日志不得记录 API key、bearer token、数据库连接串、secret ref、加密密钥引用、完整 prompt、完整 generated answer、完整 embedding 数组、原始 provider 响应体或用户上传文档全文。
+- 日志不得记录 API key、bearer token、数据库连接串、secret ref、加密密钥引用、加密密钥材料、完整 prompt、完整 generated answer、完整 embedding 数组、原始 provider 响应体或用户上传文档全文。
 - Provider 调用日志建议记录：`service=ai-gateway`、`request_id`、`caller_service`、`operation`、`profile_id`、`provider`、`model`、`status`、`duration_ms`。
 - Metrics label 只能使用低基数字段，例如 `operation`、`provider`、`model_purpose`、`status` 和归一化错误码；不得使用用户输入、prompt hash、object key、API key 指纹、完整 model name 或完整 base URL。
 - 对外错误消息保持稳定简短，详细 provider 失败信息只进入脱敏日志。

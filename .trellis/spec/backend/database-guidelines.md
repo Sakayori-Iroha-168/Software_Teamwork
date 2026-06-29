@@ -345,11 +345,13 @@ API creates report_job -> asynq task id is stored for correlation -> worker upda
   - `AI_GATEWAY_SERVICE_TOKEN_HASHES`.
   - `AI_GATEWAY_SECRET_MODE`.
   - `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF` when `AI_GATEWAY_SECRET_MODE=encrypted_column`.
+  - `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY` when `AI_GATEWAY_SECRET_MODE=encrypted_column`.
 
 ### 3. Contracts
 
 - `model_profiles` stores profile metadata only: purpose, provider, base URL, model, enablement, default status, timeout, capability fields, and sanitized default parameters.
 - `provider_credentials` stores credential metadata and non-plaintext secret material only; raw provider API keys must never be returned, logged, or stored as plaintext.
+- In `encrypted_column` mode, the encryption key ref/version is metadata only; AES-GCM must use real 32-byte key material from a secret source, not a key ref, version string, or fixed local default.
 - `model_profile_revisions` stores sanitized snapshots and changed field names only; snapshots may include `apiKeyConfigured` but not raw API keys, ciphertext, secret refs, fingerprints, or token values.
 - Each `purpose` may have at most one `enabled = true AND is_default = true AND deleted_at IS NULL` profile. Repository implementations must enforce this atomically.
 - Profile responses expose `apiKeyConfigured`, never `apiKey`, credential IDs, ciphertext, secret refs, fingerprints, or last-four metadata.

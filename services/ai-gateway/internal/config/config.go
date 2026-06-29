@@ -1,6 +1,8 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
@@ -23,6 +25,7 @@ type Config struct {
 	ServiceTokenHashes         []string
 	SecretMode                 string
 	CredentialEncryptionKeyRef string
+	CredentialEncryptionKey    []byte
 	DefaultTimeout             time.Duration
 	MaxRequestBytes            int64
 	ProfileStorePath           string
@@ -84,12 +87,41 @@ func Load() (Config, error) {
 		if cfg.CredentialEncryptionKeyRef == "" {
 			return Config{}, fmt.Errorf("AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF is required when AI_GATEWAY_SECRET_MODE=encrypted_column")
 		}
+		key, err := credentialEncryptionKey()
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.CredentialEncryptionKey = key
 	case "secret_ref":
 		return Config{}, fmt.Errorf("AI_GATEWAY_SECRET_MODE=secret_ref is not supported by this baseline implementation")
 	default:
 		return Config{}, fmt.Errorf("AI_GATEWAY_SECRET_MODE must be secret_ref or encrypted_column")
 	}
 	return cfg, nil
+}
+
+func credentialEncryptionKey() ([]byte, error) {
+	raw := strings.TrimSpace(os.Getenv("AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY"))
+	if raw == "" {
+		return nil, fmt.Errorf("AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY is required when AI_GATEWAY_SECRET_MODE=encrypted_column")
+	}
+	if len(raw) == 64 {
+		if decoded, err := hex.DecodeString(raw); err == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+	for _, encoding := range []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	} {
+		decoded, err := encoding.DecodeString(raw)
+		if err == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+	return nil, fmt.Errorf("AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY must be 32 bytes encoded as base64 or 64-character hex")
 }
 
 func stringValue(key string, fallback string) string {

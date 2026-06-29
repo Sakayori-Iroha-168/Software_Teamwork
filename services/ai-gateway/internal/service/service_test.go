@@ -15,7 +15,7 @@ import (
 
 func TestCreateProfileKeepsOneEnabledDefaultPerPurpose(t *testing.T) {
 	repo := repository.NewMemoryRepository()
-	svc := service.New(repo, service.WithClock(fixedClock()), service.WithIDGenerator(sequenceIDs()))
+	svc := newTestService(repo)
 	ctx := service.RequestContext{RequestID: "req_test", CallerService: "gateway", ServiceToken: "token"}
 	enabled := true
 	isDefault := true
@@ -76,7 +76,7 @@ func TestCreateProfileKeepsOneEnabledDefaultPerPurpose(t *testing.T) {
 
 func TestRejectsSensitiveDefaultParameters(t *testing.T) {
 	repo := repository.NewMemoryRepository()
-	svc := service.New(repo, service.WithClock(fixedClock()), service.WithIDGenerator(sequenceIDs()))
+	svc := newTestService(repo)
 	params := json.RawMessage(`{"temperature":0.2,"api_key":"sk_secret"}`)
 	_, err := svc.CreateProfile(context.Background(), service.RequestContext{CallerService: "gateway", ServiceToken: "token"}, service.CreateModelProfileInput{
 		Name:              "chat",
@@ -105,6 +105,8 @@ func TestCreateProfileUsesConfiguredDefaultTimeout(t *testing.T) {
 	svc := service.New(repo,
 		service.WithClock(fixedClock()),
 		service.WithIDGenerator(sequenceIDs()),
+		service.WithEncryptionKeyVersion("test-key-v1"),
+		service.WithCredentialEncryptionKey(testCredentialKey()),
 		service.WithDefaultTimeoutMs(45000),
 	)
 	created, err := svc.CreateProfile(context.Background(), service.RequestContext{CallerService: "gateway", ServiceToken: "token"}, service.CreateModelProfileInput{
@@ -124,6 +126,40 @@ func TestCreateProfileUsesConfiguredDefaultTimeout(t *testing.T) {
 	}
 }
 
+func TestCreateProfileRequiresCredentialEncryptionKey(t *testing.T) {
+	repo := repository.NewMemoryRepository()
+	svc := service.New(repo,
+		service.WithClock(fixedClock()),
+		service.WithIDGenerator(sequenceIDs()),
+		service.WithEncryptionKeyVersion("test-key-v1"),
+	)
+	_, err := svc.CreateProfile(context.Background(), service.RequestContext{CallerService: "gateway", ServiceToken: "token"}, service.CreateModelProfileInput{
+		Name:              "chat",
+		Purpose:           service.PurposeChat,
+		Provider:          service.ProviderOpenAICompatible,
+		BaseURL:           "https://api.example.com/v1",
+		Model:             "gpt",
+		APIKey:            "sk_secret",
+		SupportsStreaming: ptr(true),
+	})
+	if err == nil {
+		t.Fatal("CreateProfile() error = nil")
+	}
+	appErr, ok := service.Classify(err)
+	if !ok || appErr.Code != service.CodeDependency {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
+func newTestService(repo service.ProfileRepository) *service.Service {
+	return service.New(repo,
+		service.WithClock(fixedClock()),
+		service.WithIDGenerator(sequenceIDs()),
+		service.WithEncryptionKeyVersion("test-key-v1"),
+		service.WithCredentialEncryptionKey(testCredentialKey()),
+	)
+}
+
 func fixedClock() func() time.Time {
 	return func() time.Time { return time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC) }
 }
@@ -139,4 +175,8 @@ func sequenceIDs() func(string) (string, error) {
 
 func ptr[T any](value T) *T {
 	return &value
+}
+
+func testCredentialKey() []byte {
+	return []byte("0123456789abcdef0123456789abcdef")
 }
