@@ -201,6 +201,90 @@ Test naming:
 - Do not read environment variables throughout business logic.
 - Document required variables in service README or deployment docs.
 
+## Scenario: Local Integration Compose Baseline
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing the local/demo integration stack under `deploy/`,
+  including Docker Compose wiring, service Dockerfiles, init scripts, seed data,
+  health checks, or environment examples.
+- Applies to `deploy/docker-compose.yml`, `deploy/.env.example`,
+  `deploy/**/init*.sql`, `deploy/**/seed*.sql`, service Dockerfiles, and local
+  startup documentation.
+
+### 2. Signatures
+
+- Compose entrypoint: `docker compose --env-file deploy/.env -f deploy/docker-compose.yml up -d --build`.
+- Public local entrypoint: `gateway` on `GATEWAY_HTTP_PORT`, default `8080`.
+- Internal service ports stay service-owned and documented: auth `8001`, file
+  `8082`, knowledge `8083`, qa `8084`, document `8085`, ai-gateway `8086`.
+- Operational routes: every runnable service must expose `GET /healthz` and
+  `GET /readyz`.
+
+### 3. Contracts
+
+- `deploy/.env.example` may contain only local/demo example values; never real
+  credentials, provider keys, database passwords, or production tokens.
+- Frontend/browser documentation must point to gateway `/api/v1/**` only. It
+  must not require direct browser access to internal service URLs, Postgres,
+  Redis, Qdrant, or MinIO.
+- Compose should wire Postgres, Redis, Qdrant, MinIO, gateway, auth, file,
+  knowledge, qa, document, and ai-gateway when those services are present.
+- Seed data must be idempotent and minimal: admin identity, placeholder model
+  profiles without real provider credentials, report types, and an example
+  knowledge base.
+- Service containers should read the same env keys as their `internal/config`
+  packages; do not invent deployment-only aliases unless documented.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response |
+| --- | --- |
+| `docker compose config` or YAML parsing fails | Fix the Compose file before merging. |
+| A service has no health check or ready endpoint | Add one or document why it is not runnable yet. |
+| Example secret looks production-like | Replace with an obvious local/demo placeholder. |
+| Gateway ready check fails | Troubleshooting docs must direct maintainers to the failing dependency logs. |
+| Frontend docs point at internal service ports | Route through gateway instead. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: Compose starts shared infrastructure, applies service migrations, runs
+  idempotent seed data, then starts services with health checks and documented
+  env keys.
+- Base: a service that is not fully implemented is still represented with
+  documented placeholder env/seed data, while unsupported workflows return
+  existing `not_implemented` or dependency errors.
+- Bad: frontend setup instructions call `http://localhost:8083` directly,
+  seed data includes a real provider API key, or Compose relies on an
+  undocumented env alias that the service does not read.
+
+### 6. Tests Required
+
+- Parse or run `docker compose --env-file deploy/.env.example -f deploy/docker-compose.yml config --quiet`.
+- Run service-local `go test ./...` and `go build ./cmd/server` for services
+  whose Dockerfiles or runtime env wiring changed.
+- Run `go build ./cmd/agent` for QA when the QA service is part of the local
+  stack.
+- Run `git diff --check`.
+- If Docker is available, smoke-test `GET /readyz` through gateway and each
+  service after startup.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+frontend -> http://localhost:8083/internal/v1/knowledge-bases
+deploy/.env.example -> REAL_PROVIDER_API_KEY=sk-...
+```
+
+#### Correct
+
+```text
+frontend -> http://localhost:8080/api/v1/knowledge-bases
+deploy/.env.example -> AI_GATEWAY placeholder profile with no provider key
+```
+
 ---
 
 ## Code Review Checklist
