@@ -1,18 +1,4 @@
-// ============ 通用 ============
-export interface ApiResponse<T> {
-  code: number
-  message: string
-  data: T
-}
-
-export interface PaginatedData<T> {
-  items: T[]
-  total: number
-  page: number
-  page_size: number
-}
-
-// ============ 会话 ============
+﻿// ============ 会话 ============
 export interface Conversation {
   id: string
   title: string
@@ -177,13 +163,7 @@ export interface TopQuery {
 
 // ============ SSE 事件类型 ============
 export type SSEEventType =
-  | 'intent_status'
-  | 'thinking_step'
-  | 'token'
-  | 'citation'
-  | 'done'
-  | 'error'
-  | 'heartbeat'
+  'intent_status' | 'thinking_step' | 'token' | 'citation' | 'done' | 'error' | 'heartbeat'
 
 export interface SSEIntentStatusData {
   status: 'started' | 'done'
