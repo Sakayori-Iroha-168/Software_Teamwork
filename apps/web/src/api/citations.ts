@@ -1,57 +1,36 @@
 /**
- * Citation endpoints — API doc sections 7.1 & 7.2.
+ * Citation endpoints — Gateway OpenAPI qa-citations paths.
  *
- * getCitation        GET  /api/citations/:chunk_id
- * batchGetCitations  POST /api/citations/batch
+ * getCitation      GET  /citations/{citationId}
+ * lookupCitations  POST /citation-lookups
  */
+
+import type { QACitationDetail } from '@/lib/types'
 
 import { doRequest } from './client'
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface CitationDetail {
-  chunk_id: string
-  doc_id: string
-  doc_name: string
-  text: string
-  context_before: string
-  context_after: string
-  page_number: number
-  score: number
-}
-
-interface BatchCitationsRequest {
-  chunk_ids: string[]
-}
-
-// ---------------------------------------------------------------------------
-// 7.1  Single citation
+// GET /citations/{citationId}
 // ---------------------------------------------------------------------------
 
 /**
- * Retrieve full citation detail (including surrounding context) for a
- * single chunk.
+ * Retrieve full citation detail including source availability
+ * for a single citation.
  */
-export async function getCitation(
-  chunkId: string,
-): Promise<CitationDetail> {
-  return doRequest<CitationDetail>(`/citations/${encodeURIComponent(chunkId)}`)
+export async function getCitation(citationId: string): Promise<QACitationDetail> {
+  return doRequest<QACitationDetail>(`/citations/${encodeURIComponent(citationId)}`)
 }
 
 // ---------------------------------------------------------------------------
-// 7.2  Batch citations
+// POST /citation-lookups
 // ---------------------------------------------------------------------------
 
 /**
- * Retrieve citation details for multiple chunks at once.
+ * Batch lookup citation details by citation IDs.
  */
-export async function batchGetCitations(
-  chunkIds: string[],
-): Promise<CitationDetail[]> {
-  return doRequest<CitationDetail[]>('/citations/batch', {
+export async function lookupCitations(citationIds: string[]): Promise<QACitationDetail[]> {
+  return doRequest<QACitationDetail[]>('/citation-lookups', {
     method: 'POST',
-    body: JSON.stringify({ chunk_ids: chunkIds } satisfies BatchCitationsRequest),
+    body: JSON.stringify({ citationIds }),
   })
 }

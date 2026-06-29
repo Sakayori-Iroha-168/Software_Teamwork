@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { Citation, Message, ThinkingStep } from '@/lib/types'
+import type { QACitation, QAMessage, QAThinkingStep } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -13,8 +13,14 @@ import { cn } from '@/lib/utils'
 // ══════════════════════════════════════════════════════════════════════════════
 
 /* ── Citation tooltip ── */
-function CitationTooltip({ c }: { c: Citation }) {
+function CitationTooltip({ c }: { c: QACitation }) {
   const [open, setOpen] = useState(false)
+
+  // Resolve display fields (citationId is always present; docId/docName are deprecated aliases)
+  const displayId = c.citationNo != null ? `[${c.citationNo}]` : c.citationId
+  const docName = c.documentName ?? c.docName ?? '未知文档'
+  const text = c.text ?? c.contentPreview ?? ''
+  const score = c.score ?? 0
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -24,15 +30,13 @@ function CitationTooltip({ c }: { c: Citation }) {
           e.stopPropagation()
         }}
       >
-        [{c.id}]
+        {displayId}
       </PopoverTrigger>
       <PopoverContent className="w-72">
-        <div className="text-sm font-medium">{c.doc_name}</div>
-        <div className="mt-1 text-sm italic text-muted-foreground">
-          「{c.text}」
-        </div>
+        <div className="text-sm font-medium">{docName}</div>
+        <div className="mt-1 text-sm italic text-muted-foreground">「{text}」</div>
         <div className="mt-1 text-xs text-muted-foreground">
-          相关度: {Math.round(c.score * 100)}%
+          相关度: {Math.round(score * 100)}%
         </div>
       </PopoverContent>
     </Popover>
@@ -40,7 +44,7 @@ function CitationTooltip({ c }: { c: Citation }) {
 }
 
 /* ── Thinking panel ── */
-function ThinkPanel({ steps, done }: { steps: ThinkingStep[]; done: boolean }) {
+function ThinkPanel({ steps, done }: { steps: QAThinkingStep[]; done: boolean }) {
   const [open, setOpen] = useState(!done)
 
   useEffect(() => {
@@ -66,10 +70,7 @@ function ThinkPanel({ steps, done }: { steps: ThinkingStep[]; done: boolean }) {
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1 space-y-1 rounded-md border border-border/50 bg-muted/50 p-3">
         {steps.map((s, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-2 text-sm text-muted-foreground"
-          >
+          <div key={i} className="flex items-center gap-2 text-sm text-muted-foreground">
             {/* Status dot */}
             <span
               className={cn(
@@ -77,14 +78,16 @@ function ThinkPanel({ steps, done }: { steps: ThinkingStep[]; done: boolean }) {
                 s.status === 'done' && 'bg-green-500',
                 s.status === 'running' && 'bg-primary animate-pulse',
                 s.status === 'pending' && 'bg-muted-foreground/40 animate-pulse',
+                s.status === 'failed' && 'bg-red-500',
               )}
             />
-            <span className="flex-1">{s.label}</span>
-            {s.status === 'done' && (
-              <Check className="size-3 shrink-0 text-green-500" />
-            )}
+            <span className="flex-1">{s.label ?? s.type}</span>
+            {s.status === 'done' && <Check className="size-3 shrink-0 text-green-500" />}
             {s.status === 'running' && (
               <span className="animate-pulse text-xs text-primary">...</span>
+            )}
+            {s.status === 'failed' && (
+              <span className="text-xs text-red-500">失败</span>
             )}
           </div>
         ))}
@@ -135,14 +138,15 @@ const markdownComponents = {
       {children}
     </strong>
   ),
-  code: ({ className: cls, children, ...rest }: { className?: string; children?: ReactNode } & Record<string, unknown>) => {
+  code: ({
+    className: cls,
+    children,
+    ...rest
+  }: { className?: string; children?: ReactNode } & Record<string, unknown>) => {
     const isInline = !cls?.includes('language-')
     if (isInline) {
       return (
-        <code
-          className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono"
-          {...rest}
-        >
+        <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-mono" {...rest}>
           {children}
         </code>
       )
@@ -154,20 +158,17 @@ const markdownComponents = {
     )
   },
   pre: ({ children, ...rest }: { children?: ReactNode } & Record<string, unknown>) => (
-    <pre
-      className="my-2 overflow-x-auto rounded-md bg-zinc-950 p-4 text-sm text-zinc-50"
-      {...rest}
-    >
+    <pre className="my-2 overflow-x-auto rounded-md bg-zinc-950 p-4 text-sm text-zinc-50" {...rest}>
       {children}
     </pre>
   ),
 }
 
 /* ── Status label for assistant messages ── */
-function StatusLabel({ status }: { status: Message['status'] }) {
+function StatusLabel({ status }: { status: QAMessage['status'] }) {
   if (!status || status === 'completed') return null
   if (status === 'streaming') return null
-  if (status === 'stopped') {
+  if (status === 'stopped' || status === 'cancelled') {
     return (
       <span className="ml-2 text-xs text-muted-foreground" aria-label="回复已停止">
         已停止
@@ -185,34 +186,25 @@ function StatusLabel({ status }: { status: Message['status'] }) {
 }
 
 /* ── Single message bubble ── */
-function MessageBubble({
-  msg,
-  isStreaming,
-}: {
-  msg: Message
-  isStreaming: boolean
-}) {
+function MessageBubble({ msg, isStreaming }: { msg: QAMessage; isStreaming: boolean }) {
   const isUser = msg.role === 'user'
   const hasThinking = msg.thinking && msg.thinking.length > 0
   const hasCitations = msg.citations && msg.citations.length > 0
 
-  // Determine effective streaming state (support both old and new data)
-  const effectiveStreaming =
-    msg.status === 'streaming' || (!msg.status && isStreaming)
+  // Determine effective streaming state
+  const effectiveStreaming = msg.status === 'streaming' || (!msg.status && isStreaming)
 
   // Determine thinking done state
   const thinkingDone =
     msg.status === 'completed' ||
     msg.status === 'stopped' ||
+    msg.status === 'cancelled' ||
     msg.status === 'failed' ||
     (!msg.status && !isStreaming)
 
   return (
     <div
-      className={cn(
-        'flex max-w-[85%] gap-2',
-        isUser ? 'flex-row-reverse self-end' : 'self-start',
-      )}
+      className={cn('flex max-w-[85%] gap-2', isUser ? 'flex-row-reverse self-end' : 'self-start')}
     >
       {/* Avatar */}
       {isUser ? (
@@ -248,9 +240,7 @@ function MessageBubble({
           ) : msg.content ? (
             <span>
               {/* @ts-expect-error react-markdown Components type mismatch with React 19 */}
-              <ReactMarkdown components={markdownComponents}>
-                {msg.content}
-              </ReactMarkdown>
+              <ReactMarkdown components={markdownComponents}>{msg.content}</ReactMarkdown>
               <StatusLabel status={msg.status} />
             </span>
           ) : effectiveStreaming ? (
@@ -260,7 +250,7 @@ function MessageBubble({
               </span>
               <StatusLabel status={msg.status} />
             </span>
-          ) : msg.status === 'stopped' || msg.status === 'failed' ? (
+          ) : msg.status === 'stopped' || msg.status === 'cancelled' || msg.status === 'failed' ? (
             <span>
               <span className="italic text-muted-foreground">（无内容）</span>
               <StatusLabel status={msg.status} />
@@ -273,12 +263,10 @@ function MessageBubble({
         {/* Citations (assistant only) */}
         {hasCitations && (
           <div className="mt-4 border-t border-border/50 pt-2">
-            <p className="mb-1 text-xs font-semibold text-muted-foreground">
-              📎 引用来源
-            </p>
+            <p className="mb-1 text-xs font-semibold text-muted-foreground">引用来源</p>
             <div className="flex flex-wrap gap-1">
               {msg.citations!.map((c) => (
-                <CitationTooltip key={c.id} c={c} />
+                <CitationTooltip key={c.citationId} c={c} />
               ))}
             </div>
           </div>
@@ -289,19 +277,11 @@ function MessageBubble({
 }
 
 /* ── Error banner ── */
-function ErrorBanner({
-  message,
-  onRetry,
-}: {
-  message: string
-  onRetry: () => void
-}) {
+function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="mx-10 flex items-center gap-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 dark:border-red-800 dark:bg-red-950">
       <AlertTriangle className="size-4 shrink-0 text-red-500" aria-hidden="true" />
-      <span className="flex-1 text-sm text-red-700 dark:text-red-300">
-        {message}
-      </span>
+      <span className="flex-1 text-sm text-red-700 dark:text-red-300">{message}</span>
       <Button variant="destructive" size="sm" onClick={onRetry}>
         重试
       </Button>
@@ -314,7 +294,7 @@ function ErrorBanner({
 // ══════════════════════════════════════════════════════════════════════════════
 
 type ChatMessagesProps = {
-  messages: Message[]
+  messages: QAMessage[]
   streaming: boolean
   error: string | null
   suggestedPrompts: string[]
@@ -366,15 +346,8 @@ export default function ChatMessages({
       {/* ── Message list ── */}
       {messages.map((msg, i) => {
         const isLast = i === messages.length - 1
-        const isStreamingAsst =
-          isLast && msg.role === 'assistant' && streaming
-        return (
-          <MessageBubble
-            key={msg.id}
-            msg={msg}
-            isStreaming={isStreamingAsst}
-          />
-        )
+        const isStreamingAsst = isLast && msg.role === 'assistant' && streaming
+        return <MessageBubble key={msg.messageId} msg={msg} isStreaming={isStreamingAsst} />
       })}
 
       {/* ── Error ── */}

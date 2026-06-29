@@ -1,94 +1,69 @@
 /**
- * Session (qa-sessions) CRUD — API doc section 2.
+ * QA Sessions CRUD — Gateway OpenAPI qa-sessions paths.
  *
- * All functions use the doRequest helper for unified { code, message, data }
- * error handling.  File name kept as conversations.ts for compatibility;
- * internal naming uses "session" / "sessions".
+ * All functions use doRequest / listRequest from ./client.
+ * Types imported from @/lib/types (camelCase, per OpenAPI).
  */
 
-import type { Conversation, ConversationListItem, Message } from '@/lib/types'
+import type { QAMessage, QASession } from '@/lib/types'
 
-import { doRequest } from './client'
+import { doRequest, listRequest, type ListResponse } from './client'
 
 // ---------------------------------------------------------------------------
-// 2.1  Create session
+// POST /qa-sessions
 // ---------------------------------------------------------------------------
 
-export async function createSession(
-  title = '新对话',
-): Promise<Conversation> {
-  return doRequest<Conversation>('/qa-sessions', {
+export async function createSession(title?: string): Promise<QASession> {
+  return doRequest<QASession>('/qa-sessions', {
     method: 'POST',
     body: JSON.stringify({ title }),
   })
 }
 
 // ---------------------------------------------------------------------------
-// 2.2  List sessions (paginated)
+// GET /qa-sessions?page=&pageSize=&sort=-updatedAt
 // ---------------------------------------------------------------------------
 
-export async function listSessions(
-  page = 1,
-  pageSize = 20,
-): Promise<{ items: ConversationListItem[]; total: number }> {
+export async function listSessions(page = 1, pageSize = 20): Promise<ListResponse<QASession>> {
   const params = new URLSearchParams({
     page: String(page),
-    page_size: String(pageSize),
-    sort: 'updated_at_desc',
+    pageSize: String(pageSize),
+    sort: '-updatedAt',
   })
-  return doRequest<{ items: ConversationListItem[]; total: number }>(
-    `/qa-sessions?${params}`,
-  )
+  return listRequest<QASession>(`/qa-sessions?${params}`)
 }
 
 // ---------------------------------------------------------------------------
-// 2.3  Get session detail
+// GET /qa-sessions/{sessionId}
 // ---------------------------------------------------------------------------
 
-export async function getSession(
-  id: string,
-): Promise<Conversation> {
-  return doRequest<Conversation>(
-    `/qa-sessions/${encodeURIComponent(id)}`,
-  )
+export async function getSession(sessionId: string): Promise<QASession> {
+  return doRequest<QASession>(`/qa-sessions/${encodeURIComponent(sessionId)}`)
 }
 
 // ---------------------------------------------------------------------------
-// 2.4  Rename session (PATCH)
+// PATCH /qa-sessions/{sessionId}
 // ---------------------------------------------------------------------------
 
-export async function renameSession(
-  sessionId: string,
-  title: string,
-): Promise<Conversation> {
-  return doRequest<Conversation>(
-    `/qa-sessions/${encodeURIComponent(sessionId)}`,
-    {
-      method: 'PATCH',
-      body: JSON.stringify({ title }),
-    },
-  )
+export async function renameSession(sessionId: string, title: string): Promise<QASession> {
+  return doRequest<QASession>(`/qa-sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  })
 }
 
 // ---------------------------------------------------------------------------
-// 2.5  Delete session
+// DELETE /qa-sessions/{sessionId}
 // ---------------------------------------------------------------------------
 
-export async function deleteSession(id: string): Promise<void> {
-  await doRequest<void>(
-    `/qa-sessions/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
-  )
+export async function deleteSession(sessionId: string): Promise<void> {
+  await doRequest<void>(`/qa-sessions/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })
 }
 
 // ---------------------------------------------------------------------------
-// 2.6  Get session messages
+// GET /qa-sessions/{sessionId}/messages
 // ---------------------------------------------------------------------------
 
-export async function getSessionMessages(
-  sessionId: string,
-): Promise<Message[]> {
-  return doRequest<Message[]>(
-    `/qa-sessions/${encodeURIComponent(sessionId)}/messages`,
-  )
+export async function getSessionMessages(sessionId: string): Promise<QAMessage[]> {
+  return doRequest<QAMessage[]>(`/qa-sessions/${encodeURIComponent(sessionId)}/messages`)
 }

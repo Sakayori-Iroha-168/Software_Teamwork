@@ -1,312 +1,209 @@
 /**
- * Admin API — API doc sections 6 (config), 7 (stats), 8 (system mgmt).
+ * Admin API — Gateway OpenAPI admin-runtime-config, qa-settings,
+ * qa-retrieval-tests, qa-metrics, knowledge, auth paths.
+ *
+ * All functions use doRequest from ./client.
+ * Types imported from @/lib/types (camelCase, per OpenAPI).
  */
 
 import type {
-  KnowledgeBaseConfig,
-  LLMConfig,
-  RAGDefaults,
-  RAGSearchResult,
-  StatsOverview,
-  TopQuery,
-  TrendPoint,
+  CreateKnowledgeBaseRequest,
+  CreateQAConfigVersionRequest,
+  CreateQALLMConfigVersionRequest,
+  KnowledgeBaseSummary,
+  QAConfigVersion,
+  QAIntentDistributionItem,
+  QALLMConfigVersion,
+  QALLMConnectionTest,
+  QALLMConnectionTestRequest,
+  QAMetricsOverview,
+  QAMetricsTrend,
+  QARetrievalTestRun,
+  QARetrievalTestRunRequest,
+  QATopQuery,
 } from '@/lib/types'
 
-import { apiClient, ApiError, doRequest } from './client'
-
-// ---------------------------------------------------------------------------
-// Local response types not yet in @/lib/types
-// ---------------------------------------------------------------------------
-
-export interface LLMConfigResponse extends LLMConfig {
-  extra_headers: Record<string, string>
-  updated_at: string
-}
-
-export interface LLMTestRequest {
-  api_url: string
-  api_key: string
-  model_name: string
-}
-
-export interface LLMTestResponse {
-  success: boolean
-  latency_ms: number
-  model: string
-  tested_at: string
-}
-
-export interface KnowledgeConfigResponse {
-  knowledge_bases: KnowledgeBaseConfig[]
-  defaults: RAGDefaults
-}
-
-export interface RAGTestRequest {
-  query: string
-  knowledge_bases_override?: string[] | null
-  top_k_override?: number | null
-  similarity_threshold_override?: number | null
-}
-
-export interface RAGTestResponse {
-  query: string
-  mode: string
-  results: RAGSearchResult[]
-  total_hits: number
-  took_ms: number
-}
-
-export interface StatsTrendResponse {
-  days: number
-  points: TrendPoint[]
-}
-
-export interface TopQueriesResponse {
-  items: TopQuery[]
-}
-
-export interface IntentDistributionItem {
-  intent: string
-  label: string
-  count: number
-  percent: number
-}
-
-export interface IntentDistributionResponse {
-  items: IntentDistributionItem[]
-}
-
-export interface CreateKnowledgeBaseRequest {
-  name: string
-  description?: string
-}
-
-// Stub types for user/role management (API doc section 8, reserved)
-export interface AdminUser {
-  id: string
-  username: string
-  role: string
-  created_at: string
-}
-
-export interface AdminRole {
-  id: string
-  name: string
-  permissions: string[]
-}
+import { doRequest } from './client'
 
 // =========================================================================
-// 6.1  LLM Configuration
+// LLM Configuration
 // =========================================================================
 
-/** GET /api/admin/llm-config */
-export function getLLMConfig(): Promise<LLMConfigResponse> {
-  return doRequest<LLMConfigResponse>('/admin/llm-config')
+/** GET /llm-config-versions/current */
+export function getCurrentLLMConfig(): Promise<QALLMConfigVersion> {
+  return doRequest<QALLMConfigVersion>('/llm-config-versions/current')
 }
 
-/** PUT /api/admin/llm-config */
-export async function updateLLMConfig(
-  config: Partial<LLMConfig>,
-): Promise<LLMConfigResponse> {
-  return doRequest<LLMConfigResponse>('/admin/llm-config', {
-    method: 'PUT',
+/** POST /llm-config-versions */
+export async function createLLMConfigVersion(
+  config: CreateQALLMConfigVersionRequest,
+): Promise<QALLMConfigVersion> {
+  return doRequest<QALLMConfigVersion>('/llm-config-versions', {
+    method: 'POST',
     body: JSON.stringify(config),
   })
 }
 
-/** POST /api/admin/llm-config/test */
+/** POST /llm-connection-tests */
 export async function testLLMConnection(
-  params: LLMTestRequest,
-): Promise<LLMTestResponse> {
-  return doRequest<LLMTestResponse>('/admin/llm-config/test', {
+  params: QALLMConnectionTestRequest,
+): Promise<QALLMConnectionTest> {
+  return doRequest<QALLMConnectionTest>('/llm-connection-tests', {
     method: 'POST',
     body: JSON.stringify(params),
   })
 }
 
 // =========================================================================
-// 6.2  Knowledge Configuration
+// QA Configuration
 // =========================================================================
 
-/** GET /api/admin/knowledge-config */
-export function getKnowledgeConfig(): Promise<KnowledgeConfigResponse> {
-  return doRequest<KnowledgeConfigResponse>('/admin/knowledge-config')
+/** GET /qa-config-versions/current */
+export function getCurrentQAConfig(): Promise<QAConfigVersion> {
+  return doRequest<QAConfigVersion>('/qa-config-versions/current')
 }
 
-/** PUT /api/admin/knowledge-config */
-export async function updateKnowledgeConfig(
-  defaults: Partial<RAGDefaults>,
-): Promise<KnowledgeConfigResponse> {
-  return doRequest<KnowledgeConfigResponse>('/admin/knowledge-config', {
-    method: 'PUT',
-    body: JSON.stringify({ defaults }),
+/** POST /qa-config-versions */
+export async function createQAConfigVersion(
+  config: CreateQAConfigVersionRequest,
+): Promise<QAConfigVersion> {
+  return doRequest<QAConfigVersion>('/qa-config-versions', {
+    method: 'POST',
+    body: JSON.stringify(config),
   })
 }
 
 // =========================================================================
-// 6.3  RAG Test (admin)
+// Retrieval Test
 // =========================================================================
 
-/** POST /api/admin/rag/test */
-export async function ragTest(
-  params: RAGTestRequest,
-): Promise<RAGTestResponse> {
-  return doRequest<RAGTestResponse>('/admin/rag/test', {
+/** POST /retrieval-test-runs */
+export async function runRetrievalTest(
+  params: QARetrievalTestRunRequest,
+): Promise<QARetrievalTestRun> {
+  return doRequest<QARetrievalTestRun>('/retrieval-test-runs', {
     method: 'POST',
     body: JSON.stringify(params),
   })
 }
 
 // =========================================================================
-// 7  Statistics
+// QA Metrics
 // =========================================================================
 
-/** GET /api/admin/stats/overview */
-export function getStatsOverview(): Promise<StatsOverview> {
-  return doRequest<StatsOverview>('/admin/stats/overview')
+/** GET /qa-metrics/overview?days=N */
+export function getQAMetricsOverview(days?: number): Promise<QAMetricsOverview> {
+  const qs = days != null ? `?days=${days}` : ''
+  return doRequest<QAMetricsOverview>(`/qa-metrics/overview${qs}`)
 }
 
-/** GET /api/admin/stats/trend?days=N */
-export async function getStatsTrend(
-  days = 30,
-): Promise<StatsTrendResponse> {
-  const res = await fetch(
-    `${apiClient.baseUrl}/admin/stats/trend?days=${days}`,
-  )
-  if (!res.ok) throw new ApiError(res.status, '获取趋势数据失败')
-  const json: { code: number; message: string; data: StatsTrendResponse } =
-    await res.json()
-  if (json.code !== 0) throw new ApiError(json.code, json.message)
-  return json.data
+/** GET /qa-metrics/trend?days=N */
+export function getQAMetricsTrend(days?: number): Promise<QAMetricsTrend> {
+  const qs = days != null ? `?days=${days}` : '?days=30'
+  return doRequest<QAMetricsTrend>(`/qa-metrics/trend${qs}`)
 }
 
-/** GET /api/admin/stats/top-queries?limit=N&days=N */
-export async function getTopQueries(
-  limit = 10,
-  daysParam = 7,
-): Promise<TopQueriesResponse> {
-  const params = new URLSearchParams({
-    limit: String(limit),
-    days: String(daysParam),
-  })
-  const res = await fetch(
-    `${apiClient.baseUrl}/admin/stats/top-queries?${params}`,
-  )
-  if (!res.ok) throw new ApiError(res.status, '获取热门问题失败')
-  const json: { code: number; message: string; data: TopQueriesResponse } =
-    await res.json()
-  if (json.code !== 0) throw new ApiError(json.code, json.message)
-  return json.data
+/** GET /qa-metrics/top-queries?limit=N&days=N */
+export async function getQATopQueries(limit?: number, days?: number): Promise<QATopQuery[]> {
+  const params = new URLSearchParams()
+  if (limit != null) params.set('limit', String(limit))
+  if (days != null) params.set('days', String(days))
+  const qs = params.toString()
+  return doRequest<QATopQuery[]>(`/qa-metrics/top-queries${qs ? `?${qs}` : ''}`)
 }
 
-/** GET /api/admin/stats/intent-distribution?days=N */
-export async function getIntentDistribution(
-  daysParam = 7,
-): Promise<IntentDistributionResponse> {
-  const res = await fetch(
-    `${apiClient.baseUrl}/admin/stats/intent-distribution?days=${daysParam}`,
-  )
-  if (!res.ok) throw new ApiError(res.status, '获取意图分布失败')
-  const json: {
-    code: number
-    message: string
-    data: IntentDistributionResponse
-  } = await res.json()
-  if (json.code !== 0) throw new ApiError(json.code, json.message)
-  return json.data
+/** GET /qa-metrics/intent-distribution?days=N */
+export async function getQAIntentDistribution(days?: number): Promise<QAIntentDistributionItem[]> {
+  const qs = days != null ? `?days=${days}` : ''
+  return doRequest<QAIntentDistributionItem[]>(`/qa-metrics/intent-distribution${qs}`)
 }
 
 // =========================================================================
-// 8.1  Knowledge Base CRUD
+// Knowledge Bases
 // =========================================================================
 
-/** GET /api/admin/knowledge-bases */
-export function listKnowledgeBases(): Promise<KnowledgeBaseConfig[]> {
-  return doRequest<KnowledgeBaseConfig[]>('/admin/knowledge-bases')
+/** GET /knowledge-bases */
+export function listKnowledgeBases(): Promise<KnowledgeBaseSummary[]> {
+  return doRequest<KnowledgeBaseSummary[]>('/knowledge-bases')
 }
 
-/** POST /api/admin/knowledge-bases */
+/** POST /knowledge-bases */
 export async function createKnowledgeBase(
   params: CreateKnowledgeBaseRequest,
-): Promise<KnowledgeBaseConfig> {
-  return doRequest<KnowledgeBaseConfig>('/admin/knowledge-bases', {
+): Promise<KnowledgeBaseSummary> {
+  return doRequest<KnowledgeBaseSummary>('/knowledge-bases', {
     method: 'POST',
     body: JSON.stringify(params),
   })
 }
 
-/** DELETE /api/admin/knowledge-bases/:id */
+/** DELETE /knowledge-bases/{id} */
 export async function deleteKnowledgeBase(id: string): Promise<void> {
-  await doRequest<void>(
-    `/admin/knowledge-bases/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
-  )
+  await doRequest<void>(`/knowledge-bases/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // =========================================================================
-// 8.2  User Management (reserved — stubs)
+// User Management (stubs — reserved)
 // =========================================================================
 
-export function listUsers(): Promise<AdminUser[]> {
-  return doRequest<AdminUser[]>('/admin/users')
+/** GET /users */
+export function listUsers(): Promise<Record<string, unknown>[]> {
+  return doRequest<Record<string, unknown>[]>('/users')
 }
 
-export async function createUser(
-  body: Record<string, unknown>,
-): Promise<AdminUser> {
-  return doRequest<AdminUser>('/admin/users', {
+/** POST /users */
+export async function createUser(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return doRequest<Record<string, unknown>>('/users', {
     method: 'POST',
     body: JSON.stringify(body),
   })
 }
 
+/** PUT /users/{id} */
 export async function updateUser(
   id: string,
   body: Record<string, unknown>,
-): Promise<AdminUser> {
-  return doRequest<AdminUser>(
-    `/admin/users/${encodeURIComponent(id)}`,
-    { method: 'PUT', body: JSON.stringify(body) },
-  )
+): Promise<Record<string, unknown>> {
+  return doRequest<Record<string, unknown>>(`/users/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
 }
 
+/** DELETE /users/{id} */
 export async function deleteUser(id: string): Promise<void> {
-  await doRequest<void>(
-    `/admin/users/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
-  )
+  await doRequest<void>(`/users/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // =========================================================================
-// 8.3  Role Management (reserved — stubs)
+// Role Management (stubs — reserved)
 // =========================================================================
 
-export function listRoles(): Promise<AdminRole[]> {
-  return doRequest<AdminRole[]>('/admin/roles')
+/** GET /roles */
+export function listRoles(): Promise<Record<string, unknown>[]> {
+  return doRequest<Record<string, unknown>[]>('/roles')
 }
 
-export async function createRole(
-  body: Record<string, unknown>,
-): Promise<AdminRole> {
-  return doRequest<AdminRole>('/admin/roles', {
+/** POST /roles */
+export async function createRole(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return doRequest<Record<string, unknown>>('/roles', {
     method: 'POST',
     body: JSON.stringify(body),
   })
 }
 
+/** PUT /roles/{id} */
 export async function updateRole(
   id: string,
   body: Record<string, unknown>,
-): Promise<AdminRole> {
-  return doRequest<AdminRole>(
-    `/admin/roles/${encodeURIComponent(id)}`,
-    { method: 'PUT', body: JSON.stringify(body) },
-  )
+): Promise<Record<string, unknown>> {
+  return doRequest<Record<string, unknown>>(`/roles/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
 }
 
+/** DELETE /roles/{id} */
 export async function deleteRole(id: string): Promise<void> {
-  await doRequest<void>(
-    `/admin/roles/${encodeURIComponent(id)}`,
-    { method: 'DELETE' },
-  )
+  await doRequest<void>(`/roles/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
