@@ -79,7 +79,7 @@ func main() {
 			logger.Warn("runtime close failed", "service", "qa", "dependency", "mcp", "error", err)
 		}
 	}()
-	qaService, err := service.NewQAService(repo, manager)
+	qaService, err := service.NewQAService(repo, manager, repo)
 	if err != nil {
 		logger.Error("QA service initialization failed", "service", "qa", "error", err)
 		os.Exit(1)

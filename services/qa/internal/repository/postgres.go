@@ -177,9 +177,12 @@ func (r *Postgres) ListMessages(ctx context.Context, userID, conversationID stri
 	return service.Page[service.Message]{Items: items, Page: page, PageSize: pageSize, Total: total}, nil
 }
 
-func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID string, messages ...service.Message) (service.ResponseRun, error) {
+func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID, qaConfigVersionID, llmConfigVersionID string, maxIterations int, messages ...service.Message) (service.ResponseRun, error) {
 	if len(messages) == 0 {
 		return service.ResponseRun{}, nil
+	}
+	if maxIterations <= 0 {
+		maxIterations = 5
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -227,17 +230,17 @@ func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID st
 	var run service.ResponseRun
 	if userMessageID != "" && assistantMessageID != "" {
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO response_runs (conversation_id, user_message_id, assistant_message_id, intent_type, route, status)
-			VALUES ($1, $2, $3, NULLIF($4, ''), 'agent', 'running')
+			INSERT INTO response_runs (conversation_id, user_message_id, assistant_message_id, intent_type, route, status,
+			                          qa_config_version_id, llm_config_version_id, max_iterations)
+			VALUES ($1, $2, $3, NULLIF($4, ''), 'agent', 'running', $5, $6, $7)
 			RETURNING id::text, conversation_id::text, user_message_id::text,
-			          assistant_message_id::text, status, started_at`,
-			conversationID, userMessageID, assistantMessageID, intent).Scan(
+			          assistant_message_id::text, status, max_iterations, started_at`,
+			conversationID, userMessageID, assistantMessageID, intent, qaConfigVersionID, llmConfigVersionID, maxIterations).Scan(
 			&run.ID, &run.SessionID, &run.UserMessageID, &run.AssistantMessageID,
-			&run.Status, &run.CreatedAt,
+			&run.Status, &run.MaxIterations, &run.CreatedAt,
 		); err != nil {
 			return service.ResponseRun{}, fmt.Errorf("insert response run: %w", err)
 		}
-		run.MaxIterations = 5
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return service.ResponseRun{}, fmt.Errorf("commit append messages: %w", err)
@@ -268,18 +271,107 @@ func (r *Postgres) UpdateMessage(ctx context.Context, userID string, message ser
 		WHERE message_id = $3 AND block_order = 0`, message.Content, blockStatus(message.Status), message.ID); err != nil {
 		return fmt.Errorf("update message content: %w", err)
 	}
+	runStatus := runStatus(message.Status)
+	terminationReason := terminationReasonFromMessageStatus(message.Status)
 	if _, err := tx.Exec(ctx, `
 		UPDATE response_runs SET status = $1,
-		       stop_reason = CASE WHEN $1 = 'completed' THEN NULL ELSE $1 END,
+		       termination_reason = $2,
 		       completed_at = CASE WHEN $1 <> 'running' THEN now() ELSE NULL END,
 		       latency_ms = CASE WHEN $1 <> 'running' THEN EXTRACT(EPOCH FROM (now() - started_at)) * 1000 ELSE NULL END
-		WHERE assistant_message_id = $2`, runStatus(message.Status), message.ID); err != nil {
+		WHERE assistant_message_id = $3`, runStatus, terminationReason, message.ID); err != nil {
 		return fmt.Errorf("update response run: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit update message: %w", err)
 	}
 	return nil
+}
+
+func (r *Postgres) SaveAgentModelInvocations(ctx context.Context, userID string, invocations []service.AgentModelInvocationSave) error {
+	if len(invocations) == 0 {
+		return nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin save model invocations: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	var exists bool
+	if len(invocations) > 0 {
+		runID := invocations[0].ResponseRunID
+		if err := tx.QueryRow(ctx, `SELECT true FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id WHERE rr.id::text=$1 AND c.external_user_id=$2`, runID, userID).Scan(&exists); errors.Is(err, pgx.ErrNoRows) {
+			return service.NewError(service.CodeNotFound, "response run not found", err)
+		} else if err != nil {
+			return fmt.Errorf("authorize model invocations: %w", err)
+		}
+	}
+	for _, inv := range invocations {
+		errorCode := inv.ErrorCode
+		errorMessage := inv.ErrorMessage
+		if inv.Status == "failed" && errorCode == "" {
+			errorCode = "model_error"
+		}
+		if inv.Status == "failed" && errorMessage == "" {
+			errorMessage = "model invocation failed"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO agent_model_invocations (response_run_id, iteration_no, provider, profile_id, model_name,
+			                                    finish_reason, status, prompt_tokens, completion_tokens, reasoning_tokens,
+			                                    total_tokens, latency_ms, error_code, error_message, started_at, finished_at)
+			VALUES ($1, $2, $3, NULLIF($4, ''), $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12, NULLIF($13, ''), NULLIF($14, ''), $15, $16)
+			ON CONFLICT (response_run_id, iteration_no) DO UPDATE SET
+			  finish_reason = EXCLUDED.finish_reason,
+			  status = EXCLUDED.status,
+			  prompt_tokens = EXCLUDED.prompt_tokens,
+			  completion_tokens = EXCLUDED.completion_tokens,
+			  reasoning_tokens = EXCLUDED.reasoning_tokens,
+			  total_tokens = EXCLUDED.total_tokens,
+			  latency_ms = EXCLUDED.latency_ms,
+			  error_code = EXCLUDED.error_code,
+			  error_message = EXCLUDED.error_message,
+			  finished_at = EXCLUDED.finished_at`,
+			inv.ResponseRunID, inv.IterationNo, inv.Provider, inv.ProfileID, inv.ModelName,
+			inv.FinishReason, inv.Status, inv.PromptTokens, inv.CompletionTokens, inv.ReasoningTokens,
+			inv.TotalTokens, inv.LatencyMS, errorCode, errorMessage, inv.StartedAt, inv.FinishedAt); err != nil {
+			return fmt.Errorf("insert model invocation: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit model invocations: %w", err)
+	}
+	return nil
+}
+
+func (r *Postgres) UpdateResponseRunFinalState(ctx context.Context, state service.ResponseRunFinalState) error {
+	_, err := r.pool.Exec(ctx, `
+		UPDATE response_runs SET status = $1,
+		       termination_reason = $2,
+		       prompt_tokens = $3,
+		       completion_tokens = $4,
+		       reasoning_tokens = $5,
+		       total_tokens = $6,
+		       latency_ms = $7,
+		       completed_at = $8
+		WHERE id = $9`,
+		state.Status, state.TerminationReason, state.PromptTokens, state.CompletionTokens,
+		state.ReasoningTokens, state.TotalTokens, state.LatencyMS, state.CompletedAt, state.ID)
+	if err != nil {
+		return fmt.Errorf("update response run final state: %w", err)
+	}
+	return nil
+}
+
+func terminationReasonFromMessageStatus(status string) string {
+	switch status {
+	case "completed":
+		return "completed"
+	case "cancelled":
+		return "cancelled"
+	case "failed":
+		return "model_error"
+	default:
+		return ""
+	}
 }
 
 func (r *Postgres) SaveReasoningSteps(ctx context.Context, userID, assistantMessageID string, steps []service.ReasoningStep) error {
@@ -394,7 +486,7 @@ func (r *Postgres) CancelResponseRun(ctx context.Context, userID, runID string) 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var assistantID string
-	err = tx.QueryRow(ctx, `UPDATE response_runs rr SET status='cancelled',stop_reason='cancelled',completed_at=now(),latency_ms=EXTRACT(EPOCH FROM(now()-started_at))*1000 FROM conversations c WHERE rr.id::text=$1 AND c.id=rr.conversation_id AND c.external_user_id=$2 AND c.deleted_at IS NULL AND rr.status IN('running') RETURNING rr.assistant_message_id::text`, runID, userID).Scan(&assistantID)
+	err = tx.QueryRow(ctx, `UPDATE response_runs rr SET status='cancelled',termination_reason='cancelled',completed_at=now(),latency_ms=EXTRACT(EPOCH FROM(now()-started_at))*1000 FROM conversations c WHERE rr.id::text=$1 AND c.id=rr.conversation_id AND c.external_user_id=$2 AND c.deleted_at IS NULL AND rr.status IN('running') RETURNING rr.assistant_message_id::text`, runID, userID).Scan(&assistantID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return service.ResponseRun{}, service.NewError(service.CodeConflict, "response run cannot be cancelled", err)
 	}
@@ -413,7 +505,7 @@ func (r *Postgres) CancelResponseRun(ctx context.Context, userID, runID string) 
 	return r.GetResponseRun(ctx, userID, runID)
 }
 
-const responseRunSelect = `SELECT rr.id::text,rr.conversation_id::text,rr.user_message_id::text,rr.assistant_message_id::text,rr.status,COALESCE(rr.current_iteration,0),COALESCE(rr.max_iterations,5),rr.stop_reason,COALESCE(rr.prompt_tokens,0)+COALESCE(rr.completion_tokens,0)+COALESCE(rr.reasoning_tokens,0),COALESCE(rr.latency_ms,0),rr.started_at,rr.completed_at FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id`
+const responseRunSelect = `SELECT rr.id::text,rr.conversation_id::text,rr.user_message_id::text,rr.assistant_message_id::text,rr.status,COALESCE(rr.current_iteration,0),COALESCE(rr.max_iterations,5),rr.termination_reason,COALESCE(rr.prompt_tokens,0)+COALESCE(rr.completion_tokens,0)+COALESCE(rr.reasoning_tokens,0),COALESCE(rr.latency_ms,0),rr.started_at,rr.completed_at FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id`
 
 func scanResponseRun(row rowScanner) (service.ResponseRun, error) {
 	var value service.ResponseRun
@@ -426,9 +518,6 @@ func scanResponseRun(row rowScanner) (service.ResponseRun, error) {
 		return service.ResponseRun{}, fmt.Errorf("scan response run: %w", err)
 	}
 	if termination.Valid {
-		if termination.String == "failed" {
-			termination.String = "model_error"
-		}
 		value.TerminationReason = &termination.String
 	}
 	return value, nil

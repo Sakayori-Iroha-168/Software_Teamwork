@@ -72,6 +72,26 @@ type AgentToolCall struct {
 	FinishedAt        *time.Time     `json:"finishedAt,omitempty"`
 }
 
+type AgentModelInvocation struct {
+	ID              string    `json:"id"`
+	ResponseRunID   string    `json:"responseRunId"`
+	IterationNo     int       `json:"iterationNo"`
+	Provider        string    `json:"provider"`
+	ProfileID       string    `json:"profileId,omitempty"`
+	ModelName       string    `json:"modelName"`
+	FinishReason    string    `json:"finishReason,omitempty"`
+	Status          string    `json:"status"`
+	PromptTokens    int       `json:"promptTokens"`
+	CompletionTokens int      `json:"completionTokens"`
+	ReasoningTokens int       `json:"reasoningTokens,omitempty"`
+	TotalTokens     int       `json:"totalTokens"`
+	LatencyMS       int64     `json:"latencyMs"`
+	ErrorCode       string    `json:"errorCode,omitempty"`
+	ErrorMessage    string    `json:"errorMessage,omitempty"`
+	StartedAt       time.Time `json:"startedAt"`
+	FinishedAt      *time.Time `json:"finishedAt,omitempty"`
+}
+
 type ConfigKnowledgeBase struct {
 	ID          string `json:"id"`
 	Type        string `json:"type,omitempty"`

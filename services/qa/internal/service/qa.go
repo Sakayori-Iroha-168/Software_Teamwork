@@ -144,6 +144,37 @@ type ProgressEvent struct {
 
 type ProgressObserver func(ProgressEvent)
 
+type AgentModelInvocationSave struct {
+	ResponseRunID    string
+	IterationNo      int
+	Provider         string
+	ProfileID        string
+	ModelName        string
+	FinishReason     string
+	Status           string
+	PromptTokens     int
+	CompletionTokens int
+	ReasoningTokens  int
+	TotalTokens      int
+	LatencyMS        int64
+	ErrorCode        string
+	ErrorMessage     string
+	StartedAt        time.Time
+	FinishedAt       time.Time
+}
+
+type ResponseRunFinalState struct {
+	ID                string
+	Status            string
+	TerminationReason string
+	PromptTokens      int
+	CompletionTokens  int
+	ReasoningTokens   int
+	TotalTokens       int
+	LatencyMS         int64
+	CompletedAt       time.Time
+}
+
 type Repository interface {
 	CreateConversation(context.Context, Conversation) (Conversation, error)
 	ListConversations(context.Context, string, ConversationListOptions) (Page[Conversation], error)
@@ -151,11 +182,13 @@ type Repository interface {
 	UpdateConversation(context.Context, string, Conversation) (Conversation, error)
 	DeleteConversation(context.Context, string, string) error
 	ListMessages(context.Context, string, string, int, int) (Page[Message], error)
-	AppendMessages(context.Context, string, string, ...Message) (ResponseRun, error)
+	AppendMessages(context.Context, string, string, string, string, int, ...Message) (ResponseRun, error)
 	UpdateMessage(context.Context, string, Message) error
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
 	GetResponseRun(context.Context, string, string) (ResponseRun, error)
+	SaveAgentModelInvocations(context.Context, string, []AgentModelInvocationSave) error
+	UpdateResponseRunFinalState(context.Context, ResponseRunFinalState) error
 }
 
 type AgentRunner interface {
@@ -172,18 +205,19 @@ type RuntimeProvider interface {
 }
 
 type QAService struct {
-	repository Repository
-	runtime    RuntimeProvider
-	now        func() time.Time
-	activeMu   sync.Mutex
-	activeRuns map[string]context.CancelFunc
+	repository   Repository
+	runtime      RuntimeProvider
+	resourceRepo ResourceRepository
+	now          func() time.Time
+	activeMu     sync.Mutex
+	activeRuns   map[string]context.CancelFunc
 }
 
-func NewQAService(repository Repository, runtime RuntimeProvider) (*QAService, error) {
+func NewQAService(repository Repository, runtime RuntimeProvider, resourceRepo ResourceRepository) (*QAService, error) {
 	if repository == nil || runtime == nil {
 		return nil, errors.New("repository and runtime provider are required")
 	}
-	return &QAService{repository: repository, runtime: runtime, now: time.Now, activeRuns: map[string]context.CancelFunc{}}, nil
+	return &QAService{repository: repository, runtime: runtime, resourceRepo: resourceRepo, now: time.Now, activeRuns: map[string]context.CancelFunc{}}, nil
 }
 
 func (s *QAService) CreateConversation(ctx context.Context, userID, title string) (Conversation, error) {
@@ -261,6 +295,27 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		return AskResult{}, err
 	}
 
+	var qaConfigVersionID, llmConfigVersionID string
+	var maxIterations, overallTimeoutSeconds int
+	if s.resourceRepo != nil {
+		qaConfig, qaErr := s.resourceRepo.GetActiveQAConfigVersion(ctx)
+		if qaErr == nil {
+			qaConfigVersionID = qaConfig.ID
+			maxIterations = qaConfig.Agent.MaxIterations
+			overallTimeoutSeconds = qaConfig.Agent.OverallTimeoutSeconds
+		}
+		llmConfig, llmErr := s.resourceRepo.GetActiveLLMConfigVersion(ctx)
+		if llmErr == nil {
+			llmConfigVersionID = llmConfig.ID
+		}
+	}
+	if maxIterations <= 0 {
+		maxIterations = 5
+	}
+	if overallTimeoutSeconds <= 0 {
+		overallTimeoutSeconds = 120
+	}
+
 	now := s.now().UTC()
 	intent := input.Mode
 	if intent == "" {
@@ -268,20 +323,24 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	}
 	userMessage := Message{ID: newID("msg"), ConversationID: conversationID, Role: agent.RoleUser, Content: strings.TrimSpace(input.Message), Intent: intent, Status: "completed", CreatedAt: now}
 	assistantMessage := Message{ID: newID("msg"), ConversationID: conversationID, Role: agent.RoleAssistant, Intent: intent, Status: "generating", CreatedAt: now}
-	run, err := s.repository.AppendMessages(ctx, userID, conversationID, userMessage, assistantMessage)
+	run, err := s.repository.AppendMessages(ctx, userID, conversationID, qaConfigVersionID, llmConfigVersionID, maxIterations, userMessage, assistantMessage)
 	if err != nil {
 		return AskResult{}, err
 	}
-	runCtx, cancelRun := context.WithCancel(ctx)
+	runStartTime := now
+
+	runCtx, cancelRun := context.WithTimeout(ctx, time.Duration(overallTimeoutSeconds)*time.Second)
 	s.activeMu.Lock()
 	s.activeRuns[run.ID] = cancelRun
 	s.activeMu.Unlock()
 	defer func() { cancelRun(); s.activeMu.Lock(); delete(s.activeRuns, run.ID); s.activeMu.Unlock() }()
+
 	if conversation.Title == "" || conversation.Title == "新对话" {
 		conversation.Title = truncateRunes(userMessage.Content, 40)
 		conversation.UpdatedAt = now
 		_, _ = s.repository.UpdateConversation(ctx, userID, conversation)
 	}
+
 	events := make([]StreamEvent, 0, 12)
 	emit := func(eventType string, payload map[string]any) {
 		event := StreamEvent{EventSeq: len(events) + 1, EventType: eventType, Payload: payload, CreatedAt: s.now().UTC()}
@@ -295,6 +354,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		return AskResult{}, NewError(CodeDependency, "agent runtime is unavailable", err)
 	}
 	defer release()
+
 	messages := make([]agent.Message, 0, len(history.Items)+3)
 	messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: runtime.SystemPrompt})
 	if directive := requestDirective(input); directive != "" {
@@ -308,10 +368,40 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	messages = append(messages, agent.Message{Role: agent.RoleUser, Content: userMessage.Content})
 
 	steps := make([]ReasoningStep, 0, 4)
+	modelInvocations := make([]AgentModelInvocationSave, 0, 4)
+	var lastInvocationStart time.Time
+	var totalPromptTokens, totalCompletionTokens, totalReasoningTokens int
+
 	result, runErr := runtime.Runner.RunWithObserver(runCtx, messages, func(event agent.Event) {
 		switch event.Type {
 		case agent.EventModelStarted:
+			lastInvocationStart = s.now().UTC()
 			emit("agent.iteration.started", map[string]any{"responseRunId": run.ID, "iterationNo": event.Iteration})
+		case agent.EventModelCompleted:
+			totalPromptTokens += event.TokenUsage.PromptTokens
+			totalCompletionTokens += event.TokenUsage.CompletionTokens
+			totalReasoningTokens += event.TokenUsage.ReasoningTokens
+			invocation := AgentModelInvocationSave{
+				ResponseRunID:    run.ID,
+				IterationNo:      event.Iteration,
+				Provider:         "ai-gateway",
+				ModelName:        "deepseek-chat",
+				FinishReason:     event.FinishReason,
+				Status:           "completed",
+				PromptTokens:     event.TokenUsage.PromptTokens,
+				CompletionTokens: event.TokenUsage.CompletionTokens,
+				ReasoningTokens:  event.TokenUsage.ReasoningTokens,
+				TotalTokens:      event.TokenUsage.TotalTokens,
+				LatencyMS:        event.LatencyMs,
+				StartedAt:        lastInvocationStart,
+				FinishedAt:       lastInvocationStart.Add(time.Duration(event.LatencyMs) * time.Millisecond),
+			}
+			if event.Err != nil {
+				invocation.Status = "failed"
+				invocation.ErrorCode = "model_error"
+				invocation.ErrorMessage = event.Err.Error()
+			}
+			modelInvocations = append(modelInvocations, invocation)
 		case agent.EventToolStarted, agent.EventToolCompleted, agent.EventToolFailed:
 			emit(string(event.Type), map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration})
 		}
@@ -322,37 +412,94 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		steps = append(steps, step)
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
 	})
+
 	if runErr == nil && runCtx.Err() != nil {
 		runErr = runCtx.Err()
 	}
-	if runErr != nil {
-		assistantMessage.Status = "failed"
-		if errors.Is(runErr, context.Canceled) {
-			assistantMessage.Status = "cancelled"
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = s.repository.UpdateMessage(cleanupCtx, userID, assistantMessage)
-		_ = s.repository.SaveReasoningSteps(cleanupCtx, userID, assistantMessage.ID, steps)
-		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "answer generation failed"})
-		_ = s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events)
-		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(CodeDependency, "answer generation failed", runErr)
+
+	completedAt := s.now().UTC()
+	totalLatencyMs := completedAt.Sub(runStartTime).Milliseconds()
+	totalTokens := totalPromptTokens + totalCompletionTokens + totalReasoningTokens
+
+	var terminationReason string
+	var runStatus string
+	var assistantStatus string
+
+	switch {
+	case errors.Is(runErr, context.Canceled):
+		terminationReason = "cancelled"
+		runStatus = "cancelled"
+		assistantStatus = "cancelled"
+	case errors.Is(runErr, context.DeadlineExceeded):
+		terminationReason = "timeout"
+		runStatus = "failed"
+		assistantStatus = "failed"
+	case errors.Is(runErr, agent.ErrMaxIterations):
+		terminationReason = "max_iterations"
+		runStatus = "failed"
+		assistantStatus = "failed"
+	case runErr != nil:
+		terminationReason = "model_error"
+		runStatus = "failed"
+		assistantStatus = "failed"
+	default:
+		terminationReason = "completed"
+		runStatus = "completed"
+		assistantStatus = "completed"
+		assistantMessage.Content = result.Final.Content
 	}
-	assistantMessage.Content = result.Final.Content
-	assistantMessage.Status = "completed"
-	if err := s.repository.UpdateMessage(ctx, userID, assistantMessage); err != nil {
+
+	assistantMessage.Status = assistantStatus
+
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+
+	if err := s.repository.UpdateMessage(cleanupCtx, userID, assistantMessage); err != nil {
 		return AskResult{}, fmt.Errorf("save assistant message: %w", err)
 	}
-	if err := s.repository.SaveReasoningSteps(ctx, userID, assistantMessage.ID, steps); err != nil {
+
+	if err := s.repository.SaveReasoningSteps(cleanupCtx, userID, assistantMessage.ID, steps); err != nil {
 		return AskResult{}, fmt.Errorf("save reasoning steps: %w", err)
 	}
-	emit("answer.delta", map[string]any{"messageId": assistantMessage.ID, "text": assistantMessage.Content, "index": 0})
-	emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
-	if err := s.repository.SaveStreamEvents(ctx, userID, run.ID, events); err != nil {
+
+	if len(modelInvocations) > 0 {
+		if err := s.repository.SaveAgentModelInvocations(cleanupCtx, userID, modelInvocations); err != nil {
+			return AskResult{}, fmt.Errorf("save model invocations: %w", err)
+		}
+	}
+
+	finalState := ResponseRunFinalState{
+		ID:                run.ID,
+		Status:            runStatus,
+		TerminationReason: terminationReason,
+		PromptTokens:      totalPromptTokens,
+		CompletionTokens:  totalCompletionTokens,
+		ReasoningTokens:   totalReasoningTokens,
+		TotalTokens:       totalTokens,
+		LatencyMS:         totalLatencyMs,
+		CompletedAt:       completedAt,
+	}
+	if err := s.repository.UpdateResponseRunFinalState(cleanupCtx, finalState); err != nil {
+		return AskResult{}, fmt.Errorf("update response run final state: %w", err)
+	}
+
+	if runErr != nil {
+		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "answer generation failed"})
+	} else {
+		emit("answer.delta", map[string]any{"messageId": assistantMessage.ID, "text": assistantMessage.Content, "index": 0})
+		emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
+	}
+
+	if err := s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events); err != nil {
 		return AskResult{}, fmt.Errorf("save stream events: %w", err)
 	}
+
 	if completed, err := s.repository.GetResponseRun(ctx, userID, run.ID); err == nil {
 		run = completed
+	}
+
+	if runErr != nil {
+		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(CodeDependency, "answer generation failed", runErr)
 	}
 	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
 }

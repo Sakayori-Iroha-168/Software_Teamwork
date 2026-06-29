@@ -46,9 +46,17 @@ type FunctionTool struct {
 	Parameters  any    `json:"parameters"`
 }
 
+type TokenUsage struct {
+	PromptTokens     int
+	CompletionTokens int
+	ReasoningTokens  int
+	TotalTokens      int
+}
+
 type Completion struct {
 	Message      Message
 	FinishReason string
+	Usage        TokenUsage
 }
 
 // ToolResult is a normalized MCP result suitable for a role=tool message.

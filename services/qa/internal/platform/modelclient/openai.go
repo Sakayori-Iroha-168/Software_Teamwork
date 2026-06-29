@@ -75,11 +75,19 @@ type completionRequest struct {
 	Stream     bool                   `json:"stream"`
 }
 
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
 type completionResponse struct {
 	Choices []struct {
 		Message      agent.Message `json:"message"`
 		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
+	Usage Usage `json:"usage"`
 }
 
 func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools []agent.ToolDefinition) (agent.Completion, error) {
@@ -134,5 +142,14 @@ func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools [
 		return agent.Completion{}, errors.New("completion response has no choices")
 	}
 	choice := decoded.Choices[0]
-	return agent.Completion{Message: choice.Message, FinishReason: choice.FinishReason}, nil
+	return agent.Completion{
+		Message:      choice.Message,
+		FinishReason: choice.FinishReason,
+		Usage: agent.TokenUsage{
+			PromptTokens:     decoded.Usage.PromptTokens,
+			CompletionTokens: decoded.Usage.CompletionTokens,
+			ReasoningTokens:  decoded.Usage.ReasoningTokens,
+			TotalTokens:      decoded.Usage.TotalTokens,
+		},
+	}, nil
 }

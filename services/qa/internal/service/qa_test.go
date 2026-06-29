@@ -10,11 +10,12 @@ import (
 )
 
 type fakeRepository struct {
-	conversation Conversation
-	messages     []Message
-	savedSteps   []ReasoningStep
-	savedEvents  []StreamEvent
-	run          ResponseRun
+	conversation     Conversation
+	messages         []Message
+	savedSteps       []ReasoningStep
+	savedEvents      []StreamEvent
+	run              ResponseRun
+	savedInvocations []AgentModelInvocationSave
 }
 
 func (r *fakeRepository) CreateConversation(_ context.Context, value Conversation) (Conversation, error) {
@@ -35,9 +36,9 @@ func (*fakeRepository) DeleteConversation(context.Context, string, string) error
 func (r *fakeRepository) ListMessages(context.Context, string, string, int, int) (Page[Message], error) {
 	return Page[Message]{Items: append([]Message(nil), r.messages...), Page: 1, PageSize: 100, Total: len(r.messages)}, nil
 }
-func (r *fakeRepository) AppendMessages(_ context.Context, _, sessionID string, values ...Message) (ResponseRun, error) {
+func (r *fakeRepository) AppendMessages(_ context.Context, _, sessionID, _, _ string, maxIterations int, values ...Message) (ResponseRun, error) {
 	r.messages = append(r.messages, values...)
-	r.run = ResponseRun{ID: "run-id", SessionID: sessionID, UserMessageID: values[0].ID, AssistantMessageID: values[1].ID, Status: "running", MaxIterations: 5, CreatedAt: values[0].CreatedAt}
+	r.run = ResponseRun{ID: "run-id", SessionID: sessionID, UserMessageID: values[0].ID, AssistantMessageID: values[1].ID, Status: "running", MaxIterations: maxIterations, CreatedAt: values[0].CreatedAt}
 	return r.run, nil
 }
 func (r *fakeRepository) SaveStreamEvents(_ context.Context, _, _ string, events []StreamEvent) error {
@@ -61,6 +62,70 @@ func (r *fakeRepository) SaveReasoningSteps(_ context.Context, _, _ string, step
 	r.savedSteps = append([]ReasoningStep(nil), steps...)
 	return nil
 }
+func (r *fakeRepository) SaveAgentModelInvocations(_ context.Context, _ string, invocations []AgentModelInvocationSave) error {
+	r.savedInvocations = append([]AgentModelInvocationSave(nil), invocations...)
+	return nil
+}
+func (r *fakeRepository) UpdateResponseRunFinalState(_ context.Context, state ResponseRunFinalState) error {
+	r.run.Status = state.Status
+	r.run.TerminationReason = &state.TerminationReason
+	r.run.PromptTokens = state.PromptTokens
+	r.run.CompletionTokens = state.CompletionTokens
+	r.run.ReasoningTokens = state.ReasoningTokens
+	r.run.TotalTokens = state.TotalTokens
+	r.run.LatencyMS = state.LatencyMS
+	r.run.CompletedAt = state.CompletedAt
+	return nil
+}
+func (*fakeRepository) CancelResponseRun(context.Context, string, string) (ResponseRun, error) {
+	return ResponseRun{}, nil
+}
+func (*fakeRepository) ListStreamEvents(context.Context, string, string, string, int) ([]StreamEvent, error) {
+	return nil, nil
+}
+func (*fakeRepository) ListMessageCitations(context.Context, string, string) ([]Citation, error) {
+	return nil, nil
+}
+func (*fakeRepository) GetCitation(context.Context, string, string) (Citation, error) {
+	return Citation{}, nil
+}
+func (*fakeRepository) LookupCitations(context.Context, string, []string) ([]Citation, error) {
+	return nil, nil
+}
+func (*fakeRepository) ListToolCalls(context.Context, string, string) ([]AgentToolCall, error) {
+	return nil, nil
+}
+func (*fakeRepository) GetActiveQAConfigVersion(context.Context) (QAConfigVersion, error) {
+	return QAConfigVersion{}, nil
+}
+func (*fakeRepository) CreateQAConfigVersion(context.Context, string, CreateQAConfigVersionInput) (QAConfigVersion, error) {
+	return QAConfigVersion{}, nil
+}
+func (*fakeRepository) GetActiveLLMConfigVersion(context.Context) (LLMConfigVersion, error) {
+	return LLMConfigVersion{}, nil
+}
+func (*fakeRepository) CreateLLMConfigVersion(context.Context, string, CreateLLMConfigVersionInput) (LLMConfigVersion, error) {
+	return LLMConfigVersion{}, nil
+}
+func (*fakeRepository) TestLLMConnection(context.Context, string, LLMProfileTestInput) (LLMProfileTestResult, error) {
+	return LLMProfileTestResult{}, nil
+}
+func (*fakeRepository) CreateRetrievalTestRun(context.Context, string, RetrievalTestInput) (RetrievalTestRun, error) {
+	return RetrievalTestRun{}, nil
+}
+func (*fakeRepository) GetRetrievalTestRun(context.Context, string, string) (RetrievalTestRun, error) {
+	return RetrievalTestRun{}, nil
+}
+func (*fakeRepository) GetMetricsOverview(context.Context, int) (MetricsOverview, error) {
+	return MetricsOverview{}, nil
+}
+func (*fakeRepository) GetMetricsTrend(context.Context, int) (MetricsTrend, error) {
+	return MetricsTrend{}, nil
+}
+func (*fakeRepository) GetTopQueries(context.Context, int, int) ([]TopQuery, error) { return nil, nil }
+func (*fakeRepository) GetIntentDistribution(context.Context, int) ([]IntentDistribution, error) {
+	return nil, nil
+}
 
 type fakeAgentRunner struct {
 	input []agent.Message
@@ -76,7 +141,7 @@ func (r blockingAgentRunner) RunWithObserver(ctx context.Context, _ []agent.Mess
 func (r *fakeAgentRunner) RunWithObserver(_ context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
 	r.input = append([]agent.Message(nil), input...)
 	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
-	observer(agent.Event{Type: agent.EventModelCompleted, Iteration: 1})
+	observer(agent.Event{Type: agent.EventModelCompleted, Iteration: 1, FinishReason: "stop", TokenUsage: agent.TokenUsage{PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}, LatencyMs: 100})
 	final := agent.Message{Role: agent.RoleAssistant, Content: "测试回答"}
 	return agent.Result{Final: final, Messages: append(input, final), Iterations: 1}, nil
 }
@@ -94,7 +159,7 @@ func TestAskPersistsConversationMessagesAndDisplayableSteps(t *testing.T) {
 	now := time.Date(2026, 6, 28, 10, 0, 0, 0, time.UTC)
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Title: "新对话", Status: "active", CreatedAt: now, UpdatedAt: now}}
 	runner := &fakeAgentRunner{}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: runner, prompt: "system prompt"})
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: runner, prompt: "system prompt"}, repository)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +198,7 @@ func TestAskRejectsUnsupportedDataAnalysis(t *testing.T) {
 
 func TestListConversationsNormalizesDocumentedOptions(t *testing.T) {
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", Status: "active"}}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"})
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"}, repository)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +221,7 @@ func TestCancelActiveRunCancelsAgentAndPersistsCancelledMessage(t *testing.T) {
 	now := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}
 	runner := blockingAgentRunner{started: make(chan struct{})}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: runner, prompt: "system"})
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: runner, prompt: "system"}, repository)
 	if err != nil {
 		t.Fatal(err)
 	}

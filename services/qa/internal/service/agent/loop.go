@@ -34,6 +34,8 @@ type Event struct {
 	ToolName     string
 	FinishReason string
 	Err          error
+	TokenUsage   TokenUsage
+	LatencyMs    int64
 }
 
 type Observer func(Event)
@@ -109,8 +111,11 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 	messages := append([]Message(nil), input...)
 	for iteration := 1; iteration <= r.cfg.MaxIterations; iteration++ {
 		emit(observer, Event{Type: EventModelStarted, Iteration: iteration})
+		started := time.Now()
 		completion, err := r.model.Complete(ctx, messages, toolDefs)
+		latencyMs := time.Since(started).Milliseconds()
 		if err != nil {
+			emit(observer, Event{Type: EventModelCompleted, Iteration: iteration, FinishReason: "error", LatencyMs: latencyMs, Err: err})
 			return Result{}, fmt.Errorf("complete model iteration %d: %w", iteration, err)
 		}
 		assistant := completion.Message
@@ -118,10 +123,11 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 			assistant.Role = RoleAssistant
 		}
 		if assistant.Role != RoleAssistant {
+			emit(observer, Event{Type: EventModelCompleted, Iteration: iteration, FinishReason: "error", LatencyMs: latencyMs, Err: ErrInvalidResponse})
 			return Result{}, fmt.Errorf("%w: expected assistant role, got %q", ErrInvalidResponse, assistant.Role)
 		}
 		messages = append(messages, assistant)
-		emit(observer, Event{Type: EventModelCompleted, Iteration: iteration, FinishReason: completion.FinishReason})
+		emit(observer, Event{Type: EventModelCompleted, Iteration: iteration, FinishReason: completion.FinishReason, TokenUsage: completion.Usage, LatencyMs: latencyMs})
 
 		if len(assistant.ToolCalls) == 0 {
 			if strings.TrimSpace(assistant.Content) == "" {
