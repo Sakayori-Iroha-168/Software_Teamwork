@@ -23,7 +23,7 @@ type QAService interface {
 	GetConversation(context.Context, string, string) (service.Conversation, error)
 	UpdateConversation(context.Context, string, string, string, string) (service.Conversation, error)
 	DeleteConversation(context.Context, string, string) error
-	ListMessages(context.Context, string, string, int, int) (service.Page[service.Message], error)
+	ListMessages(context.Context, string, string, service.MessageListOptions) (service.Page[service.Message], error)
 	Ask(context.Context, string, string, service.AskInput, service.ProgressObserver) (service.AskResult, error)
 }
 
@@ -292,25 +292,17 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	page, pageSize, err := pagination(r, 50)
+	options, err := messageListOptions(r)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	includeThinking := true
-	if v := r.URL.Query().Get("includeThinking"); v != "" {
-		includeThinking = v != "false"
-	}
-	includeCitations := true
-	if v := r.URL.Query().Get("includeCitations"); v != "" {
-		includeCitations = v != "false"
-	}
-	result, err := s.qa.ListMessages(r.Context(), userID, r.PathValue("sessionId"), page, pageSize)
+	result, err := s.qa.ListMessages(r.Context(), userID, r.PathValue("sessionId"), options)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	if includeCitations && s.resources != nil {
+	if options.IncludeCitations && s.resources != nil {
 		for i := range result.Items {
 			if result.Items[i].Role == agent.RoleAssistant {
 				citations, _ := s.resources.ListMessageCitations(r.Context(), userID, result.Items[i].ID)
@@ -318,14 +310,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !includeThinking {
+	if !options.IncludeThinking {
 		for i := range result.Items {
-			result.Items[i].ReasoningSteps = nil
-		}
-	}
-	if !includeCitations {
-		for i := range result.Items {
-			result.Items[i].Citations = nil
+			result.Items[i].Thinking = nil
 		}
 	}
 	writePage(w, r, http.StatusOK, result)
@@ -475,6 +462,39 @@ func conversationListOptions(r *http.Request) (service.ConversationListOptions, 
 		Status:   r.URL.Query().Get("status"),
 		Sort:     r.URL.Query().Get("sort"),
 	}, nil
+}
+
+func messageListOptions(r *http.Request) (service.MessageListOptions, error) {
+	page, pageSize, err := pagination(r, 50)
+	if err != nil {
+		return service.MessageListOptions{}, err
+	}
+	includeThinking, err := boolQuery(r, "includeThinking", true)
+	if err != nil {
+		return service.MessageListOptions{}, err
+	}
+	includeCitations, err := boolQuery(r, "includeCitations", true)
+	if err != nil {
+		return service.MessageListOptions{}, err
+	}
+	return service.MessageListOptions{
+		Page:             page,
+		PageSize:         pageSize,
+		IncludeThinking:  includeThinking,
+		IncludeCitations: includeCitations,
+	}, nil
+}
+
+func boolQuery(r *http.Request, name string, defaultValue bool) (bool, error) {
+	raw := r.URL.Query().Get(name)
+	if raw == "" {
+		return defaultValue, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, service.ValidationError(map[string]string{name: "must be a boolean"})
+	}
+	return value, nil
 }
 
 func requestIDFromContext(ctx context.Context) string {
