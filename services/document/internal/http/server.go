@@ -86,26 +86,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /report-materials", s.handleCreateReportMaterial)
 	s.mux.HandleFunc("GET /report-materials/{materialId}", s.handleGetReportMaterial)
 	s.mux.HandleFunc("DELETE /report-materials/{materialId}", s.handleDeleteReportMaterial)
-	// reports / outlines / sections are implemented for real (C-03); the
-	// remaining report-generation resources (jobs, files, statistics,
-	// operation logs, settings) stay on the not-implemented scaffold below
-	// until their own tasks land.
 	s.registerReportRoutes()
-	s.mux.HandleFunc("GET /reports/{reportId}/jobs", s.handleNotImplemented)
-	s.mux.HandleFunc("POST /reports/{reportId}/jobs", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-jobs/{jobId}", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-jobs/{jobId}/attempts", s.handleNotImplemented)
-	s.mux.HandleFunc("POST /report-jobs/{jobId}/attempts", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /reports/{reportId}/events", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-files", s.handleNotImplemented)
-	s.mux.HandleFunc("POST /report-files", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-files/{reportFileId}", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-files/{reportFileId}/content", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-statistics/overview", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-statistics/daily", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-operation-logs", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-settings", s.handleNotImplemented)
-	s.mux.HandleFunc("PATCH /report-settings", s.handleNotImplemented)
+	s.registerReportWorkflowRoutes()
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 

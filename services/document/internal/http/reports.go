@@ -36,6 +36,22 @@ type ReportService interface {
 
 	ListSectionVersions(ctx context.Context, reqCtx service.RequestContext, reportID, sectionID string) ([]service.ReportSectionVersion, error)
 	CreateSectionVersion(ctx context.Context, reqCtx service.RequestContext, reportID, sectionID string, input service.CreateSectionVersionInput) (service.ReportSectionVersion, error)
+
+	ListReportJobs(ctx context.Context, reqCtx service.RequestContext, reportID string) ([]service.ReportJob, error)
+	CreateReportJob(ctx context.Context, reqCtx service.RequestContext, reportID string, input service.CreateReportJobInput) (service.ReportJob, error)
+	GetReportJob(ctx context.Context, reqCtx service.RequestContext, jobID string) (service.ReportJob, error)
+	ListReportJobAttempts(ctx context.Context, reqCtx service.RequestContext, jobID string) ([]service.ReportJobAttempt, error)
+	CreateReportJobAttempt(ctx context.Context, reqCtx service.RequestContext, jobID string, input service.CreateReportJobAttemptInput) (service.ReportJobAttempt, error)
+	ListReportEvents(ctx context.Context, reqCtx service.RequestContext, reportID string) ([]service.ReportEvent, error)
+	CreateReportFile(ctx context.Context, reqCtx service.RequestContext, input service.CreateReportFileInput) (service.ReportFile, error)
+	ListReportFiles(ctx context.Context, reqCtx service.RequestContext, filter service.ReportFileListFilter) (service.ReportFileListResult, error)
+	GetReportFile(ctx context.Context, reqCtx service.RequestContext, fileID string) (service.ReportFile, error)
+	BuildReportFileContent(ctx context.Context, reqCtx service.RequestContext, fileID string) (service.ReportFile, []byte, error)
+	GetReportStatisticsOverview(ctx context.Context, reqCtx service.RequestContext) (service.ReportStatisticsOverview, error)
+	ListDailyReportStatistics(ctx context.Context, reqCtx service.RequestContext, days int) ([]service.ReportDailyStatistic, error)
+	ListReportOperationLogs(ctx context.Context, reqCtx service.RequestContext, filter service.ReportOperationLogFilter) (service.ReportOperationLogListResult, error)
+	GetReportSettings(ctx context.Context, reqCtx service.RequestContext) (service.ReportSettings, error)
+	UpdateReportSettings(ctx context.Context, reqCtx service.RequestContext, settings service.ReportSettings) (service.UpdateReportSettingsResult, error)
 }
 
 // registerReportRoutes wires up the reports / outlines / sections resource

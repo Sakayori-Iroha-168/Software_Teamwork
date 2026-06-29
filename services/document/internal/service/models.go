@@ -269,7 +269,100 @@ type ReportEvent struct {
 	JobID     string
 	EventType string
 	Message   string
+	Payload   map[string]any
 	CreatedAt time.Time
+}
+
+type ReportFile struct {
+	ID          string
+	ReportID    string
+	JobID       string
+	Filename    string
+	Format      string
+	FileSize    int64
+	Status      JobStatus
+	ContentPath string
+	CreatedBy   string
+	CreatedAt   time.Time
+}
+
+type ReportFileListFilter struct {
+	Page      int
+	PageSize  int
+	ReportID  string
+	CreatorID string
+}
+
+type ReportFileListResult struct {
+	Items []ReportFile
+	Page  PageMeta
+}
+
+type CreateReportFileInput struct {
+	ReportID     string
+	Format       string
+	TemplateID   string
+	StyleOptions map[string]any
+}
+
+type ReportStatisticsOverview struct {
+	ReportCount     int
+	TemplateCount   int
+	MaterialCount   int
+	JobStatusCounts map[string]int
+	RecentDays      int
+}
+
+type ReportDailyStatistic struct {
+	Date           string
+	ReportType     string
+	CreatedCount   int
+	GeneratedCount int
+	FailedCount    int
+	ExportedCount  int
+}
+
+type ReportOperationLog struct {
+	ID               string
+	OperatorID       string
+	OperatorName     string
+	OperationType    string
+	TargetType       string
+	TargetID         string
+	RequestID        string
+	RequestSource    string
+	ToolName         string
+	ParameterSummary map[string]any
+	OperationResult  string
+	ErrorMessage     string
+	Metadata         map[string]any
+	CreatedAt        time.Time
+}
+
+type ReportOperationLogFilter struct {
+	Page          int
+	PageSize      int
+	TargetType    string
+	TargetID      string
+	OperationType string
+	RequestID     string
+	RequestSource string
+	ToolName      string
+}
+
+type ReportOperationLogListResult struct {
+	Items []ReportOperationLog
+	Page  PageMeta
+}
+
+type ReportSettings struct {
+	LLM              map[string]any
+	DefaultTemplates map[string]string
+	File             map[string]any
+}
+
+type UpdateReportSettingsResult struct {
+	UpdatedAt time.Time
 }
 
 // ReportOutlineNode is one node of the multi-level outline tree stored as

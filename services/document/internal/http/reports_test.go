@@ -162,6 +162,57 @@ func (f *fakeReportService) ListSectionVersions(context.Context, service.Request
 func (f *fakeReportService) CreateSectionVersion(context.Context, service.RequestContext, string, string, service.CreateSectionVersionInput) (service.ReportSectionVersion, error) {
 	return service.ReportSectionVersion{}, nil
 }
+func (f *fakeReportService) ListReportJobs(context.Context, service.RequestContext, string) ([]service.ReportJob, error) {
+	return nil, nil
+}
+func (f *fakeReportService) CreateReportJob(_ context.Context, _ service.RequestContext, reportID string, input service.CreateReportJobInput) (service.ReportJob, error) {
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	return service.ReportJob{ID: "job-1", ReportID: reportID, JobType: input.JobType, Status: service.JobStatusSucceeded, CreatedAt: now}, nil
+}
+func (f *fakeReportService) GetReportJob(context.Context, service.RequestContext, string) (service.ReportJob, error) {
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	return service.ReportJob{ID: "job-1", ReportID: "report-1", JobType: service.JobTypeOutlineGeneration, Status: service.JobStatusSucceeded, CreatedAt: now}, nil
+}
+func (f *fakeReportService) ListReportJobAttempts(context.Context, service.RequestContext, string) ([]service.ReportJobAttempt, error) {
+	return nil, nil
+}
+func (f *fakeReportService) CreateReportJobAttempt(context.Context, service.RequestContext, string, service.CreateReportJobAttemptInput) (service.ReportJobAttempt, error) {
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	return service.ReportJobAttempt{ID: "attempt-1", JobID: "job-1", AttemptNumber: 2, Status: service.JobStatusSucceeded, CreatedAt: now}, nil
+}
+func (f *fakeReportService) ListReportEvents(context.Context, service.RequestContext, string) ([]service.ReportEvent, error) {
+	return nil, nil
+}
+func (f *fakeReportService) CreateReportFile(context.Context, service.RequestContext, service.CreateReportFileInput) (service.ReportFile, error) {
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	return service.ReportFile{ID: "file-1", ReportID: "report-1", Filename: "report.docx", Format: "docx", Status: service.JobStatusSucceeded, ContentPath: "/api/v1/report-files/file-1/content", CreatedAt: now}, nil
+}
+func (f *fakeReportService) ListReportFiles(context.Context, service.RequestContext, service.ReportFileListFilter) (service.ReportFileListResult, error) {
+	return service.ReportFileListResult{Page: service.PageMeta{Page: 1, PageSize: 20, Total: 0}}, nil
+}
+func (f *fakeReportService) GetReportFile(context.Context, service.RequestContext, string) (service.ReportFile, error) {
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	return service.ReportFile{ID: "file-1", ReportID: "report-1", Filename: "report.docx", Format: "docx", Status: service.JobStatusSucceeded, CreatedAt: now}, nil
+}
+func (f *fakeReportService) BuildReportFileContent(context.Context, service.RequestContext, string) (service.ReportFile, []byte, error) {
+	now := time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)
+	return service.ReportFile{ID: "file-1", ReportID: "report-1", Filename: "report.docx", Format: "docx", Status: service.JobStatusSucceeded, CreatedAt: now}, []byte("PKfake"), nil
+}
+func (f *fakeReportService) GetReportStatisticsOverview(context.Context, service.RequestContext) (service.ReportStatisticsOverview, error) {
+	return service.ReportStatisticsOverview{ReportCount: 1, TemplateCount: 0, MaterialCount: 0, JobStatusCounts: map[string]int{}, RecentDays: 30}, nil
+}
+func (f *fakeReportService) ListDailyReportStatistics(context.Context, service.RequestContext, int) ([]service.ReportDailyStatistic, error) {
+	return nil, nil
+}
+func (f *fakeReportService) ListReportOperationLogs(context.Context, service.RequestContext, service.ReportOperationLogFilter) (service.ReportOperationLogListResult, error) {
+	return service.ReportOperationLogListResult{Page: service.PageMeta{Page: 1, PageSize: 20, Total: 0}}, nil
+}
+func (f *fakeReportService) GetReportSettings(context.Context, service.RequestContext) (service.ReportSettings, error) {
+	return service.ReportSettings{LLM: map[string]any{"provider": "ai-gateway"}, DefaultTemplates: map[string]string{}, File: map[string]any{"defaultFormat": "docx"}}, nil
+}
+func (f *fakeReportService) UpdateReportSettings(context.Context, service.RequestContext, service.ReportSettings) (service.UpdateReportSettingsResult, error) {
+	return service.UpdateReportSettingsResult{UpdatedAt: time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC)}, nil
+}
 
 func valueOrEmpty(value *string) string {
 	if value == nil {
@@ -234,6 +285,44 @@ func TestCreateReportValidationError(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestReportWorkflowCreateHandlersReturnAccepted(t *testing.T) {
+	server := NewServer(Config{ReportService: newFakeReportService()})
+	cases := []struct {
+		name string
+		path string
+		body string
+	}{
+		{
+			name: "create report job",
+			path: "/reports/report-1/jobs",
+			body: `{"jobType":"outline_generation"}`,
+		},
+		{
+			name: "create report job attempt",
+			path: "/report-jobs/job-1/attempts",
+			body: `{"reason":"retry after failure"}`,
+		},
+		{
+			name: "create report file",
+			path: "/report-files",
+			body: `{"reportId":"report-1","format":"docx"}`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, tc.path, strings.NewReader(tc.body))
+			req.Header.Set("X-User-Id", "user-1")
+			rec := httptest.NewRecorder()
+			server.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusAccepted, rec.Body.String())
+			}
+		})
 	}
 }
 

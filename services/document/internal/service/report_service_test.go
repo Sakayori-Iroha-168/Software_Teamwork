@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -13,6 +14,12 @@ type fakeReportRepository struct {
 	outlines       map[string]ReportOutline
 	sections       map[string]ReportSection
 	sectionVersion map[string][]ReportSectionVersion
+	jobs           map[string]ReportJob
+	attempts       map[string][]ReportJobAttempt
+	events         map[string][]ReportEvent
+	files          map[string]ReportFile
+	fileContents   map[string][]byte
+	settings       ReportSettings
 }
 
 func newFakeReportRepository() *fakeReportRepository {
@@ -21,6 +28,11 @@ func newFakeReportRepository() *fakeReportRepository {
 		outlines:       map[string]ReportOutline{},
 		sections:       map[string]ReportSection{},
 		sectionVersion: map[string][]ReportSectionVersion{},
+		jobs:           map[string]ReportJob{},
+		attempts:       map[string][]ReportJobAttempt{},
+		events:         map[string][]ReportEvent{},
+		files:          map[string]ReportFile{},
+		fileContents:   map[string][]byte{},
 	}
 }
 
@@ -54,6 +66,21 @@ func (f *fakeReportRepository) UpdateReport(_ context.Context, value Report) (Re
 	}
 	f.reports[value.ID] = value
 	return value, nil
+}
+
+func (f *fakeReportRepository) UpdateReportWorkflowState(_ context.Context, value Report) (Report, error) {
+	report, ok := f.reports[value.ID]
+	if !ok {
+		return Report{}, NewError(CodeNotFound, "report not found", nil)
+	}
+	report.Status = value.Status
+	report.LatestJobID = value.LatestJobID
+	report.LatestReportFileID = value.LatestReportFileID
+	report.GeneratedAt = value.GeneratedAt
+	report.ExportedAt = value.ExportedAt
+	report.UpdatedAt = value.UpdatedAt
+	f.reports[value.ID] = report
+	return report, nil
 }
 
 func (f *fakeReportRepository) SoftDeleteReport(_ context.Context, id string, deletedAt time.Time) (Report, error) {
@@ -150,6 +177,137 @@ func (f *fakeReportRepository) ListReportSectionVersions(_ context.Context, sect
 	return f.sectionVersion[sectionID], nil
 }
 
+func (f *fakeReportRepository) CreateReportJob(_ context.Context, value ReportJob) (ReportJob, error) {
+	f.jobs[value.ID] = value
+	return value, nil
+}
+
+func (f *fakeReportRepository) FindReportJobByID(_ context.Context, id string) (ReportJob, error) {
+	job, ok := f.jobs[id]
+	if !ok {
+		return ReportJob{}, NewError(CodeNotFound, "report job not found", nil)
+	}
+	return job, nil
+}
+
+func (f *fakeReportRepository) ListReportJobs(_ context.Context, reportID string) ([]ReportJob, error) {
+	result := []ReportJob{}
+	for _, job := range f.jobs {
+		if job.ReportID == reportID {
+			result = append(result, job)
+		}
+	}
+	return result, nil
+}
+
+func (f *fakeReportRepository) UpdateReportJobRetryState(_ context.Context, id string, retryCount int, status JobStatus, updatedAt time.Time) (ReportJob, error) {
+	job, ok := f.jobs[id]
+	if !ok {
+		return ReportJob{}, NewError(CodeNotFound, "report job not found", nil)
+	}
+	job.RetryCount = retryCount
+	job.Status = status
+	job.ErrorCode = ""
+	job.ErrorMessage = ""
+	if job.StartedAt == nil {
+		job.StartedAt = &updatedAt
+	}
+	job.FinishedAt = &updatedAt
+	f.jobs[id] = job
+	return job, nil
+}
+
+func (f *fakeReportRepository) CreateReportJobAttempt(_ context.Context, value ReportJobAttempt) (ReportJobAttempt, error) {
+	f.attempts[value.JobID] = append(f.attempts[value.JobID], value)
+	return value, nil
+}
+
+func (f *fakeReportRepository) ListReportJobAttempts(_ context.Context, jobID string) ([]ReportJobAttempt, error) {
+	return f.attempts[jobID], nil
+}
+
+func (f *fakeReportRepository) CreateReportEvent(_ context.Context, value ReportEvent) (ReportEvent, error) {
+	f.events[value.ReportID] = append(f.events[value.ReportID], value)
+	return value, nil
+}
+
+func (f *fakeReportRepository) ListReportEvents(_ context.Context, reportID string) ([]ReportEvent, error) {
+	return f.events[reportID], nil
+}
+
+func (f *fakeReportRepository) CreateReportFile(_ context.Context, value ReportFile) (ReportFile, error) {
+	f.files[value.ID] = value
+	return value, nil
+}
+
+func (f *fakeReportRepository) SaveReportFileContent(_ context.Context, reportFileID string, content []byte, _ time.Time) error {
+	f.fileContents[reportFileID] = append([]byte(nil), content...)
+	return nil
+}
+
+func (f *fakeReportRepository) GetReportFileByID(_ context.Context, id string) (ReportFile, error) {
+	file, ok := f.files[id]
+	if !ok {
+		return ReportFile{}, NewError(CodeNotFound, "report file not found", nil)
+	}
+	return file, nil
+}
+
+func (f *fakeReportRepository) GetReportFileContent(_ context.Context, reportFileID string) ([]byte, error) {
+	content, ok := f.fileContents[reportFileID]
+	if !ok {
+		return nil, NewError(CodeNotFound, "report file content not found", nil)
+	}
+	return append([]byte(nil), content...), nil
+}
+
+func (f *fakeReportRepository) ListReportFiles(_ context.Context, filter ReportFileListFilter) ([]ReportFile, int, error) {
+	result := []ReportFile{}
+	for _, file := range f.files {
+		if filter.ReportID != "" && file.ReportID != filter.ReportID {
+			continue
+		}
+		if filter.CreatorID != "" {
+			report, ok := f.reports[file.ReportID]
+			if !ok || report.CreatorID != filter.CreatorID || report.DeletedAt != nil {
+				continue
+			}
+		}
+		result = append(result, file)
+	}
+	return result, len(result), nil
+}
+
+func (f *fakeReportRepository) GetReportStatisticsOverview(context.Context, int) (ReportStatisticsOverview, error) {
+	return ReportStatisticsOverview{
+		ReportCount:     len(f.reports),
+		TemplateCount:   0,
+		MaterialCount:   0,
+		JobStatusCounts: map[string]int{},
+		RecentDays:      30,
+	}, nil
+}
+
+func (f *fakeReportRepository) ListDailyReportStatistics(context.Context, int) ([]ReportDailyStatistic, error) {
+	return nil, nil
+}
+
+func (f *fakeReportRepository) ListReportOperationLogs(context.Context, ReportOperationLogFilter) ([]ReportOperationLog, int, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeReportRepository) GetReportSettings(context.Context) (ReportSettings, error) {
+	if f.settings.File == nil {
+		return ReportSettings{LLM: map[string]any{"provider": "ai-gateway"}, DefaultTemplates: map[string]string{}, File: map[string]any{"defaultFormat": "docx"}}, nil
+	}
+	return f.settings, nil
+}
+
+func (f *fakeReportRepository) UpdateReportSettings(_ context.Context, value ReportSettings, _ string, updatedAt time.Time) (UpdateReportSettingsResult, error) {
+	f.settings = value
+	return UpdateReportSettingsResult{UpdatedAt: updatedAt}, nil
+}
+
 func newTestService() (*ReportService, *fakeReportRepository) {
 	repo := newFakeReportRepository()
 	svc := NewReportService(repo)
@@ -215,6 +373,100 @@ func TestListReportsScopedToOwnerForStandardUser(t *testing.T) {
 	}
 	if result.Page.Total != 1 || len(result.Items) != 1 || result.Items[0].CreatorID != "owner-1" {
 		t.Fatalf("expected only owner-1's report, got %+v", result)
+	}
+}
+
+func TestListReportFilesScopedToOwnerForStandardUser(t *testing.T) {
+	svc, repo := newTestService()
+	ownerReport := mustCreateReport(t, svc, "owner-1")
+	otherReport := mustCreateReport(t, svc, "owner-2")
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	repo.files["file-owner"] = ReportFile{ID: "file-owner", ReportID: ownerReport.ID, Filename: "owner.docx", CreatedAt: now}
+	repo.files["file-other"] = ReportFile{ID: "file-other", ReportID: otherReport.ID, Filename: "other.docx", CreatedAt: now}
+
+	result, err := svc.ListReportFiles(context.Background(), RequestContext{UserID: "owner-1"}, ReportFileListFilter{})
+	if err != nil {
+		t.Fatalf("ListReportFiles() error = %v", err)
+	}
+	if result.Page.Total != 1 || len(result.Items) != 1 || result.Items[0].ReportID != ownerReport.ID {
+		t.Fatalf("expected only owner-1's file, got %+v", result)
+	}
+}
+
+func TestAdminCanListAllReportFiles(t *testing.T) {
+	svc, repo := newTestService()
+	ownerReport := mustCreateReport(t, svc, "owner-1")
+	otherReport := mustCreateReport(t, svc, "owner-2")
+	now := time.Date(2026, 6, 29, 12, 0, 0, 0, time.UTC)
+	repo.files["file-owner"] = ReportFile{ID: "file-owner", ReportID: ownerReport.ID, Filename: "owner.docx", CreatedAt: now}
+	repo.files["file-other"] = ReportFile{ID: "file-other", ReportID: otherReport.ID, Filename: "other.docx", CreatedAt: now}
+
+	result, err := svc.ListReportFiles(context.Background(), RequestContext{UserID: "admin-1", Roles: []string{"admin"}}, ReportFileListFilter{})
+	if err != nil {
+		t.Fatalf("admin ListReportFiles() error = %v", err)
+	}
+	if result.Page.Total != 2 || len(result.Items) != 2 {
+		t.Fatalf("expected admin to see all files, got %+v", result)
+	}
+}
+
+func TestGlobalReportOperationsRequireAdmin(t *testing.T) {
+	svc, _ := newTestService()
+	actor := RequestContext{UserID: "owner-1"}
+
+	cases := []struct {
+		name string
+		run  func() error
+	}{
+		{
+			name: "statistics overview",
+			run: func() error {
+				_, err := svc.GetReportStatisticsOverview(context.Background(), actor)
+				return err
+			},
+		},
+		{
+			name: "daily statistics",
+			run: func() error {
+				_, err := svc.ListDailyReportStatistics(context.Background(), actor, 30)
+				return err
+			},
+		},
+		{
+			name: "operation logs",
+			run: func() error {
+				_, err := svc.ListReportOperationLogs(context.Background(), actor, ReportOperationLogFilter{})
+				return err
+			},
+		},
+		{
+			name: "get settings",
+			run: func() error {
+				_, err := svc.GetReportSettings(context.Background(), actor)
+				return err
+			},
+		},
+		{
+			name: "update settings",
+			run: func() error {
+				_, err := svc.UpdateReportSettings(context.Background(), actor, ReportSettings{
+					LLM:              map[string]any{"provider": "ai-gateway"},
+					DefaultTemplates: map[string]string{},
+					File:             map[string]any{"defaultFormat": "docx"},
+				})
+				return err
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			appErr, ok := Classify(err)
+			if !ok || appErr.Code != CodeForbidden {
+				t.Fatalf("expected forbidden error, got %v", err)
+			}
+		})
 	}
 }
 
@@ -674,5 +926,162 @@ func TestCreateSectionVersionDoesNotRequireRegeneration(t *testing.T) {
 	}
 	if second.Version != 2 {
 		t.Fatalf("expected version 2, got %d", second.Version)
+	}
+}
+
+func TestCreateReportJobsGenerateOutlineAndContent(t *testing.T) {
+	svc, repo := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1", RequestID: "req-test"}
+
+	outlineJob, err := svc.CreateReportJob(context.Background(), actor, report.ID, CreateReportJobInput{
+		JobType:     JobTypeOutlineGeneration,
+		TargetScope: "outline",
+	})
+	if err != nil {
+		t.Fatalf("CreateReportJob(outline) error = %v", err)
+	}
+	if outlineJob.Status != JobStatusSucceeded {
+		t.Fatalf("outline job status = %q", outlineJob.Status)
+	}
+	outlines, err := svc.ListOutlines(context.Background(), actor, report.ID)
+	if err != nil {
+		t.Fatalf("ListOutlines() error = %v", err)
+	}
+	if len(outlines) != 1 || len(outlines[0].Sections) == 0 {
+		t.Fatalf("expected generated outline, got %+v", outlines)
+	}
+
+	contentJob, err := svc.CreateReportJob(context.Background(), actor, report.ID, CreateReportJobInput{
+		JobType:     JobTypeContentGeneration,
+		TargetScope: "report",
+	})
+	if err != nil {
+		t.Fatalf("CreateReportJob(content) error = %v", err)
+	}
+	if contentJob.Status != JobStatusSucceeded {
+		t.Fatalf("content job status = %q", contentJob.Status)
+	}
+	sections, err := svc.ListSections(context.Background(), actor, report.ID)
+	if err != nil {
+		t.Fatalf("ListSections() error = %v", err)
+	}
+	if len(sections) != len(outlines[0].Sections) {
+		t.Fatalf("sections len = %d, want %d", len(sections), len(outlines[0].Sections))
+	}
+	for _, section := range sections {
+		if section.GenerationStatus != JobStatusSucceeded || section.Content == "" || section.LastJobID != contentJob.ID {
+			t.Fatalf("unexpected generated section: %+v", section)
+		}
+	}
+	events := repo.events[report.ID]
+	if len(events) < 4 {
+		t.Fatalf("expected job lifecycle events, got %+v", events)
+	}
+}
+
+func TestCreateReportJobAttemptUpdatesRetryState(t *testing.T) {
+	svc, repo := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+	job, err := svc.CreateReportJob(context.Background(), actor, report.ID, CreateReportJobInput{
+		JobType: JobTypeOutlineGeneration,
+	})
+	if err != nil {
+		t.Fatalf("CreateReportJob() error = %v", err)
+	}
+	failedJob := repo.jobs[job.ID]
+	failedJob.Status = JobStatusFailed
+	repo.jobs[job.ID] = failedJob
+
+	attempt, err := svc.CreateReportJobAttempt(context.Background(), actor, job.ID, CreateReportJobAttemptInput{
+		Reason: "retry after frontend error",
+	})
+	if err != nil {
+		t.Fatalf("CreateReportJobAttempt() error = %v", err)
+	}
+	if attempt.AttemptNumber != 2 || attempt.Status != JobStatusSucceeded {
+		t.Fatalf("unexpected retry attempt: %+v", attempt)
+	}
+	updated := repo.jobs[job.ID]
+	if updated.RetryCount != 1 || updated.Status != JobStatusSucceeded {
+		t.Fatalf("job retry state = retry_count:%d status:%s", updated.RetryCount, updated.Status)
+	}
+}
+
+func TestCreateReportJobAttemptRejectsSucceededJob(t *testing.T) {
+	svc, _ := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+	job, err := svc.CreateReportJob(context.Background(), actor, report.ID, CreateReportJobInput{
+		JobType: JobTypeOutlineGeneration,
+	})
+	if err != nil {
+		t.Fatalf("CreateReportJob() error = %v", err)
+	}
+
+	_, err = svc.CreateReportJobAttempt(context.Background(), actor, job.ID, CreateReportJobAttemptInput{
+		Reason: "retry should be rejected",
+	})
+	appErr, ok := Classify(err)
+	if !ok || appErr.Code != CodeConflict {
+		t.Fatalf("expected conflict retrying succeeded job, got %v", err)
+	}
+}
+
+func TestCreateReportFileAndBuildContent(t *testing.T) {
+	svc, repo := newTestService()
+	report := mustCreateReport(t, svc, "owner-1")
+	actor := RequestContext{UserID: "owner-1"}
+	if _, err := svc.CreateReportJob(context.Background(), actor, report.ID, CreateReportJobInput{JobType: JobTypeOutlineGeneration}); err != nil {
+		t.Fatalf("CreateReportJob(outline) error = %v", err)
+	}
+	if _, err := svc.CreateReportJob(context.Background(), actor, report.ID, CreateReportJobInput{JobType: JobTypeContentGeneration}); err != nil {
+		t.Fatalf("CreateReportJob(content) error = %v", err)
+	}
+
+	file, err := svc.CreateReportFile(context.Background(), actor, CreateReportFileInput{
+		ReportID: report.ID,
+		Format:   "docx",
+	})
+	if err != nil {
+		t.Fatalf("CreateReportFile() error = %v", err)
+	}
+	if file.Status != JobStatusSucceeded || file.FileSize == 0 || file.ContentPath == "" {
+		t.Fatalf("unexpected report file: %+v", file)
+	}
+
+	_, content, err := svc.BuildReportFileContent(context.Background(), actor, file.ID)
+	if err != nil {
+		t.Fatalf("BuildReportFileContent() error = %v", err)
+	}
+	if len(content) < 100 || string(content[:2]) != "PK" {
+		t.Fatalf("expected docx zip content, len=%d prefix=%q", len(content), content[:2])
+	}
+	if file.FileSize != int64(len(content)) {
+		t.Fatalf("file size = %d, content len = %d", file.FileSize, len(content))
+	}
+
+	var sectionID string
+	for id, section := range repo.sections {
+		if section.ReportID == report.ID {
+			sectionID = id
+			break
+		}
+	}
+	if sectionID == "" {
+		t.Fatal("expected generated section to update")
+	}
+	updatedContent := "content edited after export"
+	if _, err := svc.UpdateSection(context.Background(), actor, report.ID, sectionID, UpdateSectionInput{Content: &updatedContent}); err != nil {
+		t.Fatalf("UpdateSection() error = %v", err)
+	}
+
+	_, contentAfterEdit, err := svc.BuildReportFileContent(context.Background(), actor, file.ID)
+	if err != nil {
+		t.Fatalf("BuildReportFileContent(after edit) error = %v", err)
+	}
+	if !bytes.Equal(contentAfterEdit, content) {
+		t.Fatal("expected old report file id to return the original exported snapshot")
 	}
 }

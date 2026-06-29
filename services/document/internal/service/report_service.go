@@ -16,6 +16,7 @@ type ReportRepository interface {
 	GetReportByID(ctx context.Context, id string) (Report, error)
 	ListReports(ctx context.Context, filter ReportListFilter) ([]Report, int, error)
 	UpdateReport(ctx context.Context, value Report) (Report, error)
+	UpdateReportWorkflowState(ctx context.Context, value Report) (Report, error)
 	SoftDeleteReport(ctx context.Context, id string, deletedAt time.Time) (Report, error)
 
 	CreateReportOutline(ctx context.Context, value ReportOutline) (ReportOutline, error)
@@ -30,6 +31,25 @@ type ReportRepository interface {
 
 	CreateReportSectionVersion(ctx context.Context, value ReportSectionVersion) (ReportSectionVersion, error)
 	ListReportSectionVersions(ctx context.Context, sectionID string) ([]ReportSectionVersion, error)
+
+	CreateReportJob(ctx context.Context, value ReportJob) (ReportJob, error)
+	FindReportJobByID(ctx context.Context, id string) (ReportJob, error)
+	ListReportJobs(ctx context.Context, reportID string) ([]ReportJob, error)
+	UpdateReportJobRetryState(ctx context.Context, id string, retryCount int, status JobStatus, updatedAt time.Time) (ReportJob, error)
+	CreateReportJobAttempt(ctx context.Context, value ReportJobAttempt) (ReportJobAttempt, error)
+	ListReportJobAttempts(ctx context.Context, jobID string) ([]ReportJobAttempt, error)
+	CreateReportEvent(ctx context.Context, value ReportEvent) (ReportEvent, error)
+	ListReportEvents(ctx context.Context, reportID string) ([]ReportEvent, error)
+	CreateReportFile(ctx context.Context, value ReportFile) (ReportFile, error)
+	SaveReportFileContent(ctx context.Context, reportFileID string, content []byte, createdAt time.Time) error
+	GetReportFileByID(ctx context.Context, id string) (ReportFile, error)
+	GetReportFileContent(ctx context.Context, reportFileID string) ([]byte, error)
+	ListReportFiles(ctx context.Context, filter ReportFileListFilter) ([]ReportFile, int, error)
+	GetReportStatisticsOverview(ctx context.Context, recentDays int) (ReportStatisticsOverview, error)
+	ListDailyReportStatistics(ctx context.Context, days int) ([]ReportDailyStatistic, error)
+	ListReportOperationLogs(ctx context.Context, filter ReportOperationLogFilter) ([]ReportOperationLog, int, error)
+	GetReportSettings(ctx context.Context) (ReportSettings, error)
+	UpdateReportSettings(ctx context.Context, value ReportSettings, updatedBy string, updatedAt time.Time) (UpdateReportSettingsResult, error)
 }
 
 type ReportListFilter struct {
@@ -118,6 +138,21 @@ type CreateSectionVersionInput struct {
 	Requirements string
 	Content      *string
 	Tables       *[]map[string]any
+}
+
+type CreateReportJobInput struct {
+	JobType      JobType
+	TargetScope  string
+	TargetID     string
+	SectionID    string
+	Requirements string
+	MaterialIDs  []string
+	Options      map[string]any
+}
+
+type CreateReportJobAttemptInput struct {
+	Reason  string
+	Options map[string]any
 }
 
 type ReportService struct {

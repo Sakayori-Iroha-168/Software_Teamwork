@@ -159,6 +159,53 @@ func (r *PostgresRepository) UpdateReport(ctx context.Context, value service.Rep
 	return report, nil
 }
 
+func (r *PostgresRepository) UpdateReportWorkflowState(ctx context.Context, value service.Report) (service.Report, error) {
+	reportID, err := parseUUID(value.ID)
+	if err != nil {
+		return service.Report{}, service.NewError(service.CodeValidation, "invalid report id", err)
+	}
+	latestJobID, err := parseOptionalUUIDField(value.LatestJobID, "latestJobId")
+	if err != nil {
+		return service.Report{}, err
+	}
+	latestReportFileID, err := parseOptionalUUIDField(value.LatestReportFileID, "latestReportFileId")
+	if err != nil {
+		return service.Report{}, err
+	}
+	row := r.db.QueryRow(ctx, `
+		UPDATE reports SET
+			status = $2,
+			latest_job_id = NULLIF($3, '')::uuid,
+			latest_report_file_id = NULLIF($4, '')::uuid,
+			generated_at = $5,
+			exported_at = $6,
+			updated_at = $7
+		WHERE id = $1
+		RETURNING
+			id::text, report_name, report_type, COALESCE(template_id::text, ''), topic,
+			COALESCE(specialty, ''), COALESCE(plant_or_business_object, ''),
+			COALESCE(report_year, 0), status, COALESCE(creator_id, ''),
+			COALESCE(creator_name, ''), source, COALESCE(latest_job_id::text, ''),
+			COALESCE(latest_report_file_id::text, ''), generated_at, exported_at,
+			created_at, updated_at, deleted_at`,
+		reportID,
+		string(value.Status),
+		latestJobID,
+		latestReportFileID,
+		value.GeneratedAt,
+		value.ExportedAt,
+		value.UpdatedAt,
+	)
+	report, err := scanReport(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return service.Report{}, service.NewError(service.CodeNotFound, "report not found", err)
+		}
+		return service.Report{}, fmt.Errorf("update report workflow state: %w", err)
+	}
+	return report, nil
+}
+
 func (r *PostgresRepository) SoftDeleteReport(ctx context.Context, id string, deletedAt time.Time) (service.Report, error) {
 	reportID, err := parseUUID(id)
 	if err != nil {
