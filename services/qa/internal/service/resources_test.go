@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -87,6 +88,44 @@ func TestLLMConnectionTestUsesAIGatewayProfileRuntime(t *testing.T) {
 	}
 	if tester.seen.ProfileID != "profile-chat" || tester.seen.Model != "qwen-test" || tester.seen.Timeout != 12*time.Second {
 		t.Fatalf("tester runtime = %+v", tester.seen)
+	}
+}
+
+func TestQAConfigVersionExposesDocumentedFlatAgentFields(t *testing.T) {
+	version := QAConfigVersion{
+		ID:                      "qa_cfg_1",
+		VersionNo:               1,
+		DefaultKnowledgeBaseIDs: []string{"kb-1"},
+		KnowledgeBases:          []ConfigKnowledgeBase{{ID: "kb-1", SortOrder: 0}},
+		Retrieval:               RetrievalSettings{TopK: 5, ScoreThreshold: 0.65},
+		MaxIterations:           5,
+		ToolTimeoutSeconds:      10,
+		ModelTimeoutSeconds:     60,
+		OverallTimeoutSeconds:   120,
+		EnabledToolNames:        []string{"search_knowledge"},
+		Agent: AgentConfig{
+			MaxIterations:         5,
+			ToolTimeoutSeconds:    10,
+			ModelTimeoutSeconds:   60,
+			OverallTimeoutSeconds: 120,
+			EnabledToolNames:      []string{"search_knowledge"},
+		},
+		IsActive:  true,
+		CreatedAt: time.Unix(0, 0).UTC(),
+	}
+
+	raw, err := json.Marshal(version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"maxIterations", "toolTimeoutSeconds", "modelTimeoutSeconds", "overallTimeoutSeconds", "enabledToolNames", "agent", "knowledgeBases"} {
+		if _, ok := payload[field]; !ok {
+			t.Fatalf("QAConfigVersion JSON missing documented field %q: %s", field, string(raw))
+		}
 	}
 }
 
