@@ -1426,38 +1426,45 @@ func (r *PostgresRepository) GetReportStatisticsOverview(ctx context.Context) (s
 }
 
 func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter service.OperationLogListFilter) (service.OperationLogListResult, error) {
-	offset := (filter.Page - 1) * filter.PageSize
-
-	rows, err := r.pool.Query(ctx, `
-		SELECT id::text, operator_id, operator_name,
-		       operation_type, target_type, target_id,
-		       request_id, request_source, tool_name,
-		       parameter_summary_json, operation_result, error_message,
-		       metadata_json, created_at,
-		       COUNT(*) OVER() AS total
-		FROM report_operation_logs
+	const whereSQL = `
 		WHERE ($1 = '' OR operation_type = $1)
 		  AND ($2 = '' OR target_type    = $2)
 		  AND ($3 = '' OR target_id      = $3)
 		  AND ($4 = '' OR request_id     = $4)
 		  AND ($5 = '' OR request_source = $5)
-		  AND ($6 = '' OR tool_name      = $6)
-		ORDER BY created_at DESC
-		LIMIT $7 OFFSET $8`,
+		  AND ($6 = '' OR tool_name      = $6)`
+	args := []any{
 		filter.OperationType, filter.TargetType, filter.TargetID,
 		filter.RequestID, filter.RequestSource, filter.ToolName,
-		filter.PageSize, offset)
+	}
+
+	var total int64
+	if err := r.pool.QueryRow(ctx,
+		"SELECT COUNT(*) FROM report_operation_logs"+whereSQL, args...,
+	).Scan(&total); err != nil {
+		return service.OperationLogListResult{}, fmt.Errorf("count operation logs: %w", err)
+	}
+
+	offset := (filter.Page - 1) * filter.PageSize
+	pageArgs := append(append([]any{}, args...), filter.PageSize, offset)
+	rows, err := r.pool.Query(ctx, `
+		SELECT id::text, operator_id, operator_name,
+		       operation_type, target_type, target_id,
+		       request_id, request_source, tool_name,
+		       parameter_summary_json, operation_result, error_message,
+		       metadata_json, created_at
+		FROM report_operation_logs`+whereSQL+`
+		ORDER BY created_at DESC
+		LIMIT $7 OFFSET $8`, pageArgs...)
 	if err != nil {
 		return service.OperationLogListResult{}, err
 	}
 	defer rows.Close()
 
-	var items []service.OperationLog
-	var total int
+	items := []service.OperationLog{}
 	for rows.Next() {
 		var l service.OperationLog
-		var id pgtype.Text
-		var targetID pgtype.Text
+		var id, targetID pgtype.Text
 		var operatorID, operatorName, requestID, requestSource, toolName, errorMessage pgtype.Text
 		var paramSummaryRaw, metadataRaw []byte
 		var createdAt pgtype.Timestamptz
@@ -1466,7 +1473,7 @@ func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter servi
 			&l.OperationType, &l.TargetType, &targetID,
 			&requestID, &requestSource, &toolName,
 			&paramSummaryRaw, &l.OperationResult, &errorMessage,
-			&metadataRaw, &createdAt, &total,
+			&metadataRaw, &createdAt,
 		); err != nil {
 			return service.OperationLogListResult{}, err
 		}
@@ -1502,11 +1509,8 @@ func (r *PostgresRepository) ListOperationLogs(ctx context.Context, filter servi
 	if err := rows.Err(); err != nil {
 		return service.OperationLogListResult{}, err
 	}
-	if items == nil {
-		items = []service.OperationLog{}
-	}
 	return service.OperationLogListResult{
 		Items: items,
-		Page:  service.PageMeta{Page: filter.Page, PageSize: filter.PageSize, Total: total},
+		Page:  service.PageMeta{Page: filter.Page, PageSize: filter.PageSize, Total: int(total)},
 	}, nil
 }
