@@ -38,9 +38,9 @@ func (r *fakeRepository) ListMessages(_ context.Context, _ string, _ string, opt
 	r.messageOptions = options
 	return Page[Message]{Items: append([]Message(nil), r.messages...), Page: options.Page, PageSize: options.PageSize, Total: len(r.messages)}, nil
 }
-func (r *fakeRepository) AppendMessages(_ context.Context, _, sessionID string, values ...Message) (ResponseRun, error) {
+func (r *fakeRepository) AppendMessages(_ context.Context, _, sessionID string, maxIterations int, values ...Message) (ResponseRun, error) {
 	r.messages = append(r.messages, values...)
-	r.run = ResponseRun{ID: "run-id", SessionID: sessionID, UserMessageID: values[0].ID, AssistantMessageID: values[1].ID, Status: "running", MaxIterations: 5, CreatedAt: values[0].CreatedAt}
+	r.run = ResponseRun{ID: "run-id", SessionID: sessionID, UserMessageID: values[0].ID, AssistantMessageID: values[1].ID, Status: "running", MaxIterations: maxIterations, CreatedAt: values[0].CreatedAt}
 	return r.run, nil
 }
 func (r *fakeRepository) SaveStreamEvents(_ context.Context, _, _ string, events []StreamEvent) error {

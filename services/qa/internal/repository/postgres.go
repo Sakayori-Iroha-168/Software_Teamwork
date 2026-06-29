@@ -162,7 +162,7 @@ func (r *Postgres) ListMessages(ctx context.Context, userID, conversationID stri
 	return service.Page[service.Message]{Items: items, Page: options.Page, PageSize: options.PageSize, Total: int(total)}, nil
 }
 
-func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID string, messages ...service.Message) (service.ResponseRun, error) {
+func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID string, maxIterations int, messages ...service.Message) (service.ResponseRun, error) {
 	if len(messages) == 0 {
 		return service.ResponseRun{}, nil
 	}
@@ -219,7 +219,7 @@ func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID st
 		}
 		run = service.ResponseRun{
 			ID: inserted.ID, SessionID: inserted.ConversationID, UserMessageID: inserted.UserMessageID,
-			AssistantMessageID: inserted.AssistantMessageID, Status: inserted.Status, CreatedAt: inserted.StartedAt, MaxIterations: 5,
+			AssistantMessageID: inserted.AssistantMessageID, Status: inserted.Status, CreatedAt: inserted.StartedAt, MaxIterations: maxIterations,
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

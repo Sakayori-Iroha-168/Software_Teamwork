@@ -194,7 +194,7 @@ type Repository interface {
 	UpdateConversation(context.Context, string, Conversation) (Conversation, error)
 	DeleteConversation(context.Context, string, string) error
 	ListMessages(context.Context, string, string, MessageListOptions) (Page[Message], error)
-	AppendMessages(context.Context, string, string, ...Message) (ResponseRun, error)
+	AppendMessages(context.Context, string, string, int, ...Message) (ResponseRun, error)
 	UpdateMessage(context.Context, string, Message) error
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
@@ -349,7 +349,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	}
 	userMessage := Message{ID: newID("msg"), ConversationID: conversationID, Role: agent.RoleUser, Content: strings.TrimSpace(input.Message), Intent: intent, Status: "completed", CreatedAt: now}
 	assistantMessage := Message{ID: newID("msg"), ConversationID: conversationID, Role: agent.RoleAssistant, Intent: intent, Status: "streaming", CreatedAt: now}
-	run, err := s.repository.AppendMessages(ctx, userID, conversationID, userMessage, assistantMessage)
+	run, err := s.repository.AppendMessages(ctx, userID, conversationID, maxIterations, userMessage, assistantMessage)
 	if err != nil {
 		return AskResult{}, err
 	}
@@ -502,6 +502,9 @@ func terminationReasonFromResult(runErr error, timeoutCtx context.Context, runCt
 	if runErr != nil {
 		if errors.Is(runErr, context.Canceled) {
 			return "cancelled"
+		}
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			return "timeout"
 		}
 		if errors.Is(runErr, agent.ErrMaxIterations) {
 			return "max_iterations"
