@@ -163,7 +163,7 @@ func TestListConversationsNormalizesDocumentedOptions(t *testing.T) {
 
 func TestListMessagesNormalizesDocumentedOptions(t *testing.T) {
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", Status: "active"}}
-	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"})
+	qa, err := NewQAService(repository, nil, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"})
 	if err != nil {
 		t.Fatal(err)
 	}
