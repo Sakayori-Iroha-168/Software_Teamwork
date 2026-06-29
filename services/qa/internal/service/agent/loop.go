@@ -82,7 +82,8 @@ func NewRunner(model ModelClient, tools ToolClient, cfg Config) (*Runner, error)
 
 // RunOptions allows per-run configuration overrides.
 type RunOptions struct {
-	MaxIterations int
+	MaxIterations     int
+	EnabledToolNames  []string
 }
 
 func (r *Runner) Run(ctx context.Context, input []Message) (Result, error) {
@@ -113,6 +114,22 @@ func (r *Runner) RunWithOptions(ctx context.Context, input []Message, observer O
 	toolDefs, err := r.tools.ListTools(ctx)
 	if err != nil {
 		return Result{}, fmt.Errorf("list MCP tools: %w", err)
+	}
+	enabledSet := make(map[string]struct{}, len(opts.EnabledToolNames))
+	for _, name := range opts.EnabledToolNames {
+		trimmed := strings.TrimSpace(name)
+		if trimmed != "" {
+			enabledSet[trimmed] = struct{}{}
+		}
+	}
+	if len(enabledSet) > 0 {
+		filtered := toolDefs[:0]
+		for _, tool := range toolDefs {
+			if _, ok := enabledSet[tool.Function.Name]; ok {
+				filtered = append(filtered, tool)
+			}
+		}
+		toolDefs = filtered
 	}
 	allowed := make(map[string]struct{}, len(toolDefs))
 	for _, tool := range toolDefs {

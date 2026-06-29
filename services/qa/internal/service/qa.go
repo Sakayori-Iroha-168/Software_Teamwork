@@ -322,16 +322,38 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	}
 
 	var maxIterations, overallTimeoutSeconds int
+	var enabledToolNames []string
+	var retrieval RetrievalSettings
 	if s.resourceRepo != nil {
 		qaConfig, qaErr := s.resourceRepo.GetActiveQAConfigVersion(ctx)
 		if qaErr == nil {
 			maxIterations = qaConfig.Agent.MaxIterations
 			overallTimeoutSeconds = qaConfig.Agent.OverallTimeoutSeconds
+			enabledToolNames = qaConfig.Agent.EnabledToolNames
+			retrieval = qaConfig.Retrieval
 		}
 		_, _ = s.resourceRepo.GetActiveLLMConfigVersion(ctx)
 	}
 	if input.Agent.MaxIterations > 0 {
 		maxIterations = input.Agent.MaxIterations
+	}
+	if len(input.Agent.EnabledToolNames) > 0 {
+		enabledToolNames = input.Agent.EnabledToolNames
+	}
+	if input.Retrieval.TopK > 0 {
+		retrieval.TopK = input.Retrieval.TopK
+	}
+	if input.Retrieval.ScoreThreshold > 0 {
+		retrieval.ScoreThreshold = input.Retrieval.ScoreThreshold
+	}
+	if input.Retrieval.EnableRerank {
+		retrieval.EnableRerank = true
+	}
+	if input.Retrieval.RerankThreshold > 0 {
+		retrieval.RerankThreshold = input.Retrieval.RerankThreshold
+	}
+	if input.Retrieval.RerankTopN > 0 {
+		retrieval.RerankTopN = input.Retrieval.RerankTopN
 	}
 	if maxIterations <= 0 {
 		maxIterations = 5
@@ -390,7 +412,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	defer release()
 	messages := make([]agent.Message, 0, len(history.Items)+3)
 	messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: runtime.SystemPrompt})
-	if directive := requestDirective(input); directive != "" {
+	if directive := requestDirective(input, retrieval); directive != "" {
 		messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: directive})
 	}
 	for _, item := range history.Items {
@@ -453,7 +475,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		}
 		steps = append(steps, step)
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
-	}, agent.RunOptions{MaxIterations: maxIterations})
+	}, agent.RunOptions{MaxIterations: maxIterations, EnabledToolNames: enabledToolNames})
 
 	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason)
 	assistantMessage.Status = "completed"
@@ -469,12 +491,16 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	} else if timeoutCtx.Err() != nil {
 		assistantMessage.Status = "failed"
 		runStatus = "failed"
+	} else if runCtx.Err() != nil {
+		assistantMessage.Status = "cancelled"
+		runStatus = "cancelled"
 	}
 
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 
-	if runErr != nil || timeoutCtx.Err() != nil {
+	runFailed := runErr != nil || timeoutCtx.Err() != nil || runCtx.Err() != nil
+	if runFailed {
 		_ = s.repository.UpdateMessage(cleanupCtx, userID, assistantMessage)
 		_ = s.repository.SaveReasoningSteps(cleanupCtx, userID, assistantMessage.ID, steps)
 		emit("error", map[string]any{"responseRunId": run.ID, "code": "dependency_error", "message": "answer generation failed"})
@@ -484,19 +510,19 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	}
 
 	assistantMessage.Content = result.Final.Content
-	if err := s.repository.UpdateMessage(ctx, userID, assistantMessage); err != nil {
+	if err := s.repository.UpdateMessage(cleanupCtx, userID, assistantMessage); err != nil {
 		return AskResult{}, fmt.Errorf("save assistant message: %w", err)
 	}
-	if err := s.repository.SaveReasoningSteps(ctx, userID, assistantMessage.ID, steps); err != nil {
+	if err := s.repository.SaveReasoningSteps(cleanupCtx, userID, assistantMessage.ID, steps); err != nil {
 		return AskResult{}, fmt.Errorf("save reasoning steps: %w", err)
 	}
 	emit("answer.delta", map[string]any{"messageId": assistantMessage.ID, "text": assistantMessage.Content, "index": 0})
 	emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
-	if err := s.repository.SaveStreamEvents(ctx, userID, run.ID, events); err != nil {
+	if err := s.repository.SaveStreamEvents(cleanupCtx, userID, run.ID, events); err != nil {
 		return AskResult{}, fmt.Errorf("save stream events: %w", err)
 	}
-	_, _ = s.repository.UpdateResponseRunTermination(ctx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
-	if completed, err := s.repository.GetResponseRun(ctx, userID, run.ID); err == nil {
+	_, _ = s.repository.UpdateResponseRunTermination(cleanupCtx, userID, run.ID, runStatus, terminationReason, totalPromptTokens, totalCompletionTokens, totalReasoningTokens)
+	if completed, err := s.repository.GetResponseRun(cleanupCtx, userID, run.ID); err == nil {
 		run = completed
 	}
 	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
@@ -611,13 +637,28 @@ func validateAskInput(input AskInput) error {
 	return nil
 }
 
-func requestDirective(input AskInput) string {
+func requestDirective(input AskInput, retrieval RetrievalSettings) string {
 	var parts []string
 	if input.Mode != "" && input.Mode != "unknown" {
 		parts = append(parts, "The requested QA mode is "+input.Mode+".")
 	}
 	if len(input.KnowledgeBaseIDs) > 0 {
 		parts = append(parts, "When a knowledge tool supports knowledge-base filtering, restrict it to: "+strings.Join(input.KnowledgeBaseIDs, ", ")+".")
+	}
+	if retrieval.TopK > 0 {
+		parts = append(parts, fmt.Sprintf("When using knowledge retrieval tools, set top_k to %d.", retrieval.TopK))
+	}
+	if retrieval.ScoreThreshold > 0 {
+		parts = append(parts, fmt.Sprintf("When using knowledge retrieval tools, set similarity/score threshold to %.2f.", retrieval.ScoreThreshold))
+	}
+	if retrieval.EnableRerank {
+		parts = append(parts, "Enable reranking for knowledge retrieval results.")
+		if retrieval.RerankThreshold > 0 {
+			parts = append(parts, fmt.Sprintf("Rerank threshold is %.2f.", retrieval.RerankThreshold))
+		}
+		if retrieval.RerankTopN > 0 {
+			parts = append(parts, fmt.Sprintf("Rerank top N is %d.", retrieval.RerankTopN))
+		}
 	}
 	return strings.Join(parts, " ")
 }

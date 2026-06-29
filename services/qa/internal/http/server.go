@@ -16,7 +16,6 @@ import (
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/http/middleware"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
-	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
 
 type QAService interface {
@@ -273,14 +272,6 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, r, err)
 		return
-	}
-	if options.IncludeCitations && s.resources != nil {
-		for i := range result.Items {
-			if result.Items[i].Role == agent.RoleAssistant {
-				citations, _ := s.resources.ListMessageCitations(r.Context(), userID, result.Items[i].ID)
-				result.Items[i].Citations = citations
-			}
-		}
 	}
 	if !options.IncludeThinking {
 		for i := range result.Items {

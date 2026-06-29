@@ -11,6 +11,7 @@ SET termination_reason = CASE stop_reason
     WHEN 'timeout' THEN 'timeout'
     WHEN 'cancelled' THEN 'cancelled'
     WHEN 'error' THEN 'model_error'
+    WHEN 'failed' THEN 'model_error'
     ELSE 'completed'
 END
 WHERE stop_reason IS NOT NULL AND termination_reason IS NULL;
