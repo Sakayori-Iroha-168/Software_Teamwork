@@ -80,6 +80,11 @@ func NewRunner(model ModelClient, tools ToolClient, cfg Config) (*Runner, error)
 	return &Runner{model: model, tools: tools, cfg: cfg}, nil
 }
 
+// RunOptions allows per-run configuration overrides.
+type RunOptions struct {
+	MaxIterations int
+}
+
 func (r *Runner) Run(ctx context.Context, input []Message) (Result, error) {
 	return r.RunWithObserver(ctx, input, r.cfg.Observer)
 }
@@ -87,11 +92,22 @@ func (r *Runner) Run(ctx context.Context, input []Message) (Result, error) {
 // RunWithObserver executes one agent run with a request-scoped observer. This
 // keeps concurrent HTTP streams isolated while preserving Run for CLI users.
 func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer Observer) (Result, error) {
+	return r.RunWithOptions(ctx, input, observer, RunOptions{})
+}
+
+// RunWithOptions executes one agent run with a request-scoped observer and
+// optional per-run configuration overrides.
+func (r *Runner) RunWithOptions(ctx context.Context, input []Message, observer Observer, opts RunOptions) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
 	if len(input) == 0 {
 		return Result{}, errors.New("at least one message is required")
+	}
+
+	maxIter := opts.MaxIterations
+	if maxIter <= 0 {
+		maxIter = r.cfg.MaxIterations
 	}
 
 	toolDefs, err := r.tools.ListTools(ctx)
@@ -111,7 +127,7 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 	}
 
 	messages := append([]Message(nil), input...)
-	for iteration := 1; iteration <= r.cfg.MaxIterations; iteration++ {
+	for iteration := 1; iteration <= maxIter; iteration++ {
 		emit(observer, Event{Type: EventModelStarted, Iteration: iteration})
 		completion, err := r.model.Complete(ctx, messages, toolDefs)
 		if err != nil {

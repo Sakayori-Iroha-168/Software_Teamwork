@@ -212,7 +212,7 @@ func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID st
 	if userMessageID != "" && assistantMessageID != "" {
 		inserted, err := q.InsertResponseRun(ctx, sqlc.InsertResponseRunParams{
 			ConversationID: conversationID, UserMessageID: userMessageID,
-			AssistantMessageID: assistantMessageID, IntentType: intent,
+			AssistantMessageID: assistantMessageID, IntentType: intent, MaxIterations: maxIterations,
 		})
 		if err != nil {
 			return service.ResponseRun{}, fmt.Errorf("insert response run: %w", err)

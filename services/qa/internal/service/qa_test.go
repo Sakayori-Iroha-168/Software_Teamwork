@@ -82,12 +82,20 @@ func (r blockingAgentRunner) RunWithObserver(ctx context.Context, _ []agent.Mess
 	return agent.Result{}, ctx.Err()
 }
 
+func (r blockingAgentRunner) RunWithOptions(ctx context.Context, input []agent.Message, observer agent.Observer, _ agent.RunOptions) (agent.Result, error) {
+	return r.RunWithObserver(ctx, input, observer)
+}
+
 func (r *fakeAgentRunner) RunWithObserver(_ context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
 	r.input = append([]agent.Message(nil), input...)
 	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
 	observer(agent.Event{Type: agent.EventModelCompleted, Iteration: 1})
 	final := agent.Message{Role: agent.RoleAssistant, Content: "测试回答"}
 	return agent.Result{Final: final, Messages: append(input, final), Iterations: 1}, nil
+}
+
+func (r *fakeAgentRunner) RunWithOptions(_ context.Context, input []agent.Message, observer agent.Observer, _ agent.RunOptions) (agent.Result, error) {
+	return r.RunWithObserver(nil, input, observer)
 }
 
 type fakeRuntimeProvider struct {
@@ -237,6 +245,10 @@ type errorAgentRunner struct{ err error }
 func (r errorAgentRunner) RunWithObserver(_ context.Context, _ []agent.Message, observer agent.Observer) (agent.Result, error) {
 	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
 	return agent.Result{}, r.err
+}
+
+func (r errorAgentRunner) RunWithOptions(_ context.Context, input []agent.Message, observer agent.Observer, _ agent.RunOptions) (agent.Result, error) {
+	return r.RunWithObserver(nil, input, observer)
 }
 
 func TestAskRecordsModelInvocationOnSuccess(t *testing.T) {

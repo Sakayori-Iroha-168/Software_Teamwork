@@ -205,6 +205,7 @@ type Repository interface {
 
 type AgentRunner interface {
 	RunWithObserver(context.Context, []agent.Message, agent.Observer) (agent.Result, error)
+	RunWithOptions(context.Context, []agent.Message, agent.Observer, agent.RunOptions) (agent.Result, error)
 }
 
 type RuntimeSnapshot struct {
@@ -404,7 +405,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	}
 	var totalPromptTokens, totalCompletionTokens, totalReasoningTokens int
 	var lastFinishReason string
-	result, runErr := runtime.Runner.RunWithObserver(runCtx, messages, func(event agent.Event) {
+	result, runErr := runtime.Runner.RunWithOptions(runCtx, messages, func(event agent.Event) {
 		switch event.Type {
 		case agent.EventModelStarted:
 			iterationStartedAt[event.Iteration] = s.now().UTC()
@@ -449,7 +450,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		}
 		steps = append(steps, step)
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
-	})
+	}, agent.RunOptions{MaxIterations: maxIterations})
 
 	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason)
 	assistantMessage.Status = "completed"

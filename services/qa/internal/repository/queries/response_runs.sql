@@ -5,14 +5,16 @@ INSERT INTO response_runs (
     assistant_message_id,
     intent_type,
     route,
-    status
+    status,
+    max_iterations
 ) VALUES (
     sqlc.arg(conversation_id)::uuid,
     sqlc.arg(user_message_id)::uuid,
     sqlc.arg(assistant_message_id)::uuid,
     NULLIF(sqlc.arg(intent_type), ''),
     'agent',
-    'running'
+    'running',
+    sqlc.arg(max_iterations)
 )
 RETURNING
     id::text,

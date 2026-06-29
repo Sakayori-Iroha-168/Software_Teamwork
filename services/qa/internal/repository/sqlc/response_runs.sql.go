@@ -18,14 +18,16 @@ INSERT INTO response_runs (
     assistant_message_id,
     intent_type,
     route,
-    status
+    status,
+    max_iterations
 ) VALUES (
     $1::uuid,
     $2::uuid,
     $3::uuid,
     NULLIF($4, ''),
     'agent',
-    'running'
+    'running',
+    $5
 )
 RETURNING
     id::text,
@@ -50,10 +52,11 @@ type InsertResponseRunParams struct {
 	UserMessageID      string `json:"user_message_id"`
 	AssistantMessageID string `json:"assistant_message_id"`
 	IntentType         string `json:"intent_type"`
+	MaxIterations      int    `json:"max_iterations"`
 }
 
 func (q *Queries) InsertResponseRun(ctx context.Context, arg InsertResponseRunParams) (InsertResponseRunRow, error) {
-	row := q.db.QueryRow(ctx, insertResponseRun, arg.ConversationID, arg.UserMessageID, arg.AssistantMessageID, arg.IntentType)
+	row := q.db.QueryRow(ctx, insertResponseRun, arg.ConversationID, arg.UserMessageID, arg.AssistantMessageID, arg.IntentType, arg.MaxIterations)
 	var item InsertResponseRunRow
 	err := row.Scan(&item.ID, &item.ConversationID, &item.UserMessageID, &item.AssistantMessageID, &item.Status, &item.StartedAt)
 	return item, err
