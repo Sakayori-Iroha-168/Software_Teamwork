@@ -100,3 +100,36 @@ Implemented Gateway-backed frontend auth shell and RBAC navigation, then fixed P
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Finish PR 212 permission redirect review
+
+**Date**: 2026-06-29
+**Task**: Finish PR 212 permission redirect review
+**Branch**: `fix/frontend-post-206-polish`
+
+### Summary
+
+Fixed the remaining PR #212 permission-navigation dead ends by routing login, forbidden, root, and admin back links through permission-aware home selection; local frontend checks passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c32f4ba` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
