@@ -188,12 +188,14 @@ type RetrievalTestRun struct {
 }
 
 type MetricsOverview struct {
-	TotalQACount       int   `json:"totalQaCount"`
-	TodayQACount       int   `json:"todayQaCount"`
-	TotalQuestionCount int   `json:"totalQuestionCount"`
-	ConversationCount  int   `json:"conversationCount"`
-	AvgLatencyMS       int64 `json:"avgLatencyMs"`
-	ActiveUsersToday   int   `json:"activeUsersToday"`
+	TotalQACount        int   `json:"totalQaCount"`
+	TodayQACount        int   `json:"todayQaCount"`
+	TotalQuestionCount  int   `json:"totalQuestionCount"`
+	ConversationCount   int   `json:"conversationCount"`
+	AvgLatencyMS        int64 `json:"avgLatencyMs"`
+	ActiveUsersToday    int   `json:"activeUsersToday"`
+	KnowledgeBaseCount  int   `json:"knowledgeBaseCount"`
+	DocumentCount       int   `json:"documentCount"`
 }
 
 type MetricsTrendPoint struct {

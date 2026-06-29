@@ -385,8 +385,17 @@ func (r *Postgres) GetMetricsOverview(ctx context.Context, days int) (service.Me
 		days = 1
 	}
 	var v service.MetricsOverview
-	err := r.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM messages WHERE role='user'),(SELECT count(*) FROM messages WHERE role='user' AND created_at>=current_date),(SELECT count(*) FROM conversations WHERE deleted_at IS NULL),(SELECT COALESCE(avg(latency_ms),0)::bigint FROM response_runs WHERE started_at>=now()-make_interval(days=>$1)),(SELECT count(DISTINCT external_user_id) FROM conversations WHERE created_at>=current_date)`, days).Scan(&v.TotalQACount, &v.TodayQACount, &v.ConversationCount, &v.AvgLatencyMS, &v.ActiveUsersToday)
-	v.TotalQuestionCount = v.TotalQACount
+	err := r.pool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM response_runs WHERE status IN ('completed','running')),
+			(SELECT count(*) FROM response_runs WHERE status IN ('completed','running') AND started_at>=current_date),
+			(SELECT count(*) FROM messages WHERE role='user'),
+			(SELECT count(*) FROM conversations WHERE deleted_at IS NULL),
+			(SELECT COALESCE(avg(latency_ms),0)::bigint FROM response_runs WHERE completed_at>=now()-make_interval(days=>$1) AND status='completed'),
+			(SELECT count(DISTINCT c.external_user_id) FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id WHERE rr.started_at>=current_date AND c.deleted_at IS NULL AND rr.status IN ('completed','running'))`,
+		days).Scan(&v.TotalQACount, &v.TodayQACount, &v.TotalQuestionCount, &v.ConversationCount, &v.AvgLatencyMS, &v.ActiveUsersToday)
+	v.KnowledgeBaseCount = 0
+	v.DocumentCount = 0
 	if err != nil {
 		return v, fmt.Errorf("get QA metrics overview: %w", err)
 	}
@@ -396,7 +405,7 @@ func (r *Postgres) GetMetricsTrend(ctx context.Context, days int) (service.Metri
 	if days <= 0 {
 		days = 30
 	}
-	rows, err := r.pool.Query(ctx, `WITH dates AS(SELECT generate_series(current_date-($1-1),current_date,'1 day')::date d) SELECT d::text,count(m.id) FROM dates LEFT JOIN messages m ON m.role='user' AND m.created_at>=d AND m.created_at<d+1 GROUP BY d ORDER BY d`, days)
+	rows, err := r.pool.Query(ctx, `WITH dates AS(SELECT generate_series(current_date-($1-1),current_date,'1 day')::date d) SELECT d::text,count(rr.id) FROM dates LEFT JOIN response_runs rr ON rr.started_at>=d AND rr.started_at<d+1 AND rr.status IN ('completed','running') GROUP BY d ORDER BY d`, days)
 	if err != nil {
 		return service.MetricsTrend{}, err
 	}
@@ -407,7 +416,6 @@ func (r *Postgres) GetMetricsTrend(ctx context.Context, days int) (service.Metri
 		if err := rows.Scan(&p.Date, &p.Count); err != nil {
 			return v, err
 		}
-		p.QuestionCount = p.Count
 		v.Points = append(v.Points, p)
 	}
 	return v, rows.Err()
@@ -438,7 +446,7 @@ func (r *Postgres) GetIntentDistribution(ctx context.Context, days int) ([]servi
 	if days <= 0 {
 		days = 7
 	}
-	rows, err := r.pool.Query(ctx, `SELECT COALESCE(intent,'unknown'),count(*) FROM messages WHERE role='user' AND created_at>=now()-make_interval(days=>$1) GROUP BY COALESCE(intent,'unknown') ORDER BY count(*) DESC`, days)
+	rows, err := r.pool.Query(ctx, `SELECT COALESCE(intent_type,'unknown'),count(*) FROM response_runs WHERE started_at>=now()-make_interval(days=>$1) AND status IN ('completed','running') GROUP BY COALESCE(intent_type,'unknown') ORDER BY count(*) DESC`, days)
 	if err != nil {
 		return nil, err
 	}
