@@ -8,16 +8,11 @@ import (
 )
 
 type MemoryStore struct {
-	mu            sync.Mutex
-	runs          map[string]ResponseRun
-	steps         []ResponseProcessStep
-	streamEvents  []ResponseStreamEvent
-	contentBlocks []MessageContentBlock
-	citations     []Citation
-	qaConfigs     []QAConfigVersion
-	llmConfigs    []LLMConfigVersion
-	llmTests      []LLMConnectionTest
-	auditLogs     []AdminAuditLog
+	mu         sync.Mutex
+	qaConfigs  []QAConfigVersion
+	llmConfigs []LLMConfigVersion
+	llmTests   []LLMConnectionTest
+	auditLogs  []AdminAuditLog
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -25,91 +20,54 @@ func NewMemoryStore() *MemoryStore {
 	rerankTopN := 3
 	now := time.Now().UTC()
 	return &MemoryStore{
-		runs: make(map[string]ResponseRun),
 		qaConfigs: []QAConfigVersion{
 			{
-				ID:                  "qa_cfg_seed",
-				VersionNo:           1,
-				TopK:                5,
-				SimilarityThreshold: 0.7,
-				UseRerank:           true,
-				RerankThreshold:     &rerankThreshold,
-				RerankTopN:          &rerankTopN,
-				IsActive:            true,
-				ActivateRequested:   true,
-				CreatedAt:           now,
-				CreatedByUserID:     "seed",
-				KnowledgeBases: []QAConfigKnowledgeBase{
-					{ExternalKBID: "kb_power_standard", KBType: "technical_supervision", DisplayNameSnapshot: "电力标准规范库", SortOrder: 1},
+				ID:                      "qa_cfg_seed",
+				VersionNo:               1,
+				DefaultKnowledgeBaseIDs: []string{"kb_power_standard"},
+				Retrieval: RetrievalOptions{
+					TopK:                5,
+					SimilarityThreshold: 0.65,
+					UseRerank:           true,
+					RerankThreshold:     &rerankThreshold,
+					RerankTopN:          &rerankTopN,
 				},
+				LLM: ModelConfig{
+					Provider:       "ai-gateway",
+					ProfileID:      "mp_chat_default",
+					ModelName:      "gpt-4o-mini",
+					TimeoutSeconds: 60,
+					Temperature:    0.7,
+					MaxTokens:      4096,
+				},
+				Agent: AgentConfig{
+					MaxIterations:         5,
+					ToolTimeoutSeconds:    10,
+					ModelTimeoutSeconds:   60,
+					OverallTimeoutSeconds: 120,
+					EnabledToolNames:      []string{"search_knowledge", "get_citation_source"},
+				},
+				IsActive:          true,
+				ActivateRequested: true,
+				CreatedAt:         now,
 			},
 		},
 		llmConfigs: []LLMConfigVersion{
 			{
-				ID:             "llm_cfg_seed",
-				VersionNo:      1,
-				ProfileID:      "gateway-default",
-				ModelName:      "gpt-4o-mini",
-				TimeoutSeconds: 60,
-				Temperature:    0.7,
-				MaxTokens:      4096,
-				IsActive:       true,
-				CreatedAt:      now,
+				ID:                "llm_cfg_seed",
+				VersionNo:         1,
+				Provider:          "ai-gateway",
+				ProfileID:         "mp_chat_default",
+				ModelName:         "gpt-4o-mini",
+				TimeoutSeconds:    60,
+				Temperature:       0.7,
+				MaxTokens:         4096,
+				IsActive:          true,
+				ActivateRequested: true,
+				CreatedAt:         now,
 			},
 		},
 	}
-}
-
-func (s *MemoryStore) CreateRun(_ context.Context, run ResponseRun) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.runs[run.ID]; exists {
-		return fmt.Errorf("response run already exists: %s", run.ID)
-	}
-	s.runs[run.ID] = run
-	return nil
-}
-
-func (s *MemoryStore) AppendProcessStep(_ context.Context, step ResponseProcessStep) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.steps = append(s.steps, step)
-	return nil
-}
-
-func (s *MemoryStore) AppendStreamEvent(_ context.Context, event ResponseStreamEvent) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.streamEvents = append(s.streamEvents, event)
-	return nil
-}
-
-func (s *MemoryStore) AppendContentBlock(_ context.Context, block MessageContentBlock) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.contentBlocks = append(s.contentBlocks, block)
-	return nil
-}
-
-func (s *MemoryStore) AppendCitation(_ context.Context, citation Citation) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.citations = append(s.citations, citation)
-	return nil
-}
-
-func (s *MemoryStore) CompleteRun(_ context.Context, runID string, status string, stopReason string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	run, exists := s.runs[runID]
-	if !exists {
-		return fmt.Errorf("response run not found: %s", runID)
-	}
-	run.Status = status
-	run.StopReason = stopReason
-	run.FinishedAt = time.Now().UTC()
-	s.runs[runID] = run
-	return nil
 }
 
 func (s *MemoryStore) CurrentQAConfig(_ context.Context) (QAConfigVersion, error) {
@@ -161,10 +119,12 @@ func (s *MemoryStore) CreateLLMConfig(_ context.Context, cfg LLMConfigVersion) (
 		if s.llmConfigs[i].VersionNo > maxVersion {
 			maxVersion = s.llmConfigs[i].VersionNo
 		}
-		s.llmConfigs[i].IsActive = false
+		if cfg.ActivateRequested {
+			s.llmConfigs[i].IsActive = false
+		}
 	}
 	cfg.VersionNo = maxVersion + 1
-	cfg.IsActive = true
+	cfg.IsActive = cfg.ActivateRequested
 	cfg.CreatedAt = time.Now().UTC()
 	s.llmConfigs = append(s.llmConfigs, cfg)
 	return cfg, nil

@@ -8,7 +8,6 @@ import (
 func NewRouter(handler *Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handler.Health)
-	mux.HandleFunc("POST /api/chat/stream", handler.StreamChat)
 	mux.HandleFunc("GET /api/v1/qa-config-versions/current", handler.CurrentQAConfig)
 	mux.HandleFunc("POST /api/v1/qa-config-versions", handler.CreateQAConfig)
 	mux.HandleFunc("GET /api/v1/llm-config-versions/current", handler.CurrentLLMConfig)

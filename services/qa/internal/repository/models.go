@@ -2,97 +2,55 @@ package repository
 
 import "time"
 
-type ResponseRun struct {
-	ID                 string
-	ConversationID     string
-	UserMessageID      string
-	AssistantMessageID string
-	RequestID          string
-	IntentType         string
-	Confidence         float64
-	Route              string
-	Status             string
-	StopReason         string
-	StartedAt          time.Time
-	FinishedAt         time.Time
-}
-
-type ResponseProcessStep struct {
-	ID            string
-	ResponseRunID string
-	StepOrder     int
-	StepType      string
-	Label         string
-	Detail        string
-	Status        string
-	StartedAt     time.Time
-	FinishedAt    time.Time
-}
-
-type ResponseStreamEvent struct {
-	ID            string
-	ResponseRunID string
-	EventSeq      int
-	EventType     string
-	Payload       any
-	CreatedAt     time.Time
-}
-
-type MessageContentBlock struct {
-	ID         string
-	MessageID  string
-	BlockOrder int
-	BlockType  string
-	Content    string
-	Status     string
-	CreatedAt  time.Time
-}
-
-type Citation struct {
-	ID              string
-	MessageID       string
-	CitationNo      int
-	ExternalKBID    string
-	ExternalDocID   string
-	ExternalChunkID string
-	DocName         string
-	QuoteText       string
-	Score           float64
-	CreatedAt       time.Time
-}
-
 type QAConfigVersion struct {
-	ID                  string
-	VersionNo           int64
+	ID                      string
+	VersionNo               int64
+	DefaultKnowledgeBaseIDs []string
+	Retrieval               RetrievalOptions
+	LLM                     ModelConfig
+	Agent                   AgentConfig
+	IsActive                bool
+	ActivateRequested       bool
+	CreatedAt               time.Time
+}
+
+type RetrievalOptions struct {
 	TopK                int
 	SimilarityThreshold float64
 	UseRerank           bool
 	RerankThreshold     *float64
 	RerankTopN          *int
-	IsActive            bool
-	ActivateRequested   bool
-	CreatedAt           time.Time
-	CreatedByUserID     string
-	KnowledgeBases      []QAConfigKnowledgeBase
 }
 
-type QAConfigKnowledgeBase struct {
-	ExternalKBID        string
-	KBType              string
-	DisplayNameSnapshot string
-	SortOrder           int
-}
-
-type LLMConfigVersion struct {
-	ID             string
-	VersionNo      int64
+type ModelConfig struct {
+	Provider       string
 	ProfileID      string
 	ModelName      string
 	TimeoutSeconds int
 	Temperature    float64
 	MaxTokens      int
-	IsActive       bool
-	CreatedAt      time.Time
+}
+
+type AgentConfig struct {
+	MaxIterations         int
+	ToolTimeoutSeconds    int
+	ModelTimeoutSeconds   int
+	OverallTimeoutSeconds int
+	EnabledToolNames      []string
+}
+
+type LLMConfigVersion struct {
+	ID                string
+	VersionNo         int64
+	Provider          string
+	ProfileID         string
+	ModelName         string
+	TimeoutSeconds    int
+	Temperature       float64
+	MaxTokens         int
+	IsActive          bool
+	ActivateRequested bool
+	CreatedAt         time.Time
 }
 
 type AdminAuditLog struct {

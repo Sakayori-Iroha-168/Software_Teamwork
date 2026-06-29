@@ -24,9 +24,8 @@ func main() {
 	}
 
 	store := repository.NewMemoryStore()
-	chatService := service.NewChatService(store)
 	configService := service.NewConfigService(store)
-	handler := qahttp.NewHandler(chatService, configService)
+	handler := qahttp.NewHandler(configService)
 
 	server := &http.Server{
 		Addr:         cfg.Addr,
