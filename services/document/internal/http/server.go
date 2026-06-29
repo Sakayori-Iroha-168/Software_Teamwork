@@ -33,6 +33,15 @@ type DocumentService interface {
 	DeleteReportMaterial(context.Context, service.RequestContext, string) error
 }
 
+type JobSvc interface {
+	CreateJob(ctx context.Context, rctx service.RequestContext, input service.CreateJobInput) (service.ReportJob, error)
+	GetJob(ctx context.Context, rctx service.RequestContext, id string) (service.ReportJob, error)
+	ListJobs(ctx context.Context, rctx service.RequestContext, reportID string) ([]service.ReportJob, error)
+	RetryJob(ctx context.Context, rctx service.RequestContext, id, reason string) (service.ReportJobAttempt, error)
+	ListAttempts(ctx context.Context, rctx service.RequestContext, jobID string) ([]service.ReportJobAttempt, error)
+	ListEvents(ctx context.Context, rctx service.RequestContext, reportID string) ([]service.ReportEvent, error)
+}
+
 const defaultMaxUploadBytes = int64(32 << 20)
 
 type Config struct {
@@ -40,6 +49,7 @@ type Config struct {
 	ReadyChecker    ReadyChecker
 	DocumentService DocumentService
 	ReportService   ReportService
+	JobSvc          JobSvc
 	MaxUploadBytes  int64
 }
 
@@ -48,6 +58,7 @@ type Server struct {
 	readyChecker   ReadyChecker
 	documents      DocumentService
 	reportService  ReportService
+	jobSvc         JobSvc
 	maxUploadBytes int64
 	mux            *http.ServeMux
 }
@@ -64,6 +75,7 @@ func NewServer(cfg Config) *Server {
 		readyChecker:   cfg.ReadyChecker,
 		documents:      cfg.DocumentService,
 		reportService:  cfg.ReportService,
+		jobSvc:         cfg.JobSvc,
 		maxUploadBytes: cfg.MaxUploadBytes,
 		mux:            http.NewServeMux(),
 	}
@@ -86,17 +98,15 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /report-materials", s.handleCreateReportMaterial)
 	s.mux.HandleFunc("GET /report-materials/{materialId}", s.handleGetReportMaterial)
 	s.mux.HandleFunc("DELETE /report-materials/{materialId}", s.handleDeleteReportMaterial)
-	// reports / outlines / sections are implemented for real (C-03); the
-	// remaining report-generation resources (jobs, files, statistics,
-	// operation logs, settings) stay on the not-implemented scaffold below
-	// until their own tasks land.
 	s.registerReportRoutes()
-	s.mux.HandleFunc("GET /reports/{reportId}/jobs", s.handleNotImplemented)
-	s.mux.HandleFunc("POST /reports/{reportId}/jobs", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-jobs/{jobId}", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-jobs/{jobId}/attempts", s.handleNotImplemented)
-	s.mux.HandleFunc("POST /report-jobs/{jobId}/attempts", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /reports/{reportId}/events", s.handleNotImplemented)
+	// C-04: jobs, attempts, events.
+	s.mux.HandleFunc("GET /reports/{reportId}/jobs", s.handleListJobs)
+	s.mux.HandleFunc("POST /reports/{reportId}/jobs", s.handleCreateJob)
+	s.mux.HandleFunc("GET /report-jobs/{jobId}", s.handleGetJob)
+	s.mux.HandleFunc("GET /report-jobs/{jobId}/attempts", s.handleListAttempts)
+	s.mux.HandleFunc("POST /report-jobs/{jobId}/attempts", s.handleRetryJob)
+	s.mux.HandleFunc("GET /reports/{reportId}/events", s.handleListEvents)
+	// Remaining report-generation resources stay scaffolded until their tasks land.
 	s.mux.HandleFunc("GET /report-files", s.handleNotImplemented)
 	s.mux.HandleFunc("POST /report-files", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /report-files/{reportFileId}", s.handleNotImplemented)

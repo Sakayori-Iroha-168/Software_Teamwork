@@ -15,6 +15,7 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/platform/fileclient"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/repository"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/service"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/document/internal/worker"
 )
 
 func main() {
@@ -40,14 +41,24 @@ func main() {
 		logger.Error("file client initialization failed", "service", "document", "dependency", "file", "error", err)
 		os.Exit(1)
 	}
+	taskClient := worker.NewClient(cfg.RedisAddr)
+	w := worker.New(cfg.RedisAddr, logger, repo)
 	documents := service.New(repo, files)
 	reportService := service.NewReportService(repo)
+	jobService := service.NewJobService(repo, taskClient)
+	go func() {
+		if err := w.Start(); err != nil {
+			logger.Error("worker failed to start", "service", "document", "error", err)
+		}
+	}()
+	defer w.Stop()
 
 	handler := httpapi.NewServer(httpapi.Config{
 		Logger:          logger,
 		ReadyChecker:    repo,
 		DocumentService: documents,
 		ReportService:   reportService,
+		JobSvc:          jobService,
 	})
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,
