@@ -303,19 +303,14 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		return AskResult{}, err
 	}
 
-	var qaConfigVersionID, llmConfigVersionID string
 	var maxIterations, overallTimeoutSeconds int
 	if s.resourceRepo != nil {
 		qaConfig, qaErr := s.resourceRepo.GetActiveQAConfigVersion(ctx)
 		if qaErr == nil {
-			qaConfigVersionID = qaConfig.ID
 			maxIterations = qaConfig.Agent.MaxIterations
 			overallTimeoutSeconds = qaConfig.Agent.OverallTimeoutSeconds
 		}
-		llmConfig, llmErr := s.resourceRepo.GetActiveLLMConfigVersion(ctx)
-		if llmErr == nil {
-			llmConfigVersionID = llmConfig.ID
-		}
+		_, _ = s.resourceRepo.GetActiveLLMConfigVersion(ctx)
 	}
 	if input.Agent.MaxIterations > 0 {
 		maxIterations = input.Agent.MaxIterations
@@ -438,7 +433,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
 	})
 
-	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason, result.Iteration, maxIterations)
+	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason, result.Iterations, maxIterations)
 	assistantMessage.Status = "completed"
 	runStatus := "completed"
 

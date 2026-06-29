@@ -14,6 +14,7 @@ import (
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/http/middleware"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
 
 type QAService interface {
@@ -130,21 +131,21 @@ func (s *Server) registerPublicRoutes() {
 }
 
 func (s *Server) registerPublicResourceRoutes() {
-	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}/events", s.handleListStreamEvents)
-	s.mux.HandleFunc("GET /api/v1/messages/{messageId}/citations", s.handleListMessageCitations)
+	s.mux.HandleFunc("GET /api/v1/qa-sessions/{sessionId}/events", s.handleListEvents)
+	s.mux.HandleFunc("GET /api/v1/messages/{messageId}/citations", s.handleListCitations)
 	s.mux.HandleFunc("GET /api/v1/citations/{citationId}", s.handleGetCitation)
-	s.mux.HandleFunc("POST /api/v1/citation-lookups", s.handleLookupCitations)
-	s.mux.HandleFunc("GET /api/v1/qa-config-versions/current", s.handleGetActiveQAConfigVersion)
+	s.mux.HandleFunc("POST /api/v1/citation-lookups", s.handleCitationLookup)
+	s.mux.HandleFunc("GET /api/v1/qa-config-versions/current", s.handleGetQAConfigVersion)
 	s.mux.HandleFunc("POST /api/v1/qa-config-versions", s.handleCreateQAConfigVersion)
-	s.mux.HandleFunc("GET /api/v1/llm-config-versions/current", s.handleGetActiveLLMConfigVersion)
+	s.mux.HandleFunc("GET /api/v1/llm-config-versions/current", s.handleGetLLMConfigVersion)
 	s.mux.HandleFunc("POST /api/v1/llm-config-versions", s.handleCreateLLMConfigVersion)
-	s.mux.HandleFunc("POST /api/v1/llm-connection-tests", s.handleTestLLMConnection)
-	s.mux.HandleFunc("POST /api/v1/retrieval-test-runs", s.handleCreateRetrievalTestRun)
-	s.mux.HandleFunc("GET /api/v1/retrieval-test-runs/{testRunId}", s.handleGetRetrievalTestRun)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/overview", s.handleGetMetricsOverview)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/trend", s.handleGetMetricsTrend)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/top-queries", s.handleGetTopQueries)
-	s.mux.HandleFunc("GET /api/v1/qa-metrics/intent-distribution", s.handleGetIntentDistribution)
+	s.mux.HandleFunc("POST /api/v1/llm-connection-tests", s.handleProfileConnectionTest)
+	s.mux.HandleFunc("POST /api/v1/retrieval-test-runs", s.handleCreateRetrievalTest)
+	s.mux.HandleFunc("GET /api/v1/retrieval-test-runs/{testRunId}", s.handleGetRetrievalTest)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/overview", s.handleMetricsOverview)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/trend", s.handleMetricsTrend)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/top-queries", s.handleTopQueries)
+	s.mux.HandleFunc("GET /api/v1/qa-metrics/intent-distribution", s.handleIntentDistribution)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -309,10 +310,10 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	if includeCitations && s.resource != nil {
+	if includeCitations && s.resources != nil {
 		for i := range result.Items {
 			if result.Items[i].Role == agent.RoleAssistant {
-				citations, _ := s.resource.ListMessageCitations(r.Context(), userID, result.Items[i].ID)
+				citations, _ := s.resources.ListMessageCitations(r.Context(), userID, result.Items[i].ID)
 				result.Items[i].Citations = citations
 			}
 		}

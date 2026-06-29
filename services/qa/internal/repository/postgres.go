@@ -405,7 +405,7 @@ func (r *Postgres) UpdateResponseRunTermination(ctx context.Context, userID, run
 	if terminationReason != "" {
 		terminationReasonPtr = &terminationReason
 	}
-	err := r.queries.UpdateResponseRunTermination(ctx, runID, userID, status, terminationReasonPtr, promptTokens, completionTokens, now)
+	err := r.queries.UpdateResponseRunTermination(ctx, status, terminationReasonPtr, promptTokens, completionTokens, now, runID, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return service.NewError(service.CodeNotFound, "response run not found", err)
 	}
