@@ -31,6 +31,11 @@ type DocumentService interface {
 	CreateReportMaterial(context.Context, service.RequestContext, service.CreateReportMaterialInput) (service.ReportMaterial, error)
 	GetReportMaterial(context.Context, service.RequestContext, string) (service.ReportMaterial, error)
 	DeleteReportMaterial(context.Context, service.RequestContext, string) error
+	// C-08: settings, statistics, operation logs
+	GetReportSettings(context.Context, service.RequestContext) (service.ReportSettings, error)
+	UpdateReportSettings(context.Context, service.RequestContext, service.UpdateReportSettingsInput) (service.ReportSettings, error)
+	GetReportStatisticsOverview(context.Context, service.RequestContext) (service.ReportStatisticsOverview, error)
+	ListOperationLogs(context.Context, service.RequestContext, service.OperationLogListFilter) (service.OperationLogListResult, error)
 }
 
 type JobSvc interface {
@@ -111,11 +116,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /report-files", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /report-files/{reportFileId}", s.handleNotImplemented)
 	s.mux.HandleFunc("GET /report-files/{reportFileId}/content", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-statistics/overview", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-statistics/overview", s.handleGetReportStatisticsOverview)
 	s.mux.HandleFunc("GET /report-statistics/daily", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-operation-logs", s.handleNotImplemented)
-	s.mux.HandleFunc("GET /report-settings", s.handleNotImplemented)
-	s.mux.HandleFunc("PATCH /report-settings", s.handleNotImplemented)
+	s.mux.HandleFunc("GET /report-operation-logs", s.handleListOperationLogs)
+	s.mux.HandleFunc("GET /report-settings", s.handleGetReportSettings)
+	s.mux.HandleFunc("PATCH /report-settings", s.handleUpdateReportSettings)
 	s.mux.HandleFunc("/", s.handleNotFound)
 }
 

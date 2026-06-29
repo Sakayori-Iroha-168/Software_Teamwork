@@ -250,3 +250,19 @@ func (f *fakeDocumentService) DeleteReportMaterial(ctx context.Context, reqCtx s
 	}
 	return f.deleteMaterial(ctx, reqCtx, id)
 }
+
+func (f *fakeDocumentService) GetReportSettings(ctx context.Context, reqCtx service.RequestContext) (service.ReportSettings, error) {
+	return service.ReportSettings{}, nil
+}
+
+func (f *fakeDocumentService) UpdateReportSettings(ctx context.Context, reqCtx service.RequestContext, input service.UpdateReportSettingsInput) (service.ReportSettings, error) {
+	return service.ReportSettings{}, nil
+}
+
+func (f *fakeDocumentService) GetReportStatisticsOverview(ctx context.Context, reqCtx service.RequestContext) (service.ReportStatisticsOverview, error) {
+	return service.ReportStatisticsOverview{}, nil
+}
+
+func (f *fakeDocumentService) ListOperationLogs(ctx context.Context, reqCtx service.RequestContext, filter service.OperationLogListFilter) (service.OperationLogListResult, error) {
+	return service.OperationLogListResult{Items: []service.OperationLog{}, Page: service.PageMeta{Page: filter.Page, PageSize: filter.PageSize}}, nil
+}
