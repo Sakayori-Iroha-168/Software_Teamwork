@@ -362,40 +362,72 @@ func (s *Server) handleAskStream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	heartbeatTicker := time.NewTicker(15 * time.Second)
-	defer heartbeatTicker.Stop()
+	// SSE event channel to serialize writes to ResponseWriter
+	eventCh := make(chan service.ProgressEvent, 64)
+	sentErrorCh := make(chan bool, 1)
 
-	sentError := false
-	observe := func(event service.ProgressEvent) {
-		if event.Type == "error" {
-			sentError = true
-		}
-		writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
-	}
-
-	done := make(chan struct{})
+	// Single writer goroutine - ensures ResponseWriter is not accessed concurrently
+	writerDone := make(chan struct{})
 	go func() {
+		heartbeatTicker := time.NewTicker(15 * time.Second)
+		defer heartbeatTicker.Stop()
 		for {
 			select {
+			case event := <-eventCh:
+				if event.Type == "error" {
+					select {
+					case sentErrorCh <- true:
+					default:
+					}
+				}
+				writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
 			case <-heartbeatTicker.C:
 				writeSSE(w, flusher, "heartbeat", 0, map[string]any{})
-			case <-done:
-				return
+			case <-writerDone:
+				// Drain remaining events before exiting
+				for {
+					select {
+					case event := <-eventCh:
+						if event.Type == "error" {
+							select {
+							case sentErrorCh <- true:
+							default:
+							}
+						}
+						writeSSE(w, flusher, event.Type, event.Sequence, event.Payload)
+					default:
+						return
+					}
+				}
 			case <-r.Context().Done():
 				return
 			}
 		}
 	}()
 
+	observe := func(event service.ProgressEvent) {
+		select {
+		case eventCh <- event:
+		case <-r.Context().Done():
+		}
+	}
+
 	_, err := s.qa.Ask(r.Context(), userID, r.PathValue("sessionId"), input, observe)
-	close(done)
+	close(writerDone)
+
+	// Wait briefly for writer to drain remaining events
+	time.Sleep(10 * time.Millisecond)
 
 	if err != nil {
 		appErr, ok := service.Classify(err)
 		if !ok {
 			appErr = service.NewError(service.CodeInternal, "answer generation failed", err)
 		}
-		if !sentError {
+		// Check if error was already sent via channel
+		select {
+		case <-sentErrorCh:
+			return // error already sent
+		default:
 			writeSSE(w, flusher, "error", 0, map[string]any{"code": appErr.Code, "message": appErr.Message, "requestId": requestIDFromContext(r.Context())})
 		}
 		return

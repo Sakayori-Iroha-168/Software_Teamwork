@@ -450,7 +450,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
 	})
 
-	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason, result.Iterations, maxIterations)
+	terminationReason := terminationReasonFromResult(runErr, timeoutCtx, runCtx, lastFinishReason)
 	assistantMessage.Status = "completed"
 	runStatus := "completed"
 
@@ -497,10 +497,13 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
 }
 
-func terminationReasonFromResult(runErr error, timeoutCtx context.Context, runCtx context.Context, finishReason string, iteration int, maxIterations int) string {
+func terminationReasonFromResult(runErr error, timeoutCtx context.Context, runCtx context.Context, finishReason string) string {
 	if runErr != nil {
 		if errors.Is(runErr, context.Canceled) {
 			return "cancelled"
+		}
+		if errors.Is(runErr, agent.ErrMaxIterations) {
+			return "max_iterations"
 		}
 		return "model_error"
 	}
@@ -509,9 +512,6 @@ func terminationReasonFromResult(runErr error, timeoutCtx context.Context, runCt
 	}
 	if runCtx.Err() != nil {
 		return "cancelled"
-	}
-	if iteration >= maxIterations {
-		return "max_iterations"
 	}
 	return "completed"
 }
