@@ -35,6 +35,13 @@ func (*fakeRepository) DeleteConversation(context.Context, string, string) error
 func (r *fakeRepository) ListMessages(context.Context, string, string, int, int) (Page[Message], error) {
 	return Page[Message]{Items: append([]Message(nil), r.messages...), Page: 1, PageSize: 100, Total: len(r.messages)}, nil
 }
+func (r *fakeRepository) ListReasoningStepsByMessages(_ context.Context, _, _ string, messageIDs []string) (map[string][]ReasoningStep, error) {
+	result := make(map[string][]ReasoningStep)
+	for _, id := range messageIDs {
+		result[id] = r.savedSteps
+	}
+	return result, nil
+}
 func (r *fakeRepository) AppendMessages(_ context.Context, _, sessionID string, values ...Message) (ResponseRun, error) {
 	r.messages = append(r.messages, values...)
 	r.run = ResponseRun{ID: "run-id", SessionID: sessionID, UserMessageID: values[0].ID, AssistantMessageID: values[1].ID, Status: "running", MaxIterations: 5, CreatedAt: values[0].CreatedAt}

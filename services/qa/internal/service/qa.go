@@ -64,16 +64,17 @@ type Conversation struct {
 }
 
 type Message struct {
-	ID             string     `json:"id"`
-	ConversationID string     `json:"sessionId"`
-	SequenceNo     int        `json:"sequenceNo"`
-	Role           string     `json:"role"`
-	Content        string     `json:"content"`
-	Intent         string     `json:"intent,omitempty"`
-	Status         string     `json:"status"`
-	CitationCount  int        `json:"-"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	CompletedAt    *time.Time `json:"completedAt,omitempty"`
+	ID             string          `json:"id"`
+	ConversationID string          `json:"sessionId"`
+	SequenceNo     int             `json:"sequenceNo"`
+	Role           string          `json:"role"`
+	Content        string          `json:"content"`
+	Intent         string          `json:"intent,omitempty"`
+	Status         string          `json:"status"`
+	Thinking       []ReasoningStep `json:"thinking,omitempty"`
+	CitationCount  int             `json:"-"`
+	CreatedAt      time.Time       `json:"createdAt"`
+	CompletedAt    *time.Time      `json:"completedAt,omitempty"`
 }
 
 type ReasoningStep struct {
@@ -144,6 +145,7 @@ type Repository interface {
 	UpdateConversation(context.Context, string, Conversation) (Conversation, error)
 	DeleteConversation(context.Context, string, string) error
 	ListMessages(context.Context, string, string, int, int) (Page[Message], error)
+	ListReasoningStepsByMessages(context.Context, string, string, []string) (map[string][]ReasoningStep, error)
 	AppendMessages(context.Context, string, string, ...Message) (ResponseRun, error)
 	UpdateMessage(context.Context, string, Message) error
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
@@ -232,6 +234,35 @@ func (s *QAService) DeleteConversation(ctx context.Context, userID, id string) e
 
 func (s *QAService) ListMessages(ctx context.Context, userID, conversationID string, page, pageSize int) (Page[Message], error) {
 	return s.repository.ListMessages(ctx, userID, conversationID, page, pageSize)
+}
+
+func (s *QAService) ListMessagesWithThinking(ctx context.Context, userID, conversationID string, page, pageSize int) (Page[Message], error) {
+	pageResult, err := s.repository.ListMessages(ctx, userID, conversationID, page, pageSize)
+	if err != nil {
+		return pageResult, err
+	}
+	if len(pageResult.Items) == 0 {
+		return pageResult, nil
+	}
+	messageIDs := make([]string, 0, len(pageResult.Items))
+	for _, msg := range pageResult.Items {
+		if msg.Role == "assistant" {
+			messageIDs = append(messageIDs, msg.ID)
+		}
+	}
+	if len(messageIDs) == 0 {
+		return pageResult, nil
+	}
+	stepMap, err := s.repository.ListReasoningStepsByMessages(ctx, userID, conversationID, messageIDs)
+	if err != nil {
+		return pageResult, err
+	}
+	for i, msg := range pageResult.Items {
+		if steps, ok := stepMap[msg.ID]; ok {
+			pageResult.Items[i].Thinking = steps
+		}
+	}
+	return pageResult, nil
 }
 
 func (s *QAService) Ask(ctx context.Context, userID, conversationID string, input AskInput, observe ProgressObserver) (AskResult, error) {

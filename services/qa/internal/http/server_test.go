@@ -115,6 +115,9 @@ func (fakeQAService) DeleteConversation(context.Context, string, string) error {
 func (fakeQAService) ListMessages(context.Context, string, string, int, int) (service.Page[service.Message], error) {
 	return service.Page[service.Message]{Items: []service.Message{}, Page: 1, PageSize: 50}, nil
 }
+func (fakeQAService) ListMessagesWithThinking(ctx context.Context, userID, conversationID string, page, pageSize int) (service.Page[service.Message], error) {
+	return service.Page[service.Message]{Items: []service.Message{}, Page: 1, PageSize: 50}, nil
+}
 func (f fakeQAService) Ask(ctx context.Context, userID, conversationID string, input service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
 	return f.ask(ctx, userID, conversationID, input, observer)
 }

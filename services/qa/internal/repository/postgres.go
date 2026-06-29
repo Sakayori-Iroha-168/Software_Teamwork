@@ -318,6 +318,45 @@ func (r *Postgres) SaveReasoningSteps(ctx context.Context, userID, assistantMess
 	return nil
 }
 
+func (r *Postgres) ListReasoningStepsByMessages(ctx context.Context, userID, conversationID string, messageIDs []string) (map[string][]service.ReasoningStep, error) {
+	if len(messageIDs) == 0 {
+		return map[string][]service.ReasoningStep{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT rr.assistant_message_id::text, rps.step_type, rps.label, rps.detail, rps.status, rps.step_order, rps.created_at
+		FROM response_process_steps rps
+		JOIN response_runs rr ON rr.id = rps.response_run_id
+		JOIN conversations c ON c.id = rr.conversation_id
+		WHERE rr.assistant_message_id = ANY($1) AND c.external_user_id = $2 AND rr.conversation_id::text = $3 AND c.deleted_at IS NULL
+		ORDER BY rps.step_order`, messageIDs, userID, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("list reasoning steps: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string][]service.ReasoningStep, len(messageIDs))
+	for rows.Next() {
+		var messageID, stepType, label, detail, status string
+		var stepOrder int
+		var createdAt time.Time
+		if err := rows.Scan(&messageID, &stepType, &label, &detail, &status, &stepOrder, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan reasoning step: %w", err)
+		}
+		result[messageID] = append(result[messageID], service.ReasoningStep{
+			ID:        fmt.Sprintf("step-%d", stepOrder),
+			MessageID: messageID,
+			Type:      stepType,
+			Title:     label,
+			Summary:   detail,
+			Status:    status,
+			CreatedAt: createdAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate reasoning steps: %w", err)
+	}
+	return result, nil
+}
+
 func (r *Postgres) SaveStreamEvents(ctx context.Context, userID, runID string, events []service.StreamEvent) error {
 	if len(events) == 0 {
 		return nil
