@@ -20,7 +20,7 @@ type fakeRepository struct {
 	savedSteps               []ReasoningStep
 	savedEvents              []StreamEvent
 	invocations              []ModelInvocation
-	finalization             ResponseRunFinalization
+	finalization             *ResponseRunFinalization
 	run                      ResponseRun
 	finalizeErr              error
 	finalizeErrRun           ResponseRun
@@ -81,7 +81,7 @@ func (r *fakeRepository) UpdateMessage(_ context.Context, _ string, value Messag
 	}
 	return errors.New("message not found")
 }
-func (r *fakeRepository) FinalizeResponseRun(ctx context.Context, _ string, final ResponseRunFinalization) (ResponseRun, error) {
+func (r *fakeRepository) FinalizeResponseRun(ctx context.Context, _ string, final *ResponseRunFinalization) (ResponseRun, error) {
 	if r.failOnCanceledFinalizing {
 		if err := ctx.Err(); err != nil {
 			return ResponseRun{}, err
@@ -630,4 +630,81 @@ func TestAskToolProgressEventsExposeOnlySafeSummaries(t *testing.T) {
 	if !seenToolEvent {
 		t.Fatal("expected tool progress events")
 	}
+}
+
+func TestAskPersistsCitationsFromToolEvents(t *testing.T) {
+	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active"}}
+	qa, err := NewQAService(repository, fakeRuntimeProvider{
+		runner: citationRunner{
+			citations: []agent.CitationData{
+				{
+					CitationNo:    1,
+					ExternalDocID: "doc-1",
+					DocName:       "Test Document.pdf",
+					ExternalKbID:  "kb-1",
+					ExternalChunkID: "chunk-1",
+					QuoteText:     "Sample quote text",
+					Score:         ptr(0.95),
+					ChunkType:     "text",
+				},
+				{
+					CitationNo:    2,
+					ExternalDocID: "doc-2",
+					DocName:       "Second Doc.md",
+					QuoteText:     "Another quote",
+					Score:         ptr(0.87),
+				},
+			},
+		},
+		prompt: "system prompt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := qa.Ask(context.Background(), "user-id", "conversation-id", AskInput{Message: "test citation flow"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Citations) != 2 {
+		t.Fatalf("expected 2 citations, got %d", len(result.Citations))
+	}
+	if result.Citations[0].CitationNo != 1 || result.Citations[0].DocumentID != "doc-1" || result.Citations[0].DocumentName != "Test Document.pdf" {
+		t.Fatalf("unexpected citation[0]: %+v", result.Citations[0])
+	}
+	if result.Citations[1].CitationNo != 2 || result.Citations[1].DocumentID != "doc-2" {
+		t.Fatalf("unexpected citation[1]: %+v", result.Citations[1])
+	}
+	if repository.finalization == nil || len(repository.finalization.Citations) != 2 {
+		t.Fatal("expected citations to be passed to finalization")
+	}
+}
+
+func TestAskReturnsEmptyCitationsWhenNoToolCalls(t *testing.T) {
+	repository := &fakeRepository{conversation: Conversation{ID: "c-id", OwnerUserID: "u-id", Status: "active"}}
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "sp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := qa.Ask(context.Background(), "u-id", "c-id", AskInput{Message: "hello"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Citations) != 0 {
+		t.Fatalf("expected 0 citations, got %d", len(result.Citations))
+	}
+}
+
+func ptr(v float64) *float64 { return &v }
+
+type citationRunner struct {
+	citations []agent.CitationData
+}
+
+func (r citationRunner) RunWithObserver(ctx context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
+	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
+	observer(agent.Event{Type: agent.EventToolStarted, Iteration: 1, ToolCallID: "call-1", ToolName: "search_knowledge"})
+	observer(agent.Event{Type: agent.EventToolCompleted, Iteration: 1, ToolCallID: "call-1", ToolName: "search_knowledge", Citations: r.citations})
+	observer(agent.Event{Type: agent.EventModelCompleted, Iteration: 1, FinishReason: "stop", Usage: agent.TokenUsage{TotalTokens: 10}})
+	observer(agent.Event{Type: agent.EventAgentCompleted, Iteration: 1, FinishReason: "stop"})
+	return agent.Result{Final: agent.Message{Role: agent.RoleAssistant, Content: "answer with citations"}, Iterations: 1}, nil
 }

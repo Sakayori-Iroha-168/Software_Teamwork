@@ -67,7 +67,7 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 	if err != nil || cancelled.Status != "cancelled" {
 		t.Fatalf("run=%+v err=%v", cancelled, err)
 	}
-	_, err = repo.FinalizeResponseRun(ctx, "integration-user", service.ResponseRunFinalization{
+	_, err = repo.FinalizeResponseRun(ctx, "integration-user", &service.ResponseRunFinalization{
 		RunID: run.ID,
 		AssistantMessage: service.Message{
 			ID:             assistantMessageID,

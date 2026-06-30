@@ -137,7 +137,7 @@ type AskResult struct {
 	UserMessage      Message         `json:"userMessage"`
 	AssistantMessage Message         `json:"assistantMessage"`
 	ResponseRun      ResponseRun     `json:"responseRun"`
-	Citations        []any           `json:"citations"`
+	Citations        []Citation       `json:"citations"`
 	ReasoningSteps   []ReasoningStep `json:"reasoningSteps"`
 }
 
@@ -184,6 +184,8 @@ type ResponseRunFinalization struct {
 	AssistantMessage  Message
 	ReasoningSteps    []ReasoningStep
 	StreamEvents      []StreamEvent
+	Citations         []agent.CitationData
+	CitationsOutput   []Citation
 	Status            string
 	TerminationReason string
 	CurrentIteration  int
@@ -203,7 +205,7 @@ type Repository interface {
 	ListMessages(context.Context, string, string, MessageListOptions) (Page[Message], error)
 	AppendMessages(context.Context, string, string, ResponseRunStart, ...Message) (ResponseRun, error)
 	UpdateMessage(context.Context, string, Message) error
-	FinalizeResponseRun(context.Context, string, ResponseRunFinalization) (ResponseRun, error)
+	FinalizeResponseRun(context.Context, string, *ResponseRunFinalization) (ResponseRun, error)
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
 	SaveModelInvocation(context.Context, string, ModelInvocation) (string, error)
@@ -394,6 +396,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	messages = append(messages, agent.Message{Role: agent.RoleUser, Content: userMessage.Content})
 
 	steps := make([]ReasoningStep, 0, 4)
+	accumulatedCitations := []agent.CitationData{}
 	iterationStartedAt := map[int]time.Time{}
 	completedIterations := map[int]struct{}{}
 	usage := agent.TokenUsage{}
@@ -436,7 +439,12 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 			if err != nil && invocationErr == nil {
 				invocationErr = err
 			}
-		case agent.EventToolStarted, agent.EventToolCompleted, agent.EventToolFailed:
+		case agent.EventToolCompleted:
+			emit(string(event.Type), map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration})
+			if len(event.Citations) > 0 {
+				accumulatedCitations = append(accumulatedCitations, event.Citations...)
+			}
+		case agent.EventToolStarted, agent.EventToolFailed:
 			emit(string(event.Type), map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration})
 		}
 		step, ok := stepFromAgentEvent(assistantMessage.ID, event, s.now().UTC())
@@ -448,6 +456,10 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	})
 	if runErr == nil && invocationErr != nil {
 		runErr = fmt.Errorf("save model invocation: %w", invocationErr)
+	}
+	// Renumber citations sequentially per message.
+	for i := range accumulatedCitations {
+		accumulatedCitations[i].CitationNo = i + 1
 	}
 	if runErr != nil {
 		status, reason, errorCode, publicMessage := classifyRunError(runErr)
@@ -461,8 +473,9 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 			s.saveFailedModelInvocation(cleanupCtx, userID, run.ID, runtime, profileID, reason, errorCode, iterationStartedAt)
 		}
 		emit("error", map[string]any{"responseRunId": run.ID, "code": string(errorCode), "message": publicMessage})
-		finalized, finalizeErr := s.repository.FinalizeResponseRun(cleanupCtx, userID, ResponseRunFinalization{
+		finalized, finalizeErr := s.repository.FinalizeResponseRun(cleanupCtx, userID, &ResponseRunFinalization{
 			RunID: run.ID, AssistantMessage: assistantMessage, ReasoningSteps: steps, StreamEvents: events,
+				Citations: accumulatedCitations,
 			Status: status, TerminationReason: reason, CurrentIteration: maxStartedIteration(iterationStartedAt),
 			PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 			ReasoningTokens: usage.ReasoningTokens, TotalTokens: usage.TotalTokens,
@@ -481,12 +494,12 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 					return AskResult{}, NewError(CodeDependency, "answer state persistence failed", fmt.Errorf("save replay records after finalization conflict: %w", saveErr))
 				}
 				run = finalized
-				return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
+				return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: citationsFromData(accumulatedCitations), ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
 			}
 			return AskResult{}, NewError(CodeDependency, "answer state persistence failed", fmt.Errorf("finalize failed response run after agent error: %w", finalizeErr))
 		}
 		run = finalized
-		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
+		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: citationsFromData(accumulatedCitations), ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
 	}
 	assistantMessage.Content = result.Final.Content
 	assistantMessage.Status = "completed"
@@ -494,8 +507,9 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	run, err = s.repository.FinalizeResponseRun(cleanupCtx, userID, ResponseRunFinalization{
+	run, err = s.repository.FinalizeResponseRun(cleanupCtx, userID, &ResponseRunFinalization{
 		RunID: run.ID, AssistantMessage: assistantMessage, ReasoningSteps: steps, StreamEvents: events,
+			Citations: accumulatedCitations,
 		Status: "completed", TerminationReason: "completed", CurrentIteration: result.Iterations,
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 		ReasoningTokens: usage.ReasoningTokens, TotalTokens: usage.TotalTokens,
@@ -504,7 +518,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err != nil {
 		return AskResult{}, fmt.Errorf("finalize response run: %w", err)
 	}
-	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
+	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: citationsFromData(accumulatedCitations), ReasoningSteps: steps}, nil
 }
 
 func (s *QAService) saveReplayRecords(ctx context.Context, userID, runID, assistantMessageID string, steps []ReasoningStep, events []StreamEvent) error {
@@ -693,6 +707,46 @@ func newID(prefix string) string {
 	data[8] = (data[8] & 0x3f) | 0x80
 	encoded := hex.EncodeToString(data)
 	return encoded[0:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:32]
+}
+
+func citationsFromData(data []agent.CitationData) []Citation {
+	if len(data) == 0 {
+		return []Citation{}
+	}
+	citations := make([]Citation, 0, len(data))
+	for _, d := range data {
+		c := Citation{
+			ID:             newID("cit"),
+			CitationNo:     d.CitationNo,
+			DocumentID:     d.ExternalDocID,
+			DocumentName:   d.DocName,
+			KnowledgeBaseID: d.ExternalKbID,
+			ChunkID:        d.ExternalChunkID,
+			SectionPath:    d.SectionPath,
+			Text:           d.QuoteText,
+			ContentPreview: d.QuoteText,
+			Context:        d.Context,
+			PageNumber:     d.PageNumber,
+			Score:          d.Score,
+			RerankScore:    d.RerankScore,
+			ChunkType:      d.ChunkType,
+			IsSourceAvailable: true,
+			Metadata:       d.Metadata,
+			Content:        d.Context,
+		}
+		if c.Content == "" {
+			c.Content = d.QuoteText
+		}
+		if c.Metadata == nil {
+			c.Metadata = map[string]any{}
+		}
+		c.Source = &CitationSource{Available: true}
+		if d.ExternalDocID != "" {
+			c.Source.DownloadEndpoint = "/api/v1/documents/" + d.ExternalDocID + "/content"
+		}
+		citations = append(citations, c)
+	}
+	return citations
 }
 
 func truncateRunes(value string, limit int) string {

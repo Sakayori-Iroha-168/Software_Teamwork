@@ -14,6 +14,7 @@ import (
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/repository/sqlc"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
 
 type Postgres struct {
@@ -276,7 +277,7 @@ func (r *Postgres) UpdateMessage(ctx context.Context, userID string, message ser
 	return nil
 }
 
-func (r *Postgres) FinalizeResponseRun(ctx context.Context, userID string, final service.ResponseRunFinalization) (service.ResponseRun, error) {
+func (r *Postgres) FinalizeResponseRun(ctx context.Context, userID string, final *service.ResponseRunFinalization) (service.ResponseRun, error) {
 	if final.CompletedAt.IsZero() {
 		final.CompletedAt = time.Now().UTC()
 	}
@@ -325,10 +326,87 @@ func (r *Postgres) FinalizeResponseRun(ctx context.Context, userID string, final
 	if err := replaceStreamEvents(ctx, q, final.RunID, final.StreamEvents); err != nil {
 		return service.ResponseRun{}, err
 	}
+	if len(final.Citations) > 0 {
+		inserted, err := r.insertCitations(ctx, tx, final.AssistantMessage.ID, final.RunID, final.Citations)
+		if err != nil {
+			return service.ResponseRun{}, fmt.Errorf("insert citations: %w", err)
+		}
+		final.CitationsOutput = inserted
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return service.ResponseRun{}, fmt.Errorf("commit finalize response run: %w", err)
 	}
 	return responseRunFromRow(row), nil
+}
+
+// insertCitations persists citation snapshots within an open transaction.
+// CitationNo is assigned from the agent.CitationData and must already be
+// unique per message (enforced by the UNIQUE (message_id, citation_no)
+// constraint on the citations table).
+func (r *Postgres) insertCitations(ctx context.Context, tx pgx.Tx, messageID, runID string, data []agent.CitationData) ([]service.Citation, error) {
+	inserted := make([]service.Citation, 0, len(data))
+	for _, citation := range data {
+		metadata, err := json.Marshal(citation.Metadata)
+		if err != nil {
+			metadata = []byte("{}")
+		}
+		var id string
+		var isSourceAvail bool
+		var srcUnavailReason string
+		err = tx.QueryRow(ctx, `INSERT INTO citations
+			(message_id, citation_no, external_kb_id, external_doc_id, external_chunk_id,
+			 doc_name, section_path, quote_text, context, page_number, score, rerank_score,
+			 chunk_type, metadata, response_run_id, content_preview, is_source_available, source_unavailable_reason)
+			VALUES ($1, $2, NULLIF($3,''), NULLIF($4,''), NULLIF($5,''),
+			        $6, NULLIF($7,''), NULLIF($8,''), NULLIF($9,''), $10, $11, $12,
+			        NULLIF($13,''), $14, NULLIF($15,''), $16, $17, NULLIF($18,''))
+			RETURNING id::text, is_source_available, COALESCE(source_unavailable_reason, '')`,
+			messageID, citation.CitationNo,
+			citation.ExternalKbID, citation.ExternalDocID, citation.ExternalChunkID,
+			citation.DocName, citation.SectionPath, citation.QuoteText, citation.Context,
+			citation.PageNumber, citation.Score, citation.RerankScore,
+			citation.ChunkType, metadata,
+			runID, citation.QuoteText,
+			true, "",
+		).Scan(&id, &isSourceAvail, &srcUnavailReason)
+		if err != nil {
+			return nil, fmt.Errorf("insert citation %d for message %s: %w", citation.CitationNo, messageID, err)
+		}
+		c := service.Citation{
+			ID:                id,
+			MessageID:         messageID,
+			CitationNo:        citation.CitationNo,
+			DocumentID:        citation.ExternalDocID,
+			DocumentName:      citation.DocName,
+			KnowledgeBaseID:   citation.ExternalKbID,
+			ChunkID:           citation.ExternalChunkID,
+			SectionPath:       citation.SectionPath,
+			Text:              citation.QuoteText,
+			ContentPreview:    citation.QuoteText,
+			Context:           citation.Context,
+			PageNumber:        citation.PageNumber,
+			Score:             citation.Score,
+			RerankScore:       citation.RerankScore,
+			ChunkType:         citation.ChunkType,
+			IsSourceAvailable: isSourceAvail,
+			Metadata:          citation.Metadata,
+			Content:           citation.Context,
+		}
+		if c.Content == "" {
+			c.Content = citation.QuoteText
+		}
+		if c.Metadata == nil {
+			c.Metadata = map[string]any{}
+		}
+		c.Source = &service.CitationSource{Available: isSourceAvail}
+		if isSourceAvail && citation.ExternalDocID != "" {
+			c.Source.DownloadEndpoint = "/api/v1/documents/" + citation.ExternalDocID + "/content"
+		} else if !isSourceAvail {
+			c.Source.Reason = srcUnavailReason
+		}
+		inserted = append(inserted, c)
+	}
+	return inserted, nil
 }
 
 func (r *Postgres) SaveReasoningSteps(ctx context.Context, userID, assistantMessageID string, steps []service.ReasoningStep) error {
@@ -355,6 +433,45 @@ func (r *Postgres) SaveReasoningSteps(ctx context.Context, userID, assistantMess
 		return fmt.Errorf("commit reasoning steps: %w", err)
 	}
 	return nil
+}
+
+func (r *Postgres) ListReasoningStepsByMessages(ctx context.Context, userID, conversationID string, messageIDs []string) (map[string][]service.ReasoningStep, error) {
+	if len(messageIDs) == 0 {
+		return map[string][]service.ReasoningStep{}, nil
+	}
+	rows, err := r.pool.Query(ctx, `
+		SELECT rr.assistant_message_id::text, rps.step_type, rps.label, rps.detail, rps.status, rps.step_order, rps.created_at
+		FROM response_process_steps rps
+		JOIN response_runs rr ON rr.id = rps.response_run_id
+		JOIN conversations c ON c.id = rr.conversation_id
+		WHERE rr.assistant_message_id = ANY($1) AND c.external_user_id = $2 AND rr.conversation_id::text = $3 AND c.deleted_at IS NULL
+		ORDER BY rps.step_order`, messageIDs, userID, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("list reasoning steps: %w", err)
+	}
+	defer rows.Close()
+	result := make(map[string][]service.ReasoningStep, len(messageIDs))
+	for rows.Next() {
+		var messageID, stepType, label, detail, status string
+		var stepOrder int
+		var createdAt time.Time
+		if err := rows.Scan(&messageID, &stepType, &label, &detail, &status, &stepOrder, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan reasoning step: %w", err)
+		}
+		result[messageID] = append(result[messageID], service.ReasoningStep{
+			ID:        fmt.Sprintf("step-%d", stepOrder),
+			MessageID: messageID,
+			Type:      stepType,
+			Title:     label,
+			Summary:   detail,
+			Status:    status,
+			CreatedAt: createdAt,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate reasoning steps: %w", err)
+	}
+	return result, nil
 }
 
 func (r *Postgres) SaveStreamEvents(ctx context.Context, userID, runID string, events []service.StreamEvent) error {

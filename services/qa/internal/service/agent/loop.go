@@ -26,7 +26,8 @@ const (
 )
 
 // Event intentionally excludes tool arguments, tool results, prompts, and
-// credentials. It is safe to adapt into logs or public progress summaries.
+// credentials. CitationData carries only external-facing identifiers.
+// It is safe to adapt into logs or public progress summaries.
 type Event struct {
 	Type         EventType
 	Iteration    int
@@ -35,6 +36,7 @@ type Event struct {
 	FinishReason string
 	Usage        TokenUsage
 	Err          error
+	Citations    []CitationData
 }
 
 type Observer func(Event)
@@ -181,9 +183,9 @@ func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[str
 	}
 	base.Content = truncateUTF8(content, r.cfg.MaxToolResultBytes)
 	if result.IsError {
-		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: errors.New("tool reported an error")})
+		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: errors.New("tool reported an error"), Citations: result.Citations})
 	} else {
-		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name})
+		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Citations: result.Citations})
 	}
 	return base
 }

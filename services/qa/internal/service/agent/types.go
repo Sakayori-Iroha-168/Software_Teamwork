@@ -83,10 +83,31 @@ type TokenUsage struct {
 	TotalTokens      int
 }
 
+// CitationData represents a single citation snapshot extracted from a tool
+// result. It carries enough information to persist a citation to the database.
+// Fields intentionally use external-facing identifiers only — no internal
+// file IDs, object keys, raw vectors, or provider secrets.
+type CitationData struct {
+	CitationNo      int            `json:"citationNo"`
+	ExternalKbID    string         `json:"externalKbId,omitempty"`
+	ExternalDocID   string         `json:"externalDocId,omitempty"`
+	ExternalChunkID string         `json:"externalChunkId,omitempty"`
+	DocName         string         `json:"docName"`
+	SectionPath     string         `json:"sectionPath,omitempty"`
+	QuoteText       string         `json:"quoteText,omitempty"`
+	Context         string         `json:"context,omitempty"`
+	PageNumber      *int           `json:"pageNumber,omitempty"`
+	Score           *float64       `json:"score,omitempty"`
+	RerankScore     *float64       `json:"rerankScore,omitempty"`
+	ChunkType       string         `json:"chunkType,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+}
+
 // ToolResult is a normalized MCP result suitable for a role=tool message.
 type ToolResult struct {
-	Content string
-	IsError bool
+	Content   string
+	IsError   bool
+	Citations []CitationData
 }
 
 type ModelClient interface {

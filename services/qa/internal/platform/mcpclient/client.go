@@ -149,7 +149,105 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 	if err != nil {
 		return agent.ToolResult{}, err
 	}
-	return agent.ToolResult{Content: content, IsError: result.IsError}, nil
+	citations := extractCitations(result)
+	return agent.ToolResult{Content: content, IsError: result.IsError, Citations: citations}, nil
+}
+
+// extractCitations attempts to parse citation-worthy data from the structured
+// content of a knowledge-search MCP tool result. It is intentionally tolerant
+// — if the result shape does not match expectations the returned slice is
+// simply empty. It never exposes internal file IDs, object keys, raw vectors,
+// or provider secrets.
+func extractCitations(result *mcp.CallToolResult) []agent.CitationData {
+	if result == nil || result.StructuredContent == nil {
+		return nil
+	}
+	raw, ok := result.StructuredContent.(map[string]any)
+	if !ok {
+		return nil
+	}
+	// The knowledge service wraps results under "data"."results".
+	data, _ := raw["data"].(map[string]any)
+	if data == nil {
+		data = raw
+	}
+	results, _ := data["results"].([]any)
+	if len(results) == 0 {
+		return nil
+	}
+	citations := make([]agent.CitationData, 0, len(results))
+	for i, item := range results {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		citation := agent.CitationData{
+			CitationNo: i + 1,
+			Metadata:   map[string]any{},
+		}
+		if v := stringField(obj, "knowledgeBaseId"); v != "" {
+			citation.ExternalKbID = v
+		}
+		if v := stringField(obj, "documentId"); v != "" {
+			citation.ExternalDocID = v
+		}
+		if v := stringField(obj, "chunkId"); v != "" {
+			citation.ExternalChunkID = v
+		}
+		if v := stringField(obj, "documentName"); v != "" {
+			citation.DocName = v
+		}
+		if v := stringField(obj, "sectionPath"); v != "" {
+			citation.SectionPath = v
+		}
+		if v := stringField(obj, "contentPreview"); v != "" {
+			citation.QuoteText = v
+		}
+		if v := stringField(obj, "context"); v != "" {
+			citation.Context = v
+		}
+		if v := stringField(obj, "chunkType"); v != "" {
+			citation.ChunkType = v
+		}
+		if v, ok := obj["score"].(float64); ok {
+			sc := v
+			citation.Score = &sc
+		}
+		if v, ok := obj["rerankScore"].(float64); ok {
+			rs := v
+			citation.RerankScore = &rs
+		}
+		if v, ok := obj["pageNumber"].(float64); ok {
+			pn := int(v)
+			citation.PageNumber = &pn
+		}
+		for k, v := range obj {
+			if isStandardCitationField(k) {
+				continue
+			}
+			citation.Metadata[k] = v
+		}
+		citations = append(citations, citation)
+	}
+	return citations
+}
+
+func stringField(obj map[string]any, key string) string {
+	v, ok := obj[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+func isStandardCitationField(key string) bool {
+	switch key {
+	case "knowledgeBaseId", "documentId", "chunkId", "documentName",
+		"sectionPath", "contentPreview", "context", "chunkType",
+		"score", "rerankScore", "pageNumber":
+		return true
+	}
+	return false
 }
 
 func normalizeResult(result *mcp.CallToolResult) (string, error) {
