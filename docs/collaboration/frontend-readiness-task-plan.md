@@ -11,6 +11,10 @@
 
 权威依据包括：
 
+- #262
+- `docs/collaboration/task-brief-template.md`
+- `docs/collaboration/task-issue-project-workflow.md`
+- `docs/collaboration/frontend-workflow.md`
 - `docs/architecture/current-capability-matrix.md`
 - `docs/architecture/frontend-backend-contract.md`
 - `docs/services/gateway/api/openapi.yaml`
@@ -104,6 +108,13 @@
 - `docs/services/document/docs/implementation.md`
 - `.trellis/spec/frontend/quality-guidelines.md`
 
+#### 后端 readiness 依据
+
+- Gateway active owner map 中 Document owner 有 43 个 active operation，覆盖 report types/templates/materials/reports/outlines/sections/jobs/events/files/settings/statistics/logs。
+- `docs/services/document/docs/implementation.md` 记录 Document 基础 CRUD、job 状态机、report files/content、基础内置 DOCX、settings/statistics/logs 已在当前实现中可见。
+- 同一 implementation 文档仍将 Document MCP tools、真实 AI 大纲/正文生成、Pandoc/LibreOffice 富 DOCX 工具链列为缺口。
+- 因此本任务只做 L2 真实 Document API 接入和 fallback 移除，不把 AI 生成、MCP tools 或富 DOCX 作为已完成能力。
+
 #### 任务范围
 
 - 移除报告页面中的 `fallbackTypes`、`fallbackTemplates`、`fallbackMaterials`、`fallbackReports`、`fallbackOutline`、`fallbackSections` 等 silent fallback。
@@ -173,6 +184,13 @@
 - `docs/services/knowledge/docs/implementation.md`
 - #84 #85
 
+#### 后端 readiness 依据
+
+- Gateway active owner map 中 Knowledge owner 有 18 个 active operation，包含 knowledge bases、documents、chunks、content、knowledge-queries 和 parser configs。
+- `docs/services/knowledge/docs/implementation.md` 记录知识库 CRUD、文档列表/上传详情、File Service handoff、PostgreSQL repository 和 asynq enqueue 已实现。
+- 同一 implementation 文档明确 document PATCH/DELETE、chunks、content、`knowledge-queries`、parser configs、worker ingestion、Parser/Qdrant/embedding/rerank 闭环仍未完全 ready，且部分 active path 可能返回 `NotImplemented` / 501。
+- #84 负责 `knowledge-queries`、rerank 和 MCP search 契约；#85 负责 parser configs 运行时配置。
+
 #### 任务范围
 
 - 保留并校验已 ready 的知识库 CRUD、文档列表、文档上传真实 API 流程。
@@ -241,6 +259,13 @@
 - `docs/services/knowledge/docs/implementation.md`
 - #84 #93
 
+#### 后端 readiness 依据
+
+- Gateway active owner map 中 QA owner 有 25 个 active operation，覆盖 sessions、messages、events、response runs、tool calls、citations、settings、retrieval tests 和 metrics。
+- `docs/services/qa/docs/implementation.md` 记录 QA sessions/messages/SSE/config/resource routes 和 AI Gateway chat client 基础能力已存在。
+- 同一 implementation 文档明确 true RAG 依赖 Knowledge `/knowledge-queries`，而 Knowledge retrieval 仍由 #84 收口。
+- #93 负责 QA citation snapshot、引用详情和批量查询；在 #93 完成前，前端不得伪造引用详情。
+
 #### 任务范围
 
 - 聊天消息和 SSE 展示只使用 QA 返回的安全事件：`message.created`、`agent.iteration.started`、`reasoning.step`、`tool.started`、`tool.completed`、`tool.failed`、`answer.delta`、`citation.delta`、`answer.completed`、`error`。
@@ -308,6 +333,12 @@
 - `docs/architecture/current-capability-matrix.md`
 - `docs/architecture/frontend-backend-contract.md`
 - #117 #125 #163
+
+#### 后端 readiness 依据
+
+- `docs/architecture/current-capability-matrix.md` 将 Gateway、Knowledge、QA、Document、File、AI Gateway 和本地联调能力分为已实现、部分实现、占位和缺失，前端 smoke 必须按该矩阵判断 ready/skip/expected failure。
+- #117/#163 只覆盖前端测试基础和 API-boundary mock 测试，不证明真实后端业务闭环。
+- #125 是跨服务和 MCP smoke 的归口任务；本任务只升级前端验收标准和 checklist，不替代 #125 的真实脚本或联调结果。
 
 #### 任务范围
 
