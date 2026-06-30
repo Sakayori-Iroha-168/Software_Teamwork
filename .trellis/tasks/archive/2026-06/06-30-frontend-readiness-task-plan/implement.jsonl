@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend scope, Gateway-only API source, and product module priorities for the readiness proposal."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality rules, forbidden silent failures, API boundary mock guidance, and required checks."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Shared thinking guides and commit convention references."}
+{"file": ".trellis/tasks/06-30-frontend-readiness-task-plan/research/readiness-evidence.md", "reason": "Evidence for F-series classification, backend readiness, fallback risks, and follow-up issue routing."}

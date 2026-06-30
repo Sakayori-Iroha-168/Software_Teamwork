@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Verify proposal aligns with frontend scope and Gateway-only API contract."}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verify proposal covers frontend acceptance quality and fallback risks."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Verify shared process and commit expectations."}
+{"file": ".trellis/tasks/06-30-frontend-readiness-task-plan/research/readiness-evidence.md", "reason": "Verification evidence for proposal scope and acceptance rules."}
