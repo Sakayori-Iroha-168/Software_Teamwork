@@ -38,3 +38,36 @@ Completed issue #157: aligned QA session 403 behavior, hid non-owned child resou
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: QA to AI Gateway smoke
+
+**Date**: 2026-06-30
+**Task**: QA to AI Gateway smoke
+**Branch**: `JerryTeam/test/qa-ai-gateway-smoke`
+
+### Summary
+
+Implemented issue #288 with an env-gated QA to AI Gateway chat smoke, token/profile negative probes, operator runbook, and reusable backend smoke-test guidance; verified QA tests and builds.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c0f160a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
