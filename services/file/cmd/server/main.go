@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -9,12 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/file/internal/config"
 	filehttp "github.com/Sakayori-Iroha-168/Software_Teamwork/services/file/internal/http"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/file/internal/platform/storage"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/file/internal/repository"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/file/internal/service"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func main() {
@@ -26,7 +29,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	repo := repository.NewMemoryRepository()
+	repo, closeRepo, err := newRepository(cfg)
+	if err != nil {
+		logger.Error("repository initialization failed", "service", "file", "error", err)
+		os.Exit(1)
+	}
+	defer closeRepo()
 	objectStore, err := newObjectStore(cfg)
 	if err != nil {
 		logger.Error("storage initialization failed", "service", "file", "error", err)
@@ -47,7 +55,7 @@ func main() {
 	defer stop()
 
 	go func() {
-		logger.Info("file service starting", "service", "file", "addr", cfg.HTTPAddr, "storage_backend", cfg.StorageBackend)
+		logger.Info("file service starting", "service", "file", "addr", cfg.HTTPAddr, "storage_backend", cfg.StorageBackend, "metadata_backend", metadataBackend(cfg))
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("file service stopped unexpectedly", "service", "file", "error", err)
 			stop()
@@ -63,6 +71,30 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("file service shutdown complete", "service", "file")
+}
+
+func newRepository(cfg config.Config) (service.DocumentRepository, func(), error) {
+	if cfg.DatabaseURL == "" {
+		return repository.NewMemoryRepository(), func() {}, nil
+	}
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		_ = db.Close()
+		return nil, nil, err
+	}
+	return repository.NewPostgresRepository(db), func() { _ = db.Close() }, nil
+}
+
+func metadataBackend(cfg config.Config) string {
+	if cfg.DatabaseURL != "" {
+		return "postgres"
+	}
+	return "memory"
 }
 
 func newObjectStore(cfg config.Config) (service.ObjectStore, error) {

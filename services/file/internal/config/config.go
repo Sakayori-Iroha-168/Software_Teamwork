@@ -18,6 +18,7 @@ const (
 
 type Config struct {
 	HTTPAddr        string
+	DatabaseURL     string
 	MaxUploadBytes  int64
 	StorageBackend  string
 	LocalStorageDir string
@@ -34,6 +35,7 @@ type Config struct {
 func Load() (Config, error) {
 	cfg := Config{
 		HTTPAddr:        stringValue("FILE_HTTP_ADDR", DefaultHTTPAddr),
+		DatabaseURL:     stringValue("FILE_DATABASE_URL", ""),
 		StorageBackend:  stringValue("FILE_STORAGE_BACKEND", DefaultStorageBackend),
 		LocalStorageDir: stringValue("FILE_LOCAL_STORAGE_DIR", DefaultLocalStorageDir),
 		MinIOEndpoint:   stringValue("FILE_MINIO_ENDPOINT", ""),

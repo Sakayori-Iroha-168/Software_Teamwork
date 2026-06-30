@@ -10,6 +10,7 @@ import (
 func TestLoadAcceptsLocalStorageBackend(t *testing.T) {
 	t.Setenv("FILE_STORAGE_BACKEND", "local")
 	t.Setenv("FILE_LOCAL_STORAGE_DIR", t.TempDir())
+	t.Setenv("FILE_DATABASE_URL", "postgres://file_app:file_app_dev@localhost:5432/file_system?sslmode=disable")
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -17,6 +18,9 @@ func TestLoadAcceptsLocalStorageBackend(t *testing.T) {
 	}
 	if cfg.StorageBackend != "local" || cfg.LocalStorageDir == "" {
 		t.Fatalf("config = %+v", cfg)
+	}
+	if cfg.DatabaseURL == "" {
+		t.Fatal("DatabaseURL is empty")
 	}
 }
 

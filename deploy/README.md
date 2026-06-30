@@ -92,6 +92,7 @@ Override host ports in `deploy/.env`.
 | `GATEWAY_DOCUMENT_BASE_URL` | gateway | set in Compose | Internal document base URL. |
 | `GATEWAY_AI_GATEWAY_BASE_URL` | gateway | set in Compose | Internal AI Gateway base URL; route calls require optional profile to run. |
 | `AUTH_DATABASE_URL` | auth | yes | Auth PostgreSQL DSN. |
+| `FILE_DATABASE_URL` | file | yes | File metadata PostgreSQL DSN. |
 | `FILE_STORAGE_BACKEND` | file | no | `local` in Compose for durable local smoke tests. |
 | `DATABASE_URL` | knowledge | yes | Knowledge PostgreSQL DSN. |
 | `FILE_SERVICE_BASE_URL` | knowledge | yes | Internal File Service URL. |

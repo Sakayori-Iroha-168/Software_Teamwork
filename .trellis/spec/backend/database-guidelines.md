@@ -32,10 +32,9 @@ Current repository facts from `docs/architecture/technology-decisions.md`:
   follow-up decision, not an implementation-PR side effect.
 - Knowledge and Document have fixed `asynq v0.26.0`; new asynchronous jobs
   should reuse that version unless a documented decision upgrades it.
-- File Service runtime currently has memory/local/MinIO object-store adapters.
-  PostgreSQL metadata repository files and migrations exist, but
-  `cmd/server` still uses a memory metadata repository until the runtime
-  integration lands.
+- File Service runtime has memory/local/MinIO object-store adapters. Metadata
+  uses PostgreSQL when `FILE_DATABASE_URL` is configured; the memory metadata
+  repository is only for tests and early local runs.
 - Qdrant remains a Knowledge target; the runtime adapter and Knowledge
   embedding/rerank retrieval loop are not implemented just because AI Gateway
   exposes embedding and rerank endpoints.
@@ -327,6 +326,8 @@ Rules:
   - `GET /internal/v1/files/{fileId}/content`.
 - Runtime environment:
   - `FILE_STORAGE_BACKEND=memory|local|minio`.
+  - Optional `FILE_DATABASE_URL`; when set, runtime metadata must use
+    PostgreSQL and migrations under `services/file/migrations`.
   - `FILE_LOCAL_STORAGE_DIR` when using `local`.
   - `FILE_MINIO_ENDPOINT`, `FILE_MINIO_ACCESS_KEY`,
     `FILE_MINIO_SECRET_KEY`, and `FILE_MINIO_BUCKET` when using `minio`.
