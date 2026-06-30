@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -375,12 +377,32 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		_, _ = s.repository.UpdateConversation(ctx, userID, conversation)
 	}
 	events := make([]StreamEvent, 0, 12)
+	var eventsMu sync.Mutex
+	var eventSeq int32
 	emit := func(eventType string, payload map[string]any) {
-		event := StreamEvent{EventSeq: len(events) + 1, EventType: eventType, Payload: payload, CreatedAt: s.now().UTC()}
+		seq := atomic.AddInt32(&eventSeq, 1)
+		event := StreamEvent{EventSeq: int(seq), EventType: eventType, Payload: payload, CreatedAt: s.now().UTC()}
+		eventsMu.Lock()
 		events = append(events, event)
+		eventsMu.Unlock()
 		emitProgress(observe, ProgressEvent{Type: eventType, Sequence: event.EventSeq, Payload: payload, UserMessageID: userMessage.ID, AssistantMessage: assistantMessage.ID, Intent: intent})
 	}
 	emit("message.created", map[string]any{"responseRunId": run.ID, "userMessageId": userMessage.ID, "assistantMessageId": assistantMessage.ID, "status": "running"})
+	heartbeatTicker := time.NewTicker(15 * time.Second)
+	defer heartbeatTicker.Stop()
+	heartbeatDone := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-heartbeatTicker.C:
+				emit("heartbeat", map[string]any{})
+			case <-heartbeatDone:
+				return
+			case <-runCtx.Done():
+				return
+			}
+		}
+	}()
 	messages := make([]agent.Message, 0, len(history.Items)+3)
 	messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: runtime.SystemPrompt})
 	if directive := requestDirective(input); directive != "" {
@@ -436,8 +458,17 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 			if err != nil && invocationErr == nil {
 				invocationErr = err
 			}
-		case agent.EventToolStarted, agent.EventToolCompleted, agent.EventToolFailed:
-			emit(string(event.Type), map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration})
+		case agent.EventToolStarted:
+			emit("tool.started", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "正在执行工具 " + event.ToolName})
+		case agent.EventToolCompleted:
+			emit("tool.completed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行完成"})
+			if event.ToolName == "search_knowledge" && event.ToolResult != "" {
+				for _, citation := range extractCitationsFromToolResult(event.ToolResult) {
+					emit("citation.delta", citation)
+				}
+			}
+		case agent.EventToolFailed:
+			emit("tool.failed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行失败"})
 		}
 		step, ok := stepFromAgentEvent(assistantMessage.ID, event, s.now().UTC())
 		if !ok {
@@ -740,4 +771,36 @@ func normalizeMessageListOptions(options MessageListOptions) (MessageListOptions
 		return MessageListOptions{}, ValidationError(map[string]string{"pageSize": "must be between 1 and 100"})
 	}
 	return options, nil
+}
+
+func extractCitationsFromToolResult(result string) []map[string]any {
+	var data map[string]any
+	if err := json.Unmarshal([]byte(result), &data); err != nil {
+		return nil
+	}
+	results, ok := data["results"].([]any)
+	if !ok {
+		return nil
+	}
+	citations := make([]map[string]any, 0, len(results))
+	for i, item := range results {
+		resultMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		citation := map[string]any{
+			"citation": map[string]any{
+				"id":          "cit_" + strconv.Itoa(i+1),
+				"citationNo":  i + 1,
+				"docId":       resultMap["document_id"],
+				"docName":     resultMap["document_name"],
+				"chunkId":     resultMap["chunk_id"],
+				"text":        resultMap["preview"],
+				"score":       resultMap["score"],
+				"sectionPath": resultMap["section_path"],
+			},
+		}
+		citations = append(citations, citation)
+	}
+	return citations
 }
