@@ -1,6 +1,6 @@
 -- +goose Up
 ALTER TABLE response_stream_events
-    DROP CONSTRAINT response_stream_events_event_type_check;
+    DROP CONSTRAINT IF EXISTS response_stream_events_event_type_check;
 
 ALTER TABLE response_stream_events
     ADD CONSTRAINT response_stream_events_event_type_check CHECK (
@@ -13,7 +13,7 @@ ALTER TABLE response_stream_events
 
 -- +goose Down
 ALTER TABLE response_stream_events
-    DROP CONSTRAINT response_stream_events_event_type_check;
+    DROP CONSTRAINT IF EXISTS response_stream_events_event_type_check;
 
 ALTER TABLE response_stream_events
     ADD CONSTRAINT response_stream_events_event_type_check CHECK (
