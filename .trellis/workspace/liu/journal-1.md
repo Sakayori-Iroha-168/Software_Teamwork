@@ -560,3 +560,36 @@ Addressed PR 334 review feedback for Document report generation: protected manua
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: PR 334 deleted report and target scope review
+
+**Date**: 2026-07-01
+**Task**: PR 334 deleted report and target scope review
+**Branch**: `PrimeTeam/feat/report-generation-orchestration`
+
+### Summary
+
+Rejected deleted report job creation before persistence, aligned target scope OpenAPI enums with implemented report/section scopes, and documented the report job creation contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9a8fb70` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
