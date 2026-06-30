@@ -137,7 +137,7 @@ type AskResult struct {
 	UserMessage      Message         `json:"userMessage"`
 	AssistantMessage Message         `json:"assistantMessage"`
 	ResponseRun      ResponseRun     `json:"responseRun"`
-	Citations        []any           `json:"citations"`
+	Citations        []Citation      `json:"citations"`
 	ReasoningSteps   []ReasoningStep `json:"reasoningSteps"`
 }
 
@@ -184,6 +184,7 @@ type ResponseRunFinalization struct {
 	AssistantMessage  Message
 	ReasoningSteps    []ReasoningStep
 	StreamEvents      []StreamEvent
+	Citations         []Citation
 	Status            string
 	TerminationReason string
 	CurrentIteration  int
@@ -481,21 +482,26 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 					return AskResult{}, NewError(CodeDependency, "answer state persistence failed", fmt.Errorf("save replay records after finalization conflict: %w", saveErr))
 				}
 				run = finalized
-				return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
+				return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []Citation{}, ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
 			}
 			return AskResult{}, NewError(CodeDependency, "answer state persistence failed", fmt.Errorf("finalize failed response run after agent error: %w", finalizeErr))
 		}
 		run = finalized
-		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
+		return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []Citation{}, ReasoningSteps: steps}, NewError(errorCode, publicMessage, runErr)
 	}
 	assistantMessage.Content = result.Final.Content
 	assistantMessage.Status = "completed"
+	citations := citationsFromAgentMessages(assistantMessage.ID, run.ID, result.Messages)
+	assistantMessage.Citations = citations
 	emit("answer.delta", map[string]any{"messageId": assistantMessage.ID, "text": assistantMessage.Content, "index": 0})
+	for _, citation := range citations {
+		emit("citation.delta", map[string]any{"citation": citation})
+	}
 	emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	run, err = s.repository.FinalizeResponseRun(cleanupCtx, userID, ResponseRunFinalization{
-		RunID: run.ID, AssistantMessage: assistantMessage, ReasoningSteps: steps, StreamEvents: events,
+		RunID: run.ID, AssistantMessage: assistantMessage, ReasoningSteps: steps, StreamEvents: events, Citations: citations,
 		Status: "completed", TerminationReason: "completed", CurrentIteration: result.Iterations,
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 		ReasoningTokens: usage.ReasoningTokens, TotalTokens: usage.TotalTokens,
@@ -504,7 +510,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err != nil {
 		return AskResult{}, fmt.Errorf("finalize response run: %w", err)
 	}
-	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
+	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: citations, ReasoningSteps: steps}, nil
 }
 
 func (s *QAService) saveReplayRecords(ctx context.Context, userID, runID, assistantMessageID string, steps []ReasoningStep, events []StreamEvent) error {

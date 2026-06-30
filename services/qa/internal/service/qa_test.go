@@ -176,6 +176,25 @@ func (toolProgressRunner) RunWithObserver(_ context.Context, input []agent.Messa
 	return agent.Result{Final: final, Messages: append(input, final), Iterations: 1}, nil
 }
 
+type citationToolRunner struct{}
+
+func (citationToolRunner) RunWithObserver(_ context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
+	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
+	observer(agent.Event{Type: agent.EventToolStarted, Iteration: 1, ToolCallID: "call-1", ToolName: "search_knowledge"})
+	observer(agent.Event{Type: agent.EventToolCompleted, Iteration: 1, ToolCallID: "call-1", ToolName: "search_knowledge"})
+	observer(agent.Event{Type: agent.EventModelCompleted, Iteration: 1, Usage: agent.TokenUsage{PromptTokens: 8, CompletionTokens: 6, TotalTokens: 14}})
+	toolResult := agent.Message{
+		Role:       agent.RoleTool,
+		Name:       "search_knowledge",
+		ToolCallID: "call-1",
+		Content:    `{"data":{"results":[{"documentId":"doc-1","documentName":"Boiler Manual","knowledgeBaseId":"kb-1","chunkId":"chunk-7","sectionPath":"3.1","quoteText":"inspect the valve before startup","contentPreview":"inspect the valve before startup","context":"Operators inspect the valve before startup.","pageNumber":12,"score":0.91,"rerankScore":0.88,"chunkType":"paragraph","metadata":{"pageLabel":"12","objectKey":"secret","internalUrl":"http://internal/doc","vector":[0.1,0.2]}}]}}`,
+	}
+	final := agent.Message{Role: agent.RoleAssistant, Content: "answer with citation [1]"}
+	messages := append([]agent.Message{}, input...)
+	messages = append(messages, toolResult, final)
+	return agent.Result{Final: final, Messages: messages, Iterations: 1}, nil
+}
+
 func (r *fakeAgentRunner) RunWithObserver(ctx context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
 	r.userID = UserIDFromContext(ctx)
 	r.input = append([]agent.Message(nil), input...)
@@ -629,5 +648,87 @@ func TestAskToolProgressEventsExposeOnlySafeSummaries(t *testing.T) {
 	}
 	if !seenToolEvent {
 		t.Fatal("expected tool progress events")
+	}
+}
+
+func TestAskPersistsCitationSnapshotsFromKnowledgeToolResults(t *testing.T) {
+	now := time.Date(2026, 6, 30, 9, 0, 0, 0, time.UTC)
+	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: citationToolRunner{}, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa.now = func() time.Time { return now }
+	result, err := qa.Ask(context.Background(), "user-id", "conversation-id", AskInput{Message: "find citation", Mode: "knowledge_qa"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Citations) != 1 || len(repository.finalization.Citations) != 1 {
+		t.Fatalf("result citations=%+v finalization=%+v", result.Citations, repository.finalization.Citations)
+	}
+	citation := repository.finalization.Citations[0]
+	if citation.CitationNo != 1 || citation.MessageID != result.AssistantMessage.ID || citation.ResponseRunID != "run-id" {
+		t.Fatalf("unexpected saved citation identity: %+v", citation)
+	}
+	if citation.DocumentID != "doc-1" || citation.DocID != "doc-1" || citation.DocumentName != "Boiler Manual" || citation.DocName != "Boiler Manual" {
+		t.Fatalf("unexpected citation document fields: %+v", citation)
+	}
+	if citation.Source == nil || !citation.Source.Available || citation.Source.DownloadEndpoint != "/api/v1/documents/doc-1/content" {
+		t.Fatalf("unexpected citation source: %+v", citation.Source)
+	}
+	if citation.Metadata["pageLabel"] != "12" {
+		t.Fatalf("safe metadata not preserved: %#v", citation.Metadata)
+	}
+	for _, forbidden := range []string{"objectKey", "internalUrl", "vector"} {
+		if _, ok := citation.Metadata[forbidden]; ok {
+			t.Fatalf("citation metadata leaked %q: %#v", forbidden, citation.Metadata)
+		}
+	}
+	citationSeq, completedSeq := 0, 0
+	for _, event := range repository.savedEvents {
+		if event.EventType == "citation.delta" {
+			citationSeq = event.EventSeq
+		}
+		if event.EventType == "answer.completed" {
+			completedSeq = event.EventSeq
+		}
+	}
+	if citationSeq == 0 || completedSeq == 0 || citationSeq > completedSeq {
+		t.Fatalf("citation event sequence=%d completed=%d events=%+v", citationSeq, completedSeq, repository.savedEvents)
+	}
+}
+
+func TestNormalizeCitationMarksUnavailableSourceAndSanitizesMetadata(t *testing.T) {
+	citation := NormalizeCitation(Citation{
+		ID:           "citation-id",
+		MessageID:    "message-id",
+		CitationNo:   1,
+		DocumentName: "Deleted source",
+		Text:         "saved quote",
+		Context:      "saved context",
+		Metadata: map[string]any{
+			"pageLabel": "8",
+			"objectKey": "secret/object",
+			"nested": map[string]any{
+				"internalUrl": "http://internal/source",
+				"safe":        "ok",
+			},
+		},
+	})
+	if citation.IsSourceAvailable || citation.Source == nil || citation.Source.Available || citation.Source.Reason != citationSourceUnavailableReason {
+		t.Fatalf("unexpected unavailable source mapping: %+v", citation)
+	}
+	if citation.Content != "saved quote" || citation.ContentPreview != "saved quote" {
+		t.Fatalf("snapshot text was not preserved: %+v", citation)
+	}
+	if _, ok := citation.Metadata["objectKey"]; ok {
+		t.Fatalf("object key leaked in metadata: %#v", citation.Metadata)
+	}
+	nested, ok := citation.Metadata["nested"].(map[string]any)
+	if !ok || nested["safe"] != "ok" {
+		t.Fatalf("safe nested metadata not preserved: %#v", citation.Metadata)
+	}
+	if _, ok := nested["internalUrl"]; ok {
+		t.Fatalf("internal URL leaked in nested metadata: %#v", nested)
 	}
 }

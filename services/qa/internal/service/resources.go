@@ -30,31 +30,134 @@ type StreamEvent struct {
 }
 
 type Citation struct {
-	ID                string          `json:"id"`
-	MessageID         string          `json:"messageId"`
-	CitationNo        int             `json:"citationNo"`
-	DocumentID        string          `json:"documentId,omitempty"`
-	DocumentName      string          `json:"documentName,omitempty"`
-	KnowledgeBaseID   string          `json:"knowledgeBaseId,omitempty"`
-	ChunkID           string          `json:"chunkId,omitempty"`
-	SectionPath       string          `json:"sectionPath,omitempty"`
-	Text              string          `json:"text,omitempty"`
-	ContentPreview    string          `json:"contentPreview,omitempty"`
-	Context           string          `json:"context,omitempty"`
-	PageNumber        *int            `json:"pageNumber,omitempty"`
-	Score             *float64        `json:"score,omitempty"`
-	RerankScore       *float64        `json:"rerankScore,omitempty"`
-	ChunkType         string          `json:"chunkType,omitempty"`
-	IsSourceAvailable bool            `json:"isSourceAvailable"`
-	Metadata          map[string]any  `json:"metadata"`
-	Content           string          `json:"content,omitempty"`
-	Source            *CitationSource `json:"source,omitempty"`
+	ID                      string          `json:"id"`
+	MessageID               string          `json:"messageId"`
+	ResponseRunID           string          `json:"-"`
+	CitationNo              int             `json:"citationNo"`
+	DocumentID              string          `json:"documentId,omitempty"`
+	DocID                   string          `json:"docId,omitempty"`
+	DocumentName            string          `json:"documentName,omitempty"`
+	DocName                 string          `json:"docName,omitempty"`
+	KnowledgeBaseID         string          `json:"knowledgeBaseId,omitempty"`
+	ChunkID                 string          `json:"chunkId,omitempty"`
+	SectionPath             string          `json:"sectionPath,omitempty"`
+	Text                    string          `json:"text,omitempty"`
+	ContentPreview          string          `json:"contentPreview,omitempty"`
+	Context                 string          `json:"context,omitempty"`
+	PageNumber              *int            `json:"pageNumber,omitempty"`
+	Score                   *float64        `json:"score,omitempty"`
+	RerankScore             *float64        `json:"rerankScore,omitempty"`
+	ChunkType               string          `json:"chunkType,omitempty"`
+	IsSourceAvailable       bool            `json:"isSourceAvailable"`
+	SourceUnavailableReason string          `json:"-"`
+	Metadata                map[string]any  `json:"metadata"`
+	Content                 string          `json:"content,omitempty"`
+	Source                  *CitationSource `json:"source,omitempty"`
 }
 
 type CitationSource struct {
 	Available        bool   `json:"available"`
 	Reason           string `json:"reason,omitempty"`
 	DownloadEndpoint string `json:"downloadEndpoint,omitempty"`
+}
+
+const citationSourceUnavailableReason = "source_deleted_or_forbidden"
+
+func NormalizeCitation(item Citation) Citation {
+	item.ID = strings.TrimSpace(item.ID)
+	item.MessageID = strings.TrimSpace(item.MessageID)
+	item.ResponseRunID = strings.TrimSpace(item.ResponseRunID)
+	item.DocumentID = strings.TrimSpace(firstNonBlank(item.DocumentID, item.DocID))
+	item.DocID = item.DocumentID
+	item.DocumentName = strings.TrimSpace(firstNonBlank(item.DocumentName, item.DocName))
+	item.DocName = item.DocumentName
+	item.KnowledgeBaseID = strings.TrimSpace(item.KnowledgeBaseID)
+	item.ChunkID = strings.TrimSpace(item.ChunkID)
+	item.SectionPath = strings.TrimSpace(item.SectionPath)
+	item.Text = strings.TrimSpace(item.Text)
+	item.ContentPreview = strings.TrimSpace(firstNonBlank(item.ContentPreview, item.Text))
+	item.Context = strings.TrimSpace(item.Context)
+	item.ChunkType = strings.TrimSpace(item.ChunkType)
+	item.SourceUnavailableReason = strings.TrimSpace(item.SourceUnavailableReason)
+	item.Metadata = SanitizeCitationMetadata(item.Metadata)
+	if item.Content == "" {
+		item.Content = firstNonBlank(item.Text, item.Context, item.ContentPreview)
+	}
+	if item.IsSourceAvailable && item.DocumentID == "" {
+		item.IsSourceAvailable = false
+	}
+	item.Source = &CitationSource{Available: item.IsSourceAvailable}
+	if item.IsSourceAvailable {
+		item.Source.DownloadEndpoint = "/api/v1/documents/" + item.DocumentID + "/content"
+	} else {
+		if item.SourceUnavailableReason == "" {
+			item.SourceUnavailableReason = citationSourceUnavailableReason
+		}
+		item.Source.Reason = item.SourceUnavailableReason
+	}
+	return item
+}
+
+func SanitizeCitationMetadata(metadata map[string]any) map[string]any {
+	if len(metadata) == 0 {
+		return map[string]any{}
+	}
+	cleaned := make(map[string]any, len(metadata))
+	for key, value := range metadata {
+		key = strings.TrimSpace(key)
+		if key == "" || isSensitiveCitationMetadataKey(key) {
+			continue
+		}
+		if safe, ok := sanitizeCitationMetadataValue(value); ok {
+			cleaned[key] = safe
+		}
+	}
+	if cleaned == nil {
+		return map[string]any{}
+	}
+	return cleaned
+}
+
+func sanitizeCitationMetadataValue(value any) (any, bool) {
+	switch typed := value.(type) {
+	case nil, string, bool, float64, float32, int, int64, int32, uint, uint64, uint32:
+		return typed, true
+	case map[string]any:
+		return SanitizeCitationMetadata(typed), true
+	case []any:
+		values := make([]any, 0, len(typed))
+		for _, item := range typed {
+			if safe, ok := sanitizeCitationMetadataValue(item); ok {
+				values = append(values, safe)
+			}
+		}
+		return values, true
+	default:
+		return nil, false
+	}
+}
+
+func isSensitiveCitationMetadataKey(key string) bool {
+	normalized := strings.NewReplacer("_", "", "-", "", " ", "", ".", "").Replace(strings.ToLower(key))
+	for _, marker := range []string{
+		"objectkey", "storagekey", "bucket", "internalurl", "signedurl", "presigned",
+		"url", "vector", "embedding", "fileref", "fileid", "rawpayload", "payload",
+		"prompt", "secret", "token", "apikey",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonBlank(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 type AgentToolCall struct {
