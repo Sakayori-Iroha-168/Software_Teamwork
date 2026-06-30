@@ -362,19 +362,8 @@ func (s *ConfigService) LoadRuntimeConfiguration(ctx context.Context) (RuntimeCo
 		servers = append(servers, *s.bootstrap.MCPServer)
 	}
 	agentConfig := qaConfig.Agent
-	if len(agentConfig.EnabledToolNames) == 0 {
+	if qaConfig.ID == "" && len(agentConfig.EnabledToolNames) == 0 {
 		agentConfig.EnabledToolNames = []string{"search_knowledge"}
-	} else {
-		hasSearchKnowledge := false
-		for _, name := range agentConfig.EnabledToolNames {
-			if name == "search_knowledge" {
-				hasSearchKnowledge = true
-				break
-			}
-		}
-		if !hasSearchKnowledge {
-			agentConfig.EnabledToolNames = append(agentConfig.EnabledToolNames, "search_knowledge")
-		}
 	}
 	return RuntimeConfiguration{
 		LLM: llm, SystemPrompt: prompt, MCPServers: servers,
