@@ -38,3 +38,37 @@ Clarified Gateway OpenAPI as the stable public contract, reduced duplicated serv
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Knowledge real Gateway API
+
+**Date**: 2026-07-01
+**Task**: Knowledge real Gateway API
+**Branch**: `Frontend/feat/knowledge-real-api`
+
+### Summary
+
+Implemented typed Knowledge Gateway API wrappers, moved Knowledge frontend hooks/pages to them, and added API/page coverage for document lifecycle and retrieval error states.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b27b506` | (see git log) |
+| `fabfc13` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
