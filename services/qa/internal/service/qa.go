@@ -7,14 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
+	"github.com/google/uuid"
 )
 
 type Code string
@@ -186,6 +185,7 @@ type ResponseRunFinalization struct {
 	AssistantMessage  Message
 	ReasoningSteps    []ReasoningStep
 	StreamEvents      []StreamEvent
+	Citations         []Citation
 	Status            string
 	TerminationReason string
 	CurrentIteration  int
@@ -208,12 +208,14 @@ type Repository interface {
 	FinalizeResponseRun(context.Context, string, ResponseRunFinalization) (ResponseRun, error)
 	SaveReasoningSteps(context.Context, string, string, []ReasoningStep) error
 	SaveStreamEvents(context.Context, string, string, []StreamEvent) error
+	SaveCitations(context.Context, string, string, []Citation) error
 	SaveModelInvocation(context.Context, string, ModelInvocation) (string, error)
 	GetResponseRun(context.Context, string, string) (ResponseRun, error)
 }
 
 type AgentRunner interface {
 	RunWithObserver(context.Context, []agent.Message, agent.Observer) (agent.Result, error)
+	RunWithToolResultCallback(context.Context, []agent.Message, agent.Observer, func(string, string, string)) (agent.Result, error)
 }
 
 type RuntimeSnapshot struct {
@@ -377,32 +379,15 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		_, _ = s.repository.UpdateConversation(ctx, userID, conversation)
 	}
 	events := make([]StreamEvent, 0, 12)
-	var eventsMu sync.Mutex
-	var eventSeq int32
+	eventSeq := 0
 	emit := func(eventType string, payload map[string]any) {
-		seq := atomic.AddInt32(&eventSeq, 1)
-		event := StreamEvent{EventSeq: int(seq), EventType: eventType, Payload: payload, CreatedAt: s.now().UTC()}
-		eventsMu.Lock()
+		eventSeq++
+		event := StreamEvent{EventSeq: eventSeq, EventType: eventType, Payload: payload, CreatedAt: s.now().UTC()}
 		events = append(events, event)
-		eventsMu.Unlock()
 		emitProgress(observe, ProgressEvent{Type: eventType, Sequence: event.EventSeq, Payload: payload, UserMessageID: userMessage.ID, AssistantMessage: assistantMessage.ID, Intent: intent})
 	}
 	emit("message.created", map[string]any{"responseRunId": run.ID, "userMessageId": userMessage.ID, "assistantMessageId": assistantMessage.ID, "status": "running"})
-	heartbeatTicker := time.NewTicker(15 * time.Second)
-	defer heartbeatTicker.Stop()
-	heartbeatDone := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case <-heartbeatTicker.C:
-				emit("heartbeat", map[string]any{})
-			case <-heartbeatDone:
-				return
-			case <-runCtx.Done():
-				return
-			}
-		}
-	}()
+	startedAt := s.now()
 	messages := make([]agent.Message, 0, len(history.Items)+3)
 	messages = append(messages, agent.Message{Role: agent.RoleSystem, Content: runtime.SystemPrompt})
 	if directive := requestDirective(input); directive != "" {
@@ -416,6 +401,8 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	messages = append(messages, agent.Message{Role: agent.RoleUser, Content: userMessage.Content})
 
 	steps := make([]ReasoningStep, 0, 4)
+	citations := make([]Citation, 0, 8)
+	nextCitationNo := 1
 	iterationStartedAt := map[int]time.Time{}
 	completedIterations := map[int]struct{}{}
 	usage := agent.TokenUsage{}
@@ -424,7 +411,18 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if profileID == "" {
 		profileID = "default"
 	}
-	result, runErr := runtime.Runner.RunWithObserver(runCtx, messages, func(event agent.Event) {
+	onToolResult := func(toolName, toolCallID string, result string) {
+		if toolName == "search_knowledge" && result != "" {
+			for _, citation := range extractCitationsFromToolResult(result, nextCitationNo) {
+				emit("citation.delta", citation)
+				if citMap, ok := citation["citation"].(map[string]any); ok {
+					citations = append(citations, citationFromMap(citMap))
+					nextCitationNo++
+				}
+			}
+		}
+	}
+	result, runErr := runtime.Runner.RunWithToolResultCallback(runCtx, messages, func(event agent.Event) {
 		switch event.Type {
 		case agent.EventModelStarted:
 			iterationStartedAt[event.Iteration] = s.now().UTC()
@@ -462,11 +460,6 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 			emit("tool.started", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "正在执行工具 " + event.ToolName})
 		case agent.EventToolCompleted:
 			emit("tool.completed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行完成"})
-			if event.ToolName == "search_knowledge" && event.ToolResult != "" {
-				for _, citation := range extractCitationsFromToolResult(event.ToolResult) {
-					emit("citation.delta", citation)
-				}
-			}
 		case agent.EventToolFailed:
 			emit("tool.failed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行失败"})
 		}
@@ -476,7 +469,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		}
 		steps = append(steps, step)
 		emit("reasoning.step", map[string]any{"type": publicStepType(step.Type), "label": step.Title, "status": publicStepStatus(step.Status), "detail": step.Summary})
-	})
+	}, onToolResult)
 	if runErr == nil && invocationErr != nil {
 		runErr = fmt.Errorf("save model invocation: %w", invocationErr)
 	}
@@ -494,6 +487,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		emit("error", map[string]any{"responseRunId": run.ID, "code": string(errorCode), "message": publicMessage})
 		finalized, finalizeErr := s.repository.FinalizeResponseRun(cleanupCtx, userID, ResponseRunFinalization{
 			RunID: run.ID, AssistantMessage: assistantMessage, ReasoningSteps: steps, StreamEvents: events,
+			Citations: citations,
 			Status: status, TerminationReason: reason, CurrentIteration: maxStartedIteration(iterationStartedAt),
 			PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 			ReasoningTokens: usage.ReasoningTokens, TotalTokens: usage.TotalTokens,
@@ -522,11 +516,17 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	assistantMessage.Content = result.Final.Content
 	assistantMessage.Status = "completed"
 	emit("answer.delta", map[string]any{"messageId": assistantMessage.ID, "text": assistantMessage.Content, "index": 0})
-	emit("answer.completed", map[string]any{"responseRunId": run.ID, "messageId": assistantMessage.ID})
+	emit("answer.completed", map[string]any{
+		"responseRunId": run.ID,
+		"messageId":     assistantMessage.ID,
+		"totalTokens":   usage.TotalTokens,
+		"latencyMs":     int(s.now().Sub(startedAt).Milliseconds()),
+	})
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	run, err = s.repository.FinalizeResponseRun(cleanupCtx, userID, ResponseRunFinalization{
 		RunID: run.ID, AssistantMessage: assistantMessage, ReasoningSteps: steps, StreamEvents: events,
+		Citations: citations,
 		Status: "completed", TerminationReason: "completed", CurrentIteration: result.Iterations,
 		PromptTokens: usage.PromptTokens, CompletionTokens: usage.CompletionTokens,
 		ReasoningTokens: usage.ReasoningTokens, TotalTokens: usage.TotalTokens,
@@ -535,7 +535,11 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 	if err != nil {
 		return AskResult{}, fmt.Errorf("finalize response run: %w", err)
 	}
-	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: []any{}, ReasoningSteps: steps}, nil
+	citationAny := make([]any, 0, len(citations))
+	for _, cit := range citations {
+		citationAny = append(citationAny, cit)
+	}
+	return AskResult{UserMessage: userMessage, AssistantMessage: assistantMessage, ResponseRun: run, Citations: citationAny, ReasoningSteps: steps}, nil
 }
 
 func (s *QAService) saveReplayRecords(ctx context.Context, userID, runID, assistantMessageID string, steps []ReasoningStep, events []StreamEvent) error {
@@ -773,7 +777,7 @@ func normalizeMessageListOptions(options MessageListOptions) (MessageListOptions
 	return options, nil
 }
 
-func extractCitationsFromToolResult(result string) []map[string]any {
+func extractCitationsFromToolResult(result string, nextCitationNo int) []map[string]any {
 	var data map[string]any
 	if err := json.Unmarshal([]byte(result), &data); err != nil {
 		return nil
@@ -783,24 +787,80 @@ func extractCitationsFromToolResult(result string) []map[string]any {
 		return nil
 	}
 	citations := make([]map[string]any, 0, len(results))
-	for i, item := range results {
+	citationNo := nextCitationNo
+	for _, item := range results {
 		resultMap, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
 		citation := map[string]any{
 			"citation": map[string]any{
-				"id":          "cit_" + strconv.Itoa(i+1),
-				"citationNo":  i + 1,
+				"id":          uuid.NewString(),
+				"citationNo":  citationNo,
+				"kbId":        resultMap["knowledge_base_id"],
 				"docId":       resultMap["document_id"],
 				"docName":     resultMap["document_name"],
 				"chunkId":     resultMap["chunk_id"],
 				"text":        resultMap["preview"],
+				"context":     resultMap["context"],
 				"score":       resultMap["score"],
+				"rerankScore": resultMap["rerank_score"],
 				"sectionPath": resultMap["section_path"],
+				"pageNumber":  resultMap["page_number"],
+				"chunkType":   resultMap["chunk_type"],
+				"metadata":    resultMap["metadata"],
 			},
 		}
 		citations = append(citations, citation)
+		citationNo++
 	}
 	return citations
+}
+
+func citationFromMap(m map[string]any) Citation {
+	var score, rerankScore *float64
+	var pageNumber *int
+	if s, ok := m["score"].(float64); ok {
+		score = &s
+	}
+	if s, ok := m["rerankScore"].(float64); ok {
+		rerankScore = &s
+	}
+	if p, ok := m["pageNumber"].(float64); ok {
+		pn := int(p)
+		pageNumber = &pn
+	}
+	id, _ := m["id"].(string)
+	citationNo := 0
+	if cn, ok := m["citationNo"].(float64); ok {
+		citationNo = int(cn)
+	}
+	kbID, _ := m["kbId"].(string)
+	docID, _ := m["docId"].(string)
+	chunkID, _ := m["chunkId"].(string)
+	docName, _ := m["docName"].(string)
+	sectionPath, _ := m["sectionPath"].(string)
+	text, _ := m["text"].(string)
+	context, _ := m["context"].(string)
+	chunkType, _ := m["chunkType"].(string)
+	metadata, _ := m["metadata"].(map[string]any)
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	return Citation{
+		ID:              id,
+		CitationNo:      citationNo,
+		KnowledgeBaseID: kbID,
+		DocumentID:      docID,
+		ChunkID:         chunkID,
+		DocumentName:    docName,
+		SectionPath:     sectionPath,
+		Text:            text,
+		Context:         context,
+		PageNumber:      pageNumber,
+		Score:           score,
+		RerankScore:     rerankScore,
+		ChunkType:       chunkType,
+		Metadata:        metadata,
+	}
 }

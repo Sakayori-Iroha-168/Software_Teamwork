@@ -1,0 +1,213 @@
+package tools
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
+	"github.com/xeipuuv/gojsonschema"
+)
+
+// Policy enforces tool whitelist, permissions, and schema validation.
+type Policy struct {
+	enabledTools map[string]struct{}
+	schemaLoader gojsonschema.JSONLoader
+}
+
+type PolicyConfig struct {
+	EnabledToolNames []string
+}
+
+func NewPolicy(cfg PolicyConfig) (*Policy, error) {
+	if len(cfg.EnabledToolNames) == 0 {
+		return nil, errors.New("enabled tool list must not be empty")
+	}
+
+	enabled := make(map[string]struct{}, len(cfg.EnabledToolNames))
+	for _, name := range cfg.EnabledToolNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, exists := enabled[name]; exists {
+			return nil, fmt.Errorf("duplicate enabled tool name %q", name)
+		}
+		enabled[name] = struct{}{}
+	}
+
+	if len(enabled) == 0 {
+		return nil, errors.New("no valid enabled tool names provided")
+	}
+
+	return &Policy{
+		enabledTools: enabled,
+	}, nil
+}
+
+// IsAllowed checks if a tool is in the whitelist.
+func (p *Policy) IsAllowed(toolName string) bool {
+	_, ok := p.enabledTools[toolName]
+	return ok
+}
+
+// FilterTools removes unauthorized tools from the list exposed to the model.
+func (p *Policy) FilterTools(tools []agent.ToolDefinition) []agent.ToolDefinition {
+	var filtered []agent.ToolDefinition
+	for _, tool := range tools {
+		name := strings.TrimSpace(tool.Function.Name)
+		if name == "" {
+			continue
+		}
+		if !p.IsAllowed(name) {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
+}
+
+// ValidateCall checks tool name, arguments schema, and policy before execution.
+func (p *Policy) ValidateCall(toolName string, arguments json.RawMessage, toolDef agent.ToolDefinition) error {
+	// Check whitelist
+	if !p.IsAllowed(toolName) {
+		return fmt.Errorf("tool %q is not in the enabled whitelist", toolName)
+	}
+
+	// Validate JSON schema if parameters are defined
+	if toolDef.Function.Parameters != nil {
+		schemaLoader := gojsonschema.NewGoLoader(toolDef.Function.Parameters)
+		documentLoader := gojsonschema.NewBytesLoader(arguments)
+
+		result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+		if err != nil {
+			return fmt.Errorf("schema validation error: %w", err)
+		}
+
+		if !result.Valid() {
+			var errors []string
+			for _, desc := range result.Errors() {
+				errors = append(errors, desc.String())
+			}
+			return fmt.Errorf("arguments do not match tool schema: %s", strings.Join(errors, "; "))
+		}
+	}
+
+	return nil
+}
+
+// GenerateArgumentsSummary creates a sanitized summary of tool arguments.
+// It must not expose complete parameters, internal URLs, object keys, or secrets.
+func GenerateArgumentsSummary(toolName string, arguments json.RawMessage) map[string]any {
+	var decoded map[string]any
+	if err := json.Unmarshal(arguments, &decoded); err != nil {
+		return map[string]any{"error": "failed to decode arguments"}
+	}
+
+	switch toolName {
+	case ToolSearchKnowledge:
+		return generateSearchArgumentsSummary(decoded)
+	case ToolGetCitationSource:
+		return generateCitationArgumentsSummary(decoded)
+	default:
+		// Generic summary - only show field names, not values
+		fields := make([]string, 0, len(decoded))
+		for key := range decoded {
+			fields = append(fields, key)
+		}
+		return map[string]any{
+			"tool":     toolName,
+			"fields":   fields,
+			"sanitized": true,
+		}
+	}
+}
+
+func generateSearchArgumentsSummary(args map[string]any) map[string]any {
+	summary := map[string]any{
+		"tool": ToolSearchKnowledge,
+	}
+
+	// Safe fields to expose
+	if query, ok := args["query"].(string); ok {
+		// Truncate query to prevent logging full user input
+		summary["query_preview"] = truncateString(query, 50)
+	}
+
+	if kbIDs, ok := args["knowledge_base_ids"].([]any); ok {
+		summary["knowledge_base_count"] = len(kbIDs)
+	}
+
+	if topK, ok := args["top_k"].(float64); ok {
+		summary["top_k"] = int(topK)
+	}
+
+	if threshold, ok := args["score_threshold"].(float64); ok {
+		summary["score_threshold"] = threshold
+	}
+
+	return summary
+}
+
+func generateCitationArgumentsSummary(args map[string]any) map[string]any {
+	summary := map[string]any{
+		"tool": ToolGetCitationSource,
+	}
+
+	// Only indicate which ID type was provided, not the actual ID value
+	if _, ok := args["citation_id"].(string); ok {
+		summary["id_type"] = "citation"
+	}
+	if _, ok := args["chunk_id"].(string); ok {
+		summary["id_type"] = "chunk"
+	}
+
+	return summary
+}
+
+// GenerateResultSummary creates a sanitized summary of tool results.
+// It must not expose full content, internal URLs, object keys, or secrets.
+func GenerateResultSummary(toolName string, resultContent string) map[string]any {
+	switch toolName {
+	case ToolSearchKnowledge:
+		return generateSearchResultSummary(resultContent)
+	case ToolGetCitationSource:
+		return generateCitationResultSummary(resultContent)
+	default:
+		return map[string]any{
+			"tool":      toolName,
+			"sanitized": true,
+			"size_hint": len(resultContent),
+		}
+	}
+}
+
+func generateSearchResultSummary(content string) map[string]any {
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(content), &decoded); err != nil {
+		return map[string]any{"error": "failed to decode result"}
+	}
+
+	summary := map[string]any{
+		"tool": ToolSearchKnowledge,
+	}
+
+	if hitCount, ok := decoded["hit_count"].(float64); ok {
+		summary["hit_count"] = int(hitCount)
+	}
+
+	if results, ok := decoded["results"].([]any); ok {
+		summary["citation_count"] = len(results)
+	}
+
+	return summary
+}
+
+func generateCitationResultSummary(content string) map[string]any {
+	// Citation source lookup is pending, just indicate status
+	return map[string]any{
+		"tool":  ToolGetCitationSource,
+		"status": "pending",
+	}
+}

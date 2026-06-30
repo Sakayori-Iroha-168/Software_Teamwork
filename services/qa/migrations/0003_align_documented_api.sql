@@ -19,7 +19,7 @@ ALTER TABLE response_stream_events
         event_type IN (
             'message.created', 'agent.iteration.started', 'reasoning.step',
             'tool.started', 'tool.completed', 'tool.failed', 'answer.delta',
-            'citation.delta', 'answer.completed', 'error', 'heartbeat'
+            'citation.delta', 'answer.completed', 'error'
         )
     );
 

@@ -325,6 +325,41 @@ func (r *Postgres) FinalizeResponseRun(ctx context.Context, userID string, final
 	if err := replaceStreamEvents(ctx, q, final.RunID, final.StreamEvents); err != nil {
 		return service.ResponseRun{}, err
 	}
+	if len(final.Citations) > 0 {
+		if _, err := tx.Exec(ctx, `DELETE FROM citations WHERE message_id = $1::uuid`, final.AssistantMessage.ID); err != nil {
+			return service.ResponseRun{}, fmt.Errorf("delete existing citations: %w", err)
+		}
+		for _, citation := range final.Citations {
+			metadata, _ := json.Marshal(citation.Metadata)
+			if metadata == nil {
+				metadata = []byte("{}")
+			}
+			var pageNum *int32
+			if citation.PageNumber != nil {
+				pn := int32(*citation.PageNumber)
+				pageNum = &pn
+			}
+			var score *float64
+			if citation.Score != nil {
+				score = citation.Score
+			}
+			var rerankScore *float64
+			if citation.RerankScore != nil {
+				rerankScore = citation.RerankScore
+			}
+			_, err = tx.Exec(ctx, `INSERT INTO citations(id,message_id,citation_no,char_start,char_end,external_kb_id,external_doc_id,external_chunk_id,doc_name,section_path,quote_text,context,page_number,score,rerank_score,chunk_type,metadata) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+				citation.ID, final.AssistantMessage.ID, citation.CitationNo,
+				nil, nil,
+				citation.KnowledgeBaseID, citation.DocumentID, citation.ChunkID,
+				citation.DocumentName, citation.SectionPath, citation.Text,
+				citation.Context, pageNum, score,
+				rerankScore, citation.ChunkType, metadata,
+			)
+			if err != nil {
+				return service.ResponseRun{}, fmt.Errorf("insert citation: %w", err)
+			}
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return service.ResponseRun{}, fmt.Errorf("commit finalize response run: %w", err)
 	}
@@ -493,6 +528,57 @@ func (r *Postgres) GetResponseRun(ctx context.Context, userID, runID string) (se
 		return service.ResponseRun{}, fmt.Errorf("get response run: %w", err)
 	}
 	return responseRunFromRow(row), nil
+}
+
+func (r *Postgres) SaveCitations(ctx context.Context, userID, messageID string, citations []service.Citation) error {
+	if len(citations) == 0 {
+		return nil
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin save citations: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := r.authorizeMessageForUser(ctx, userID, messageID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM citations WHERE message_id = $1::uuid`, messageID); err != nil {
+		return fmt.Errorf("delete existing citations: %w", err)
+	}
+	for _, citation := range citations {
+		metadata, _ := json.Marshal(citation.Metadata)
+		if metadata == nil {
+			metadata = []byte("{}")
+		}
+		var pageNum *int32
+		if citation.PageNumber != nil {
+			pn := int32(*citation.PageNumber)
+			pageNum = &pn
+		}
+		var score *float64
+		if citation.Score != nil {
+			score = citation.Score
+		}
+		var rerankScore *float64
+		if citation.RerankScore != nil {
+			rerankScore = citation.RerankScore
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO citations(id,message_id,citation_no,char_start,char_end,external_kb_id,external_doc_id,external_chunk_id,doc_name,section_path,quote_text,context,page_number,score,rerank_score,chunk_type,metadata) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+			citation.ID, messageID, citation.CitationNo,
+			nil, nil,
+			citation.KnowledgeBaseID, citation.DocumentID, citation.ChunkID,
+			citation.DocumentName, citation.SectionPath, citation.Text,
+			citation.Context, pageNum, score,
+			rerankScore, citation.ChunkType, metadata,
+		)
+		if err != nil {
+			return fmt.Errorf("insert citation: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit citations: %w", err)
+	}
+	return nil
 }
 
 func (r *Postgres) CancelResponseRun(ctx context.Context, userID, runID string) (service.ResponseRun, error) {

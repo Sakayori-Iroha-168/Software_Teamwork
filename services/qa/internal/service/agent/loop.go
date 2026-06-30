@@ -25,8 +25,8 @@ const (
 	EventAgentCompleted EventType = "agent.completed"
 )
 
-// Event intentionally excludes tool arguments, prompts, and credentials.
-// ToolResult is included for citation extraction and is safe to expose.
+// Event intentionally excludes tool arguments, tool results, prompts, and
+// credentials. It is safe to adapt into logs or public progress summaries.
 type Event struct {
 	Type         EventType
 	Iteration    int
@@ -35,7 +35,6 @@ type Event struct {
 	FinishReason string
 	Usage        TokenUsage
 	Err          error
-	ToolResult   string
 }
 
 type Observer func(Event)
@@ -85,6 +84,18 @@ func (r *Runner) Run(ctx context.Context, input []Message) (Result, error) {
 // RunWithObserver executes one agent run with a request-scoped observer. This
 // keeps concurrent HTTP streams isolated while preserving Run for CLI users.
 func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer Observer) (Result, error) {
+	return r.run(ctx, input, observer, nil)
+}
+
+// RunWithToolResultCallback executes one agent run with an observer and an
+// additional callback for receiving tool results. The callback is intended for
+// internal use only (e.g. citation extraction) and must not expose raw tool
+// results to public interfaces or logs.
+func (r *Runner) RunWithToolResultCallback(ctx context.Context, input []Message, observer Observer, onToolResult func(toolName, toolCallID string, result string)) (Result, error) {
+	return r.run(ctx, input, observer, onToolResult)
+}
+
+func (r *Runner) run(ctx context.Context, input []Message, observer Observer, onToolResult func(string, string, string)) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -134,7 +145,7 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 		}
 
 		for _, call := range assistant.ToolCalls {
-			resultMessage := r.executeTool(ctx, iteration, allowed, call, observer)
+			resultMessage := r.executeTool(ctx, iteration, allowed, call, observer, onToolResult)
 			messages = append(messages, resultMessage)
 		}
 	}
@@ -142,7 +153,7 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 	return Result{Messages: messages, Iterations: r.cfg.MaxIterations}, ErrMaxIterations
 }
 
-func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[string]struct{}, call ToolCall, observer Observer) Message {
+func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[string]struct{}, call ToolCall, observer Observer, onToolResult func(string, string, string)) Message {
 	name := strings.TrimSpace(call.Function.Name)
 	base := Message{Role: RoleTool, ToolCallID: call.ID, Name: name}
 	if call.ID == "" || name == "" {
@@ -184,7 +195,10 @@ func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[str
 	if result.IsError {
 		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: errors.New("tool reported an error")})
 	} else {
-		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name, ToolResult: content})
+		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name})
+		if onToolResult != nil {
+			onToolResult(name, call.ID, base.Content)
+		}
 	}
 	return base
 }
