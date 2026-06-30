@@ -65,10 +65,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio_local_demo}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio-local-demo-password}
-    entrypoint: ["/bin/sh", "-c"]
-    command: >
-      "mc alias set local http://minio:9000 \"$${MINIO_ROOT_USER}\" \"$${MINIO_ROOT_PASSWORD}\" &&
-      mc mb --ignore-existing local/software-teamwork-local"
+    entrypoint: ["/bin/sh"]
+    command:
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing local/software-teamwork-local
     restart: "no"
 
   migrate-auth:
