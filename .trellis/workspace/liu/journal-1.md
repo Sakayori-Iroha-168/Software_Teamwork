@@ -337,3 +337,36 @@ Updated document OpenAPI contract regression coverage to assert path-level repor
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: S-020 frontend readiness task plan
+
+**Date**: 2026-06-30
+**Task**: S-020 frontend readiness task plan
+**Branch**: `Special/docs/frontend-readiness-task-plan`
+
+### Summary
+
+Added a public frontend readiness proposal that classifies F-001 to F-012 by L1/L2/L3 delivery, records backend readiness gaps, and drafts F-014/F-015/F-016/S-022 follow-up issue briefs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0214ec6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
