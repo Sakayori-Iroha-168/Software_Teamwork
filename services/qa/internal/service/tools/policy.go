@@ -2,7 +2,6 @@ package tools
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -21,10 +20,6 @@ type PolicyConfig struct {
 }
 
 func NewPolicy(cfg PolicyConfig) (*Policy, error) {
-	if len(cfg.EnabledToolNames) == 0 {
-		return nil, errors.New("enabled tool list must not be empty")
-	}
-
 	enabled := make(map[string]struct{}, len(cfg.EnabledToolNames))
 	for _, name := range cfg.EnabledToolNames {
 		name = strings.TrimSpace(name)
@@ -35,10 +30,6 @@ func NewPolicy(cfg PolicyConfig) (*Policy, error) {
 			return nil, fmt.Errorf("duplicate enabled tool name %q", name)
 		}
 		enabled[name] = struct{}{}
-	}
-
-	if len(enabled) == 0 {
-		return nil, errors.New("no valid enabled tool names provided")
 	}
 
 	return &Policy{

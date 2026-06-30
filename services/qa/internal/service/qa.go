@@ -833,8 +833,11 @@ func citationFromMap(m map[string]any) Citation {
 	}
 	id, _ := m["id"].(string)
 	citationNo := 0
-	if cn, ok := m["citationNo"].(float64); ok {
+	switch cn := m["citationNo"].(type) {
+	case float64:
 		citationNo = int(cn)
+	case int:
+		citationNo = cn
 	}
 	kbID, _ := m["kbId"].(string)
 	docID, _ := m["docId"].(string)
