@@ -11,6 +11,13 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
 
+type userIDContextKey struct{}
+
+func userIDFromContext(ctx context.Context) string {
+	value, _ := ctx.Value(userIDContextKey{}).(string)
+	return value
+}
+
 const (
 	ToolSearchKnowledge    = "search_knowledge"
 	ToolGetCitationSource  = "get_citation_source"
@@ -166,7 +173,7 @@ func (c *KnowledgeToolClient) searchKnowledge(ctx context.Context, arguments jso
 	}
 
 	// Get user ID from context
-	userID := ctx.Value("userID").(string)
+	userID := userIDFromContext(ctx)
 	if strings.TrimSpace(userID) == "" {
 		return toolFailure("invalid_arguments", "user ID is required"), nil
 	}

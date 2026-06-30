@@ -611,7 +611,7 @@ components:
         eventSeq: { type: integer }
         eventType:
           type: string
-          enum: [message.created, agent.iteration.started, reasoning.step, tool.started, tool.completed, tool.failed, answer.delta, citation.delta, answer.completed, error]
+          enum: [message.created, agent.iteration.started, reasoning.step, tool.started, tool.completed, tool.failed, answer.delta, citation.delta, answer.completed, error, heartbeat]
         payload:
           type: object
           additionalProperties: true

@@ -66,6 +66,8 @@ INSERT INTO agent_tool_calls (
     tool_call_id,
     tool_name,
     status,
+    arguments_summary,
+    result_summary,
     started_at,
     finished_at
 ) VALUES (
@@ -75,13 +77,17 @@ INSERT INTO agent_tool_calls (
     $4,
     $5,
     $6,
+    $7,
+    $8,
     CASE
         WHEN $5 = 'running' THEN NULL
-        ELSE $6
+        ELSE $8
     END
 )
 ON CONFLICT (response_run_id, tool_call_id) DO UPDATE SET
     status = EXCLUDED.status,
+    arguments_summary = EXCLUDED.arguments_summary,
+    result_summary = EXCLUDED.result_summary,
     finished_at = CASE
         WHEN EXCLUDED.status = 'running' THEN agent_tool_calls.finished_at
         ELSE EXCLUDED.finished_at
