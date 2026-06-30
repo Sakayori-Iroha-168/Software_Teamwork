@@ -271,3 +271,69 @@ Rechecked issue #154 acceptance, ran FILE_STORAGE_BACKEND=local HTTP smoke, and 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Report base resources OpenAPI alignment
+
+**Date**: 2026-06-30
+**Task**: Report base resources OpenAPI alignment
+**Branch**: `PrimeTeam/feat/report-base-resources`
+
+### Summary
+
+Aligned Document report base resource OpenAPI schemas with implemented gateway-style envelopes and added a regression contract test for issue #159.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3a23a61` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 10: Address report base resources PR review
+
+**Date**: 2026-06-30
+**Task**: Address report base resources PR review
+**Branch**: `PrimeTeam/feat/report-base-resources`
+
+### Summary
+
+Updated document OpenAPI contract regression coverage to assert path-level report base resource response refs and documented the report template enabled filter.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b13a4e0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

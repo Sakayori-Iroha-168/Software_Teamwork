@@ -27,7 +27,7 @@ paths:
           description: Supported report types
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportTypeList' }
+              schema: { $ref: '#/components/schemas/ReportTypeListResponse' }
         default: { $ref: '#/components/responses/Error' }
   /report-templates:
     get:
@@ -39,12 +39,15 @@ paths:
         - name: reportType
           in: query
           schema: { $ref: '#/components/schemas/ReportTypeCode' }
+        - name: enabled
+          in: query
+          schema: { type: boolean }
       responses:
         '200':
           description: Template list
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TemplatePage' }
+              schema: { $ref: '#/components/schemas/ReportTemplateListResponse' }
         default: { $ref: '#/components/responses/Error' }
     post:
       tags: [Templates]
@@ -54,13 +57,13 @@ paths:
         required: true
         content:
           multipart/form-data:
-            schema: { $ref: '#/components/schemas/CreateTemplateRequest' }
+            schema: { $ref: '#/components/schemas/CreateReportTemplateRequest' }
       responses:
         '201':
           description: Created template
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportTemplate' }
+              schema: { $ref: '#/components/schemas/ReportTemplateResponse' }
         default: { $ref: '#/components/responses/Error' }
   /report-templates/{reportTemplateId}:
     parameters:
@@ -73,7 +76,7 @@ paths:
           description: Template
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportTemplate' }
+              schema: { $ref: '#/components/schemas/ReportTemplateResponse' }
         default: { $ref: '#/components/responses/Error' }
     patch:
       tags: [Templates]
@@ -82,13 +85,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UpdateTemplateRequest' }
+            schema: { $ref: '#/components/schemas/UpdateReportTemplateRequest' }
       responses:
         '200':
           description: Updated template
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportTemplate' }
+              schema: { $ref: '#/components/schemas/ReportTemplateResponse' }
         default: { $ref: '#/components/responses/Error' }
     delete:
       tags: [Templates]
@@ -107,7 +110,7 @@ paths:
           description: Template structure
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TemplateStructure' }
+              schema: { $ref: '#/components/schemas/ReportTemplateStructureResponse' }
         default: { $ref: '#/components/responses/Error' }
     patch:
       tags: [Templates]
@@ -118,13 +121,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/UpdateTemplateStructureRequest' }
+            schema: { $ref: '#/components/schemas/ReportTemplateStructureRequest' }
       responses:
         '200':
           description: Updated template structure
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/TemplateStructure' }
+              schema: { $ref: '#/components/schemas/ReportTemplateStructureResponse' }
         default: { $ref: '#/components/responses/Error' }
   /reports:
     get:
@@ -569,14 +572,7 @@ paths:
           description: Report material list
           content:
             application/json:
-              schema:
-                allOf:
-                  - $ref: '#/components/schemas/Page'
-                  - type: object
-                    properties:
-                      items:
-                        type: array
-                        items: { $ref: '#/components/schemas/ReportMaterial' }
+              schema: { $ref: '#/components/schemas/ReportMaterialListResponse' }
         default: { $ref: '#/components/responses/Error' }
     post:
       tags: [Reports]
@@ -592,7 +588,7 @@ paths:
           description: Created report material
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportMaterial' }
+              schema: { $ref: '#/components/schemas/ReportMaterialResponse' }
         default: { $ref: '#/components/responses/Error' }
   /report-materials/{materialId}:
     get:
@@ -605,7 +601,7 @@ paths:
           description: Report material
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportMaterial' }
+              schema: { $ref: '#/components/schemas/ReportMaterialResponse' }
         default: { $ref: '#/components/responses/Error' }
     delete:
       tags: [Reports]
@@ -650,7 +646,7 @@ paths:
           description: Report stats
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportStats' }
+              schema: { $ref: '#/components/schemas/ReportStatisticsOverviewResponse' }
         default: { $ref: '#/components/responses/Error' }
   /report-statistics/daily:
     get:
@@ -665,7 +661,7 @@ paths:
           description: Daily report statistics
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportDailyStats' }
+              schema: { $ref: '#/components/schemas/ReportDailyStatisticsResponse' }
         default: { $ref: '#/components/responses/Error' }
   /report-operation-logs:
     get:
@@ -697,7 +693,7 @@ paths:
           description: Report operation logs
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ReportOperationLogPage' }
+              schema: { $ref: '#/components/schemas/ReportOperationLogListResponse' }
         default: { $ref: '#/components/responses/Error' }
 components:
   securitySchemes:
@@ -768,12 +764,14 @@ components:
         description: { type: string }
         enabled: { type: boolean }
         defaultTemplateId: { type: string }
-    ReportTypeList:
+    ReportTypeListResponse:
       type: object
+      required: [data, requestId]
       properties:
-        items:
+        data:
           type: array
           items: { $ref: '#/components/schemas/ReportType' }
+        requestId: { type: string }
     ReportStatus:
       type: string
       enum: [draft, outline_generating, outline_generated, content_generating, generated, exporting, exported, failed, deleted]
@@ -785,67 +783,67 @@ components:
       enum: [text, table, image, mixed]
     ReportTemplate:
       type: object
+      required: [id, templateName, reportType, version, enabled, createdAt]
       properties:
         id: { type: string }
-        name: { type: string }
+        templateName: { type: string }
         reportType: { $ref: '#/components/schemas/ReportTypeCode' }
+        version: { type: integer }
+        description: { type: string }
+        enabled: { type: boolean }
         filename: { type: string }
         fileSize: { type: integer, format: int64 }
-        status: { type: string, enum: [active, inactive, deleted] }
-        styleProfile:
-          type: object
-          additionalProperties: true
         createdBy: { type: string }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
-    CreateTemplateRequest:
+    CreateReportTemplateRequest:
       type: object
-      required: [name, reportType, file]
+      required: [templateName, reportType, file]
       properties:
-        name: { type: string }
+        templateName: { type: string }
         reportType: { $ref: '#/components/schemas/ReportTypeCode' }
+        description: { type: string }
         file:
           type: string
           format: binary
-        styleProfile:
-          type: object
-          additionalProperties: true
-    UpdateTemplateRequest:
+    UpdateReportTemplateRequest:
       type: object
       properties:
-        name: { type: string }
-        reportType: { $ref: '#/components/schemas/ReportTypeCode' }
-        styleProfile:
-          type: object
-          additionalProperties: true
-    TemplateStructure:
+        templateName: { type: string }
+        description: { type: string }
+        enabled: { type: boolean }
+    ReportTemplateStructure:
       type: object
       properties:
         outlineSchema:
           type: array
           items: { $ref: '#/components/schemas/OutlineSeedNode' }
-        materialMappings:
+        styleConfig:
+          type: object
+          additionalProperties: true
+    ReportTemplateStructureRequest:
+      $ref: '#/components/schemas/ReportTemplateStructure'
+    ReportTemplateResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: { $ref: '#/components/schemas/ReportTemplate' }
+        requestId: { type: string }
+    ReportTemplateListResponse:
+      type: object
+      required: [data, page, requestId]
+      properties:
+        data:
           type: array
-          items:
-            type: object
-            properties:
-              sectionTitle: { type: string }
-              tagFilters:
-                type: object
-                additionalProperties:
-                  type: array
-                  items: { type: string }
-    UpdateTemplateStructureRequest:
-      allOf:
-        - $ref: '#/components/schemas/TemplateStructure'
-    TemplatePage:
-      allOf:
-        - $ref: '#/components/schemas/Page'
-        - type: object
-          properties:
-            items:
-              type: array
-              items: { $ref: '#/components/schemas/ReportTemplate' }
+          items: { $ref: '#/components/schemas/ReportTemplate' }
+        page: { $ref: '#/components/schemas/Page' }
+        requestId: { type: string }
+    ReportTemplateStructureResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: { $ref: '#/components/schemas/ReportTemplateStructure' }
+        requestId: { type: string }
     Report:
       type: object
       properties:
@@ -1122,30 +1120,51 @@ components:
         createdAt: { type: string, format: date-time }
     ReportMaterial:
       type: object
+      required: [id, materialName, enabled, createdAt]
       properties:
-        materialId: { type: string }
-        name: { type: string }
+        id: { type: string }
+        materialName: { type: string }
         materialType: { type: string }
+        category: { type: string }
+        description: { type: string }
         filename: { type: string }
         fileSize: { type: integer, format: int64 }
         tags:
-          type: object
-          additionalProperties: { type: string }
-        usedBySections:
           type: array
           items: { type: string }
+        enabled: { type: boolean }
+        createdBy: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     CreateReportMaterialRequest:
       type: object
-      required: [name, materialType, file]
+      required: [materialName, materialType, file]
       properties:
-        name: { type: string }
+        materialName: { type: string }
         materialType: { type: string }
+        category: { type: string }
+        description: { type: string }
         file:
           type: string
           format: binary
         tags:
-          type: object
-          additionalProperties: { type: string }
+          type: array
+          items: { type: string }
+    ReportMaterialResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: { $ref: '#/components/schemas/ReportMaterial' }
+        requestId: { type: string }
+    ReportMaterialListResponse:
+      type: object
+      required: [data, page, requestId]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReportMaterial' }
+        page: { $ref: '#/components/schemas/Page' }
+        requestId: { type: string }
     ReportSettings:
       type: object
       properties:
@@ -1184,18 +1203,23 @@ components:
     ModelConfigWritable:
       allOf:
         - $ref: '#/components/schemas/ModelConfigPublic'
-    ReportStats:
+    ReportStatisticsOverview:
       type: object
+      required: [reportCount, templateCount, materialCount]
       properties:
-        templateCount: { type: integer }
-        reportCount: { type: integer }
-        trend30d:
-          type: array
-          items:
-            type: object
-            properties:
-              date: { type: string, format: date }
-              generatedCount: { type: integer }
+        reportCount: { type: integer, minimum: 0 }
+        templateCount: { type: integer, minimum: 0 }
+        materialCount: { type: integer, minimum: 0 }
+        jobStatusCounts:
+          type: object
+          additionalProperties: { type: integer }
+        recentDays: { type: integer }
+    ReportStatisticsOverviewResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: { $ref: '#/components/schemas/ReportStatisticsOverview' }
+        requestId: { type: string }
     ReportDailyStatistic:
       type: object
       properties:
@@ -1205,12 +1229,14 @@ components:
         generatedCount: { type: integer, minimum: 0 }
         failedCount: { type: integer, minimum: 0 }
         exportedCount: { type: integer, minimum: 0 }
-    ReportDailyStats:
+    ReportDailyStatisticsResponse:
       type: object
+      required: [data, requestId]
       properties:
-        items:
+        data:
           type: array
           items: { $ref: '#/components/schemas/ReportDailyStatistic' }
+        requestId: { type: string }
     ReportOperationLog:
       type: object
       properties:
@@ -1234,14 +1260,15 @@ components:
           additionalProperties: true
           description: Sanitized audit metadata for troubleshooting and filtering.
         createdAt: { type: string, format: date-time }
-    ReportOperationLogPage:
-      allOf:
-        - $ref: '#/components/schemas/Page'
-        - type: object
-          properties:
-            items:
-              type: array
-              items: { $ref: '#/components/schemas/ReportOperationLog' }
+    ReportOperationLogListResponse:
+      type: object
+      required: [data, page, requestId]
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/ReportOperationLog' }
+        page: { $ref: '#/components/schemas/Page' }
+        requestId: { type: string }
     UpdatedAt:
       type: object
       properties:
