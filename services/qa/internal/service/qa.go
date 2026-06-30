@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/tools"
 	"github.com/google/uuid"
 )
 
@@ -457,11 +458,11 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 				invocationErr = err
 			}
 		case agent.EventToolStarted:
-			emit("tool.started", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "正在执行工具 " + event.ToolName})
+			emit("tool.started", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "正在执行工具 " + event.ToolName, "arguments": tools.GenerateArgumentsSummary(event.ToolName, event.Arguments)})
 		case agent.EventToolCompleted:
-			emit("tool.completed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行完成"})
+			emit("tool.completed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行完成", "arguments": tools.GenerateArgumentsSummary(event.ToolName, event.Arguments), "result": tools.GenerateResultSummary(event.ToolName, event.Result)})
 		case agent.EventToolFailed:
-			emit("tool.failed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行失败"})
+			emit("tool.failed", map[string]any{"toolCallId": event.ToolCallID, "tool": event.ToolName, "iterationNo": event.Iteration, "summary": "工具 " + event.ToolName + " 执行失败", "arguments": tools.GenerateArgumentsSummary(event.ToolName, event.Arguments), "result": tools.GenerateResultSummary(event.ToolName, event.Result)})
 		}
 		step, ok := stepFromAgentEvent(assistantMessage.ID, event, s.now().UTC())
 		if !ok {

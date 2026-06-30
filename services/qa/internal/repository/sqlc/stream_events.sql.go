@@ -93,12 +93,14 @@ ON CONFLICT (response_run_id, tool_call_id) DO UPDATE SET
 `
 
 type UpsertAgentToolCallParams struct {
-	ResponseRunID string    `json:"response_run_id"`
-	IterationNo   int32     `json:"iteration_no"`
-	ToolCallID    string    `json:"tool_call_id"`
-	ToolName      string    `json:"tool_name"`
-	Status        string    `json:"status"`
-	StartedAt     time.Time `json:"started_at"`
+	ResponseRunID    string    `json:"response_run_id"`
+	IterationNo      int32     `json:"iteration_no"`
+	ToolCallID       string    `json:"tool_call_id"`
+	ToolName         string    `json:"tool_name"`
+	Status           string    `json:"status"`
+	ArgumentsSummary []byte    `json:"arguments_summary"`
+	ResultSummary    []byte    `json:"result_summary"`
+	StartedAt        time.Time `json:"started_at"`
 }
 
 func (q *Queries) UpsertAgentToolCall(ctx context.Context, arg UpsertAgentToolCallParams) error {
@@ -108,6 +110,8 @@ func (q *Queries) UpsertAgentToolCall(ctx context.Context, arg UpsertAgentToolCa
 		arg.ToolCallID,
 		arg.ToolName,
 		arg.Status,
+		arg.ArgumentsSummary,
+		arg.ResultSummary,
 		arg.StartedAt,
 	)
 	return err

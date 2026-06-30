@@ -645,7 +645,7 @@ func TestAskToolProgressEventsExposeOnlySafeSummaries(t *testing.T) {
 			continue
 		}
 		seenToolEvent = true
-		for _, forbidden := range []string{"arguments", "args", "result", "rawResult", "internalUrl", "prompt"} {
+		for _, forbidden := range []string{"args", "rawResult", "internalUrl", "prompt"} {
 			if _, ok := event.Payload[forbidden]; ok {
 				t.Fatalf("tool event leaked %q in payload %#v", forbidden, event.Payload)
 			}

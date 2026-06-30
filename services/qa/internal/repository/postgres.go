@@ -461,6 +461,8 @@ func replaceStreamEvents(ctx context.Context, q *sqlc.Queries, runID string, eve
 		if event.EventType == "tool.started" || event.EventType == "tool.completed" || event.EventType == "tool.failed" {
 			toolCallID, _ := event.Payload["toolCallId"].(string)
 			toolName, _ := event.Payload["tool"].(string)
+			argumentsSummary, _ := event.Payload["arguments"].(map[string]any)
+			resultSummary, _ := event.Payload["result"].(map[string]any)
 			if toolCallID == "" {
 				continue
 			}
@@ -471,9 +473,17 @@ func replaceStreamEvents(ctx context.Context, q *sqlc.Queries, runID string, eve
 			if event.EventType == "tool.failed" {
 				status = "failed"
 			}
+			argsJSON, _ := json.Marshal(argumentsSummary)
+			resultJSON, _ := json.Marshal(resultSummary)
 			if err := q.UpsertAgentToolCall(ctx, sqlc.UpsertAgentToolCallParams{
-				ResponseRunID: runID, IterationNo: int32(iteration), ToolCallID: toolCallID,
-				ToolName: toolName, Status: status, StartedAt: event.CreatedAt,
+				ResponseRunID:    runID,
+				IterationNo:      int32(iteration),
+				ToolCallID:       toolCallID,
+				ToolName:         toolName,
+				Status:           status,
+				StartedAt:        event.CreatedAt,
+				ArgumentsSummary: argsJSON,
+				ResultSummary:    resultJSON,
 			}); err != nil {
 				return fmt.Errorf("save tool call summary: %w", err)
 			}

@@ -35,6 +35,8 @@ type Event struct {
 	FinishReason string
 	Usage        TokenUsage
 	Err          error
+	Arguments    json.RawMessage
+	Result       string
 }
 
 type Observer func(Event)
@@ -178,13 +180,13 @@ func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[str
 		return base
 	}
 
-	emit(observer, Event{Type: EventToolStarted, Iteration: iteration, ToolCallID: call.ID, ToolName: name})
+	emit(observer, Event{Type: EventToolStarted, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Arguments: arguments})
 	toolCtx, cancel := context.WithTimeout(ctx, r.cfg.ToolTimeout)
 	defer cancel()
 	result, err := r.tools.CallTool(toolCtx, name, arguments)
 	if err != nil {
 		base.Content = toolErrorJSON("tool_execution_failed", "tool execution failed")
-		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: err})
+		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: err, Arguments: arguments})
 		return base
 	}
 	content := result.Content
@@ -193,9 +195,9 @@ func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[str
 	}
 	base.Content = truncateUTF8(content, r.cfg.MaxToolResultBytes)
 	if result.IsError {
-		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: errors.New("tool reported an error")})
+		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: errors.New("tool reported an error"), Arguments: arguments, Result: base.Content})
 	} else {
-		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name})
+		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Arguments: arguments, Result: base.Content})
 		if onToolResult != nil {
 			onToolResult(name, call.ID, base.Content)
 		}

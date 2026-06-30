@@ -13,6 +13,7 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/toolclient"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/tools"
 )
 
 type ManagerConfig struct {
@@ -38,19 +39,20 @@ type runtimeState struct {
 }
 
 type Manager struct {
-	stateMu  sync.RWMutex
-	reloadMu sync.Mutex
-	state    *runtimeState
-	loader   service.RuntimeConfigLoader
-	status   service.MCPStatusUpdater
-	cfg      ManagerConfig
+	stateMu     sync.RWMutex
+	reloadMu    sync.Mutex
+	state       *runtimeState
+	loader      service.RuntimeConfigLoader
+	status      service.MCPStatusUpdater
+	cfg         ManagerConfig
+	retriever   service.KnowledgeRetriever
 }
 
-func NewManager(ctx context.Context, loader service.RuntimeConfigLoader, status service.MCPStatusUpdater, cfg ManagerConfig) (*Manager, error) {
+func NewManager(ctx context.Context, loader service.RuntimeConfigLoader, status service.MCPStatusUpdater, retriever service.KnowledgeRetriever, cfg ManagerConfig) (*Manager, error) {
 	if loader == nil || status == nil {
 		return nil, errors.New("runtime config loader and MCP status updater are required")
 	}
-	manager := &Manager{loader: loader, status: status, cfg: cfg}
+	manager := &Manager{loader: loader, status: status, retriever: retriever, cfg: cfg}
 	if err := manager.Reload(ctx); err != nil {
 		return nil, err
 	}
@@ -104,6 +106,46 @@ func (m *Manager) Close() error {
 	return closeRuntimeState(state)
 }
 
+type knowledgeRetrieverAdapter struct {
+	retriever service.KnowledgeRetriever
+}
+
+func (a *knowledgeRetrieverAdapter) Retrieve(ctx context.Context, userID string, input tools.RetrievalTestInput) ([]tools.RetrievalTestResult, error) {
+	serviceInput := service.RetrievalTestInput{
+		Question:         input.Question,
+		KnowledgeBaseIDs: input.KnowledgeBaseIDs,
+		Retrieval: service.RetrievalSettings{
+			TopK:           input.Retrieval.TopK,
+			ScoreThreshold: input.Retrieval.ScoreThreshold,
+			EnableRerank:   input.Retrieval.EnableRerank,
+		},
+	}
+	serviceResults, err := a.retriever.Retrieve(ctx, userID, serviceInput)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]tools.RetrievalTestResult, 0, len(serviceResults))
+	for _, r := range serviceResults {
+		var rerankScore float64
+		if r.RerankScore != nil {
+			rerankScore = *r.RerankScore
+		}
+		results = append(results, tools.RetrievalTestResult{
+			RankNo:          r.RankNo,
+			KnowledgeBaseID: r.KnowledgeBaseID,
+			DocumentID:      r.DocumentID,
+			DocumentName:    r.DocumentName,
+			ChunkID:         r.ChunkID,
+			SectionPath:     r.SectionPath,
+			ContentPreview:  r.ContentPreview,
+			Score:           r.Score,
+			RerankScore:     rerankScore,
+			Metadata:        r.Metadata,
+		})
+	}
+	return results, nil
+}
+
 func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeConfiguration) (*runtimeState, error) {
 	local, err := localtools.New(localtools.Config{
 		WorkDir: m.cfg.WorkDir, MaxFileBytes: m.cfg.MaxFileBytes,
@@ -124,7 +166,7 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 			m.updateMCPStatus(ctx, server.ID, 0, nil, "connection failed")
 			continue
 		}
-		tools, listErr := client.ListTools(ctx)
+		mcpTools, listErr := client.ListTools(ctx)
 		if listErr != nil {
 			_ = client.Close()
 			m.updateMCPStatus(ctx, server.ID, 0, nil, "tool discovery failed")
@@ -139,7 +181,19 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 		clients = append(clients, client)
 		providers = append(providers, prefixed)
 		now := time.Now().UTC()
-		m.updateMCPStatus(ctx, server.ID, len(tools), &now, "")
+		m.updateMCPStatus(ctx, server.ID, len(mcpTools), &now, "")
+	}
+	if m.retriever != nil {
+		adapter := &knowledgeRetrieverAdapter{retriever: m.retriever}
+		knowledgeTool, err := tools.NewKnowledgeToolClient(tools.KnowledgeToolConfig{
+			RetrievalClient: adapter,
+			Timeout:         m.cfg.DefaultToolTimeout,
+		})
+		if err != nil {
+			closeClients(clients)
+			return nil, fmt.Errorf("init knowledge tool client: %w", err)
+		}
+		providers = append(providers, knowledgeTool)
 	}
 	tools, err := toolclient.New(providers...)
 	if err != nil {

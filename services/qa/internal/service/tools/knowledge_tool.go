@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
 
@@ -18,17 +17,44 @@ const (
 	maxKnowledgeResultSize = 8192 // bytes
 )
 
+type RetrievalTestInput struct {
+	Question         string
+	KnowledgeBaseIDs []string
+	Retrieval        RetrievalSettings
+}
+
+type RetrievalSettings struct {
+	TopK           int
+	ScoreThreshold float64
+	EnableRerank   bool
+}
+
+type RetrievalTestResult struct {
+	RankNo          int
+	KnowledgeBaseID string
+	DocumentID      string
+	DocumentName    string
+	ChunkID         string
+	SectionPath     string
+	ContentPreview  string
+	Score           float64
+	RerankScore     float64
+	Metadata        map[string]any
+}
+
+type KnowledgeRetriever interface {
+	Retrieve(context.Context, string, RetrievalTestInput) ([]RetrievalTestResult, error)
+}
+
 // KnowledgeToolClient adapts the knowledge service HTTP client into MCP tools
 // that can be used by the agent loop.
 type KnowledgeToolClient struct {
-	retrievalClient service.KnowledgeRetriever
-	userID          string
+	retrievalClient KnowledgeRetriever
 	timeout         time.Duration
 }
 
 type KnowledgeToolConfig struct {
-	RetrievalClient service.KnowledgeRetriever
-	UserID          string
+	RetrievalClient KnowledgeRetriever
 	Timeout         time.Duration
 }
 
@@ -36,15 +62,11 @@ func NewKnowledgeToolClient(cfg KnowledgeToolConfig) (*KnowledgeToolClient, erro
 	if cfg.RetrievalClient == nil {
 		return nil, errors.New("knowledge retriever is required")
 	}
-	if strings.TrimSpace(cfg.UserID) == "" {
-		return nil, errors.New("user ID is required for knowledge tool")
-	}
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 10 * time.Second
 	}
 	return &KnowledgeToolClient{
 		retrievalClient: cfg.RetrievalClient,
-		userID:          cfg.UserID,
 		timeout:         cfg.Timeout,
 	}, nil
 }
@@ -143,15 +165,21 @@ func (c *KnowledgeToolClient) searchKnowledge(ctx context.Context, arguments jso
 		return toolFailure("invalid_arguments", "query must not be empty"), nil
 	}
 
+	// Get user ID from context
+	userID := ctx.Value("userID").(string)
+	if strings.TrimSpace(userID) == "" {
+		return toolFailure("invalid_arguments", "user ID is required"), nil
+	}
+
 	// Apply timeout
 	toolCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	// Build retrieval input
-	retrievalInput := service.RetrievalTestInput{
+	retrievalInput := RetrievalTestInput{
 		Question:          input.Query,
 		KnowledgeBaseIDs:  input.KnowledgeBaseIDs,
-		Retrieval: service.RetrievalSettings{
+		Retrieval: RetrievalSettings{
 			TopK:            input.TopK,
 			ScoreThreshold:  input.ScoreThreshold,
 			EnableRerank:    input.EnableRerank,
@@ -159,7 +187,7 @@ func (c *KnowledgeToolClient) searchKnowledge(ctx context.Context, arguments jso
 	}
 
 	// Call knowledge service
-	results, err := c.retrievalClient.Retrieve(toolCtx, c.userID, retrievalInput)
+	results, err := c.retrievalClient.Retrieve(toolCtx, userID, retrievalInput)
 	if err != nil {
 		return toolFailure("retrieval_failed", "knowledge retrieval service failed"), nil
 	}
@@ -203,7 +231,7 @@ func (c *KnowledgeToolClient) getCitationSource(ctx context.Context, arguments j
 	return agent.ToolResult{Content: string(payload)}, nil
 }
 
-func generateSearchSummary(results []service.RetrievalTestResult) string {
+func generateSearchSummary(results []RetrievalTestResult) string {
 	if len(results) == 0 {
 		return `{"hit_count": 0, "message": "No relevant results found"}`
 	}
