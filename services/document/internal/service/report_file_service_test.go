@@ -147,11 +147,13 @@ func (f *fakeReportFileQueue) EnqueueReportJob(context.Context, JobType, string,
 }
 
 type fakeReportFileContentClient struct {
-	content FileContent
-	created UploadedFile
+	content     FileContent
+	created     UploadedFile
+	createCalls int
 }
 
 func (f *fakeReportFileContentClient) CreateFile(_ context.Context, _ RequestContext, file UploadedFile) (FileObject, error) {
+	f.createCalls++
 	f.created = file
 	return FileObject{ID: "file-internal-1", Filename: file.Filename, ContentType: file.ContentType, SizeBytes: file.SizeBytes}, nil
 }
@@ -262,6 +264,40 @@ func TestExecuteReportFileCreationUsesSavedSectionsAndStoresFileRef(t *testing.T
 	if !docxContains(t, data, "final edited content") {
 		t.Fatal("generated DOCX did not include saved section content")
 	}
+}
+
+func TestExecuteReportFileCreationFailsWhenQueuedReportWasDeleted(t *testing.T) {
+	deletedAt := time.Now().UTC()
+	repo := newFakeReportFileRepository()
+	repo.reports["report-1"] = Report{ID: "report-1", Name: "Deleted report", CreatorID: "user-1", Status: ReportStatusDeleted, DeletedAt: &deletedAt}
+	repo.files["rf-1"] = ReportFile{ID: "rf-1", ReportID: "report-1", JobID: "job-1", Filename: "Deleted report.docx", Format: ReportFileFormatDOCX, Status: ReportFileStatusPending}
+	files := &fakeReportFileContentClient{}
+	generator := &spyReportFileGenerator{}
+	svc := NewReportFileService(repo, files, nil, generator)
+
+	err := svc.ExecuteReportFileCreation(context.Background(), ReportFileExecutionPayload{JobID: "job-1", UserID: "user-1"})
+	appErr, ok := Classify(err)
+	if !ok || appErr.Code != CodeConflict {
+		t.Fatalf("ExecuteReportFileCreation() error = %v, want conflict", err)
+	}
+	if repo.files["rf-1"].Status != ReportFileStatusFailed {
+		t.Fatalf("report file status = %q, want %q", repo.files["rf-1"].Status, ReportFileStatusFailed)
+	}
+	if generator.called {
+		t.Fatal("generator was called for deleted report")
+	}
+	if files.createCalls != 0 {
+		t.Fatalf("CreateFile calls = %d, want 0", files.createCalls)
+	}
+}
+
+type spyReportFileGenerator struct {
+	called bool
+}
+
+func (s *spyReportFileGenerator) GenerateDOCX(context.Context, Report, []ReportSection) ([]byte, error) {
+	s.called = true
+	return []byte("docx"), nil
 }
 
 func TestSimpleDOCXGeneratorCreatesWordPackage(t *testing.T) {

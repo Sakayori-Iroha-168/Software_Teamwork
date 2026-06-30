@@ -184,8 +184,14 @@ func (s *JobService) RetryJob(ctx context.Context, rctx RequestContext, id, reas
 	if err != nil {
 		return ReportJobAttempt{}, err
 	}
-	if _, err := s.requireReportAccess(ctx, rctx, job.ReportID); err != nil {
+	report, err := s.requireReportAccess(ctx, rctx, job.ReportID)
+	if err != nil {
 		return ReportJobAttempt{}, err
+	}
+	if job.JobType == JobTypeReportFileCreation {
+		if report.Status == ReportStatusDeleted || report.DeletedAt != nil {
+			return ReportJobAttempt{}, NewError(CodeConflict, "report has been deleted", nil)
+		}
 	}
 	// ClaimRetry atomically validates state and increments retry_count in one transaction.
 	attempt, err := s.repo.ClaimRetry(ctx, job.ID, newID(), "user", reason)

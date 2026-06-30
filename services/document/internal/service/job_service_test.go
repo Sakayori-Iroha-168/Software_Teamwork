@@ -196,12 +196,42 @@ func TestJobServiceRetryJobDoesNotPersistRawReason(t *testing.T) {
 	}
 }
 
+func TestJobServiceRetryReportFileJobRejectsDeletedReport(t *testing.T) {
+	ctx := context.Background()
+	deletedAt := time.Now().UTC()
+	repo := &fakeJobRepository{
+		report: Report{ID: "report-1", CreatorID: "user-1", Status: ReportStatusDeleted, DeletedAt: &deletedAt},
+		job: ReportJob{
+			ID:        "job-1",
+			ReportID:  "report-1",
+			JobType:   JobTypeReportFileCreation,
+			Status:    JobStatusFailed,
+			RequestID: "req-retry",
+		},
+	}
+	enqueuer := &fakeTaskEnqueuer{}
+	svc := NewJobService(repo, enqueuer)
+
+	_, err := svc.RetryJob(ctx, RequestContext{UserID: "user-1"}, "job-1", "try again")
+	appErr, ok := Classify(err)
+	if !ok || appErr.Code != CodeConflict {
+		t.Fatalf("RetryJob() error = %v, want conflict", err)
+	}
+	if repo.claimRetryCalled {
+		t.Fatal("ClaimRetry was called for deleted report")
+	}
+	if enqueuer.called {
+		t.Fatal("retry task was enqueued for deleted report")
+	}
+}
+
 type fakeJobRepository struct {
-	report        Report
-	job           ReportJob
-	reportFile    ReportFile
-	operationLogs []OperationLog
-	taskIDErr     error
+	report           Report
+	job              ReportJob
+	reportFile       ReportFile
+	operationLogs    []OperationLog
+	taskIDErr        error
+	claimRetryCalled bool
 }
 
 func (f *fakeJobRepository) GetReportByID(context.Context, string) (Report, error) {
@@ -257,6 +287,7 @@ func (f *fakeJobRepository) UpdateReportFile(_ context.Context, value ReportFile
 }
 
 func (f *fakeJobRepository) ClaimRetry(context.Context, string, string, string, string) (ReportJobAttempt, error) {
+	f.claimRetryCalled = true
 	return ReportJobAttempt{ID: "attempt-1", JobID: "job-1"}, nil
 }
 
@@ -276,12 +307,14 @@ func (f *fakeJobRepository) CreateOperationLog(_ context.Context, log OperationL
 type fakeTaskEnqueuer struct {
 	jobType JobType
 	err     error
+	called  bool
 }
 
 func (f *fakeTaskEnqueuer) EnqueueReportJob(_ context.Context, jobType JobType, _, _, _, _ string) (string, error) {
 	if f.err != nil {
 		return "", f.err
 	}
+	f.called = true
 	f.jobType = jobType
 	return "task-1", nil
 }

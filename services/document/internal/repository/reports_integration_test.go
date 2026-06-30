@@ -319,6 +319,78 @@ func TestPostgresRepositoryUpdateReportSectionPersistsMetadata(t *testing.T) {
 	}
 }
 
+func TestPostgresRepositoryUpdateReportFileDoesNotExportDeletedReport(t *testing.T) {
+	databaseURL := os.Getenv("DOCUMENT_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DOCUMENT_TEST_DATABASE_URL is not set")
+	}
+
+	ctx := context.Background()
+	pool := newTestPool(t, ctx, databaseURL)
+	defer pool.Close()
+	applyMigration(t, ctx, pool)
+
+	repo := NewPostgresRepository(pool)
+	now := time.Date(2026, 6, 30, 11, 0, 0, 0, time.UTC)
+	report := createRepositoryTestReport(t, ctx, repo, "deleted_export_guard_report", "00000000-0000-0000-0000-000000001301", now)
+	job, err := repo.CreateReportJob(ctx, service.ReportJob{
+		ID:          "00000000-0000-0000-0000-000000001302",
+		RequestID:   "req-deleted-export",
+		Source:      "api",
+		JobType:     service.JobTypeReportFileCreation,
+		TargetType:  "report_file",
+		TargetID:    report.ID,
+		QueueName:   "document",
+		ReportID:    report.ID,
+		Status:      service.JobStatusRunning,
+		MaxAttempts: 3,
+		CreatedAt:   now,
+	})
+	if err != nil {
+		t.Fatalf("CreateReportJob() error = %v", err)
+	}
+	reportFile, err := repo.CreateReportFile(ctx, service.ReportFile{
+		ID:        "00000000-0000-0000-0000-000000001303",
+		ReportID:  report.ID,
+		JobID:     job.ID,
+		Filename:  "guard.docx",
+		Format:    service.ReportFileFormatDOCX,
+		Status:    service.ReportFileStatusRunning,
+		CreatedBy: "user-1",
+		CreatedAt: now,
+	})
+	if err != nil {
+		t.Fatalf("CreateReportFile() error = %v", err)
+	}
+	if _, err := repo.SoftDeleteReport(ctx, report.ID, now.Add(time.Minute)); err != nil {
+		t.Fatalf("SoftDeleteReport() error = %v", err)
+	}
+
+	reportFile.Status = service.ReportFileStatusSucceeded
+	reportFile.FileRef = "file-internal-1"
+	reportFile.FileSize = 1024
+	_, err = repo.UpdateReportFile(ctx, reportFile)
+	appErr, ok := service.Classify(err)
+	if !ok || appErr.Code != service.CodeConflict {
+		t.Fatalf("UpdateReportFile() error = %v, want conflict", err)
+	}
+
+	reloadedReport, err := repo.GetReportByID(ctx, report.ID)
+	if err != nil {
+		t.Fatalf("GetReportByID() error = %v", err)
+	}
+	if reloadedReport.Status != service.ReportStatusDeleted || reloadedReport.LatestReportFileID != "" || reloadedReport.ExportedAt != nil {
+		t.Fatalf("deleted report was changed by export success: %+v", reloadedReport)
+	}
+	reloadedFile, err := repo.GetReportFileByID(ctx, reportFile.ID)
+	if err != nil {
+		t.Fatalf("GetReportFileByID() error = %v", err)
+	}
+	if reloadedFile.Status != service.ReportFileStatusRunning || reloadedFile.FileRef != "" {
+		t.Fatalf("report file update was not rolled back: %+v", reloadedFile)
+	}
+}
+
 func TestPostgresRepositoryRejectsInvalidOptionalUUIDs(t *testing.T) {
 	databaseURL := os.Getenv("DOCUMENT_TEST_DATABASE_URL")
 	if databaseURL == "" {
