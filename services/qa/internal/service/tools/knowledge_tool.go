@@ -257,6 +257,7 @@ func generateSearchSummary(results []RetrievalTestResult) string {
 			"section_path":      truncateString(result.SectionPath, 100),
 			"preview":           truncateString(result.ContentPreview, 200),
 			"context":           truncateString(result.ContentPreview, 500),
+			"full_text":         result.ContentPreview,
 			"rerank_score":      result.RerankScore,
 			"metadata":          result.Metadata,
 		}
