@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -13,7 +14,7 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/toolclient"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
-	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/tools"
+	toolspkg "github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/tools"
 )
 
 type ManagerConfig struct {
@@ -110,7 +111,7 @@ type knowledgeRetrieverAdapter struct {
 	retriever service.KnowledgeRetriever
 }
 
-func (a *knowledgeRetrieverAdapter) Retrieve(ctx context.Context, userID string, input tools.RetrievalTestInput) ([]tools.RetrievalTestResult, error) {
+func (a *knowledgeRetrieverAdapter) Retrieve(ctx context.Context, userID string, input toolspkg.RetrievalTestInput) ([]toolspkg.RetrievalTestResult, error) {
 	serviceInput := service.RetrievalTestInput{
 		Question:         input.Question,
 		KnowledgeBaseIDs: input.KnowledgeBaseIDs,
@@ -124,13 +125,13 @@ func (a *knowledgeRetrieverAdapter) Retrieve(ctx context.Context, userID string,
 	if err != nil {
 		return nil, err
 	}
-	results := make([]tools.RetrievalTestResult, 0, len(serviceResults))
+	results := make([]toolspkg.RetrievalTestResult, 0, len(serviceResults))
 	for _, r := range serviceResults {
 		var rerankScore float64
 		if r.RerankScore != nil {
 			rerankScore = *r.RerankScore
 		}
-		results = append(results, tools.RetrievalTestResult{
+		results = append(results, toolspkg.RetrievalTestResult{
 			RankNo:          r.RankNo,
 			KnowledgeBaseID: r.KnowledgeBaseID,
 			DocumentID:      r.DocumentID,
@@ -144,6 +145,37 @@ func (a *knowledgeRetrieverAdapter) Retrieve(ctx context.Context, userID string,
 		})
 	}
 	return results, nil
+}
+
+type policyToolClient struct {
+	tools  agent.ToolClient
+	policy *toolspkg.Policy
+}
+
+func (p *policyToolClient) ListTools(ctx context.Context) ([]agent.ToolDefinition, error) {
+	definitions, err := p.tools.ListTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.policy.FilterTools(definitions), nil
+}
+
+func (p *policyToolClient) CallTool(ctx context.Context, name string, arguments json.RawMessage) (agent.ToolResult, error) {
+	definitions, err := p.tools.ListTools(ctx)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	var toolDef agent.ToolDefinition
+	for _, def := range definitions {
+		if def.Function.Name == name {
+			toolDef = def
+			break
+		}
+	}
+	if err := p.policy.ValidateCall(name, arguments, toolDef); err != nil {
+		return agent.ToolResult{}, err
+	}
+	return p.tools.CallTool(ctx, name, arguments)
 }
 
 func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeConfiguration) (*runtimeState, error) {
@@ -185,7 +217,7 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 	}
 	if m.retriever != nil {
 		adapter := &knowledgeRetrieverAdapter{retriever: m.retriever}
-		knowledgeTool, err := tools.NewKnowledgeToolClient(tools.KnowledgeToolConfig{
+		knowledgeTool, err := toolspkg.NewKnowledgeToolClient(toolspkg.KnowledgeToolConfig{
 			RetrievalClient: adapter,
 			Timeout:         m.cfg.DefaultToolTimeout,
 		})
@@ -195,15 +227,23 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 		}
 		providers = append(providers, knowledgeTool)
 	}
-	tools, err := toolclient.New(providers...)
+	toolClient, err := toolclient.New(providers...)
 	if err != nil {
 		closeClients(clients)
 		return nil, err
 	}
-	if _, err := tools.ListTools(ctx); err != nil {
+	if _, err := toolClient.ListTools(ctx); err != nil {
 		closeClients(clients)
 		return nil, fmt.Errorf("validate merged tools: %w", err)
 	}
+	policy, err := toolspkg.NewPolicy(toolspkg.PolicyConfig{
+		EnabledToolNames: runtimeConfig.Agent.EnabledToolNames,
+	})
+	if err != nil {
+		closeClients(clients)
+		return nil, fmt.Errorf("create tool policy: %w", err)
+	}
+	policyClient := &policyToolClient{tools: toolClient, policy: policy}
 	model, err := modelclient.New(modelclient.Config{
 		Endpoint: runtimeConfig.LLM.Endpoint, Token: runtimeConfig.LLM.Token,
 		TokenHeader: runtimeConfig.LLM.TokenHeader, Model: runtimeConfig.LLM.Model,
@@ -226,7 +266,7 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 		maxIterations = m.cfg.MaxIterations
 	}
 	overallTimeout := time.Duration(runtimeConfig.Agent.OverallTimeoutSeconds) * time.Second
-	runner, err := agent.NewRunner(model, tools, agent.Config{
+	runner, err := agent.NewRunner(model, policyClient, agent.Config{
 		MaxIterations: maxIterations, ToolTimeout: toolTimeout,
 		MaxToolResultBytes: m.cfg.MaxToolResultBytes,
 	})

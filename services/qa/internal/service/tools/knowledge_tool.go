@@ -8,15 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/contextutil"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
-
-type userIDContextKey struct{}
-
-func userIDFromContext(ctx context.Context) string {
-	value, _ := ctx.Value(userIDContextKey{}).(string)
-	return value
-}
 
 const (
 	ToolSearchKnowledge    = "search_knowledge"
@@ -173,7 +167,7 @@ func (c *KnowledgeToolClient) searchKnowledge(ctx context.Context, arguments jso
 	}
 
 	// Get user ID from context
-	userID := userIDFromContext(ctx)
+	userID := contextutil.UserIDFromContext(ctx)
 	if strings.TrimSpace(userID) == "" {
 		return toolFailure("invalid_arguments", "user ID is required"), nil
 	}
