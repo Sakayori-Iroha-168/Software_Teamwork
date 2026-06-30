@@ -123,11 +123,7 @@ describe('ChatPage stream sequencing', () => {
     await emit('answer.delta', { content: 'second' }, 3)
     await waitFor(() => expect(getLastAssistantMessage().content).toBe('first second'))
 
-    await emit(
-      'answer.completed',
-      { assistantMessageId: 'assistant-backend-1', responseRunId: 'run-1' },
-      4,
-    )
+    await emit('answer.completed', { messageId: 'assistant-backend-1', responseRunId: 'run-1' }, 4)
     await waitFor(() => expect(useChatStore.getState().streaming).toBe(false))
 
     expect(input).not.toBeDisabled()

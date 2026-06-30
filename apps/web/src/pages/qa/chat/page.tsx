@@ -290,7 +290,11 @@ export function ChatPage() {
           setStreaming(false)
           abortRef.current = null
           const assistantMessageId =
-            typeof data.assistantMessageId === 'string' ? data.assistantMessageId : undefined
+            typeof data.assistantMessageId === 'string'
+              ? data.assistantMessageId
+              : typeof data.messageId === 'string'
+                ? data.messageId
+                : undefined
           patchAssistant({
             citations: [...citations],
             content,
