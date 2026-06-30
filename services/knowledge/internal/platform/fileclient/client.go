@@ -32,14 +32,27 @@ func New(baseURL string, serviceToken string, httpClient *http.Client) (*Client,
 	if parsed.User != nil {
 		return nil, fmt.Errorf("file service URL must not contain credentials")
 	}
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: defaultTimeout}
-	}
 	return &Client{
 		baseURL:      strings.TrimRight(parsed.String(), "/"),
 		serviceToken: strings.TrimSpace(serviceToken),
-		httpClient:   httpClient,
+		httpClient:   noRedirectHTTPClient(httpClient),
 	}, nil
+}
+
+func noRedirectHTTPClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{Timeout: defaultTimeout}
+	} else {
+		copied := *client
+		client = &copied
+	}
+	// File Service requests carry service credentials and user context. Treat
+	// redirects as dependency responses so those headers are never replayed to
+	// an object-store URL or any unexpected host.
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return client
 }
 
 func (c *Client) CreateFile(ctx context.Context, reqCtx service.RequestContext, file service.UploadedFile) (service.FileObject, error) {
@@ -139,6 +152,33 @@ func (c *Client) DeleteFile(ctx context.Context, reqCtx service.RequestContext, 
 		return service.NewError(service.CodeDependency, "file service failed", nil)
 	}
 	return nil
+}
+
+func (c *Client) ReadSource(ctx context.Context, reqCtx service.RequestContext, fileID string) (service.SourceDocument, error) {
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return service.SourceDocument{}, service.NewError(service.CodeDependency, "file source is not configured", nil)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/internal/v1/files/"+url.PathEscape(fileID)+"/content", nil)
+	if err != nil {
+		return service.SourceDocument{}, service.NewError(service.CodeDependency, "file service request failed", err)
+	}
+	c.setContextHeaders(req, reqCtx)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return service.SourceDocument{}, service.NewError(service.CodeDependency, "file service unavailable", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return service.SourceDocument{}, service.NewError(service.CodeDependency, "file service content read failed", nil)
+	}
+	return service.SourceDocument{
+		Body:        resp.Body,
+		ContentType: strings.TrimSpace(resp.Header.Get("Content-Type")),
+		SizeBytes:   resp.ContentLength,
+	}, nil
 }
 
 func writeMultipartFile(writer *multipart.Writer, file service.UploadedFile) error {

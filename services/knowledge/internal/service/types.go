@@ -97,7 +97,11 @@ const (
 )
 
 const (
-	JobTypeDocumentIngestion = "document_ingestion"
+	JobTypeIngest            = "ingest"
+	JobTypeDocumentIngestion = JobTypeIngest
+	LegacyJobTypeIngestion   = "document_ingestion"
+
+	DefaultIngestionMaxAttempts int32 = 3
 
 	JobStatusQueued    = "queued"
 	JobStatusRunning   = "running"
@@ -244,6 +248,86 @@ type FileClient interface {
 	DeleteFile(ctx context.Context, reqCtx RequestContext, fileID string) error
 }
 
+type SourceDocument struct {
+	Body        io.ReadCloser
+	ContentType string
+	SizeBytes   int64
+}
+
+type SourceReader interface {
+	ReadSource(ctx context.Context, reqCtx RequestContext, fileID string) (SourceDocument, error)
+}
+
+type ParseInput struct {
+	Name        string
+	ContentType string
+	Body        io.Reader
+	SizeBytes   int64
+	RequestID   string
+	UserID      string
+}
+
+type ParsedDocument struct {
+	Content string
+	Title   string
+	Backend string
+}
+
+type Parser interface {
+	Parse(ctx context.Context, input ParseInput) (ParsedDocument, error)
+}
+
+type ChunkInput struct {
+	Content  string
+	Strategy json.RawMessage
+}
+
+type ChunkSpec struct {
+	SectionPath *string
+	Content     string
+	TokenCount  int
+	ChunkType   *string
+	Metadata    map[string]any
+}
+
+type Chunker interface {
+	Chunk(ctx context.Context, input ChunkInput) ([]ChunkSpec, error)
+}
+
+type EmbeddingRequest struct {
+	Texts     []string
+	RequestID string
+	UserID    string
+}
+
+type EmbeddingResult struct {
+	Vectors   [][]float32
+	Provider  string
+	Model     string
+	Dimension int
+}
+
+type Embedder interface {
+	Embed(ctx context.Context, request EmbeddingRequest) (EmbeddingResult, error)
+}
+
+type VectorPoint struct {
+	ID      string
+	Vector  []float32
+	Payload map[string]any
+}
+
+const (
+	VectorPayloadDocumentID       = "document_id"
+	VectorPayloadIngestionAttempt = "ingestion_attempt"
+)
+
+type VectorIndex interface {
+	Upsert(ctx context.Context, points []VectorPoint) error
+	DeleteByDocumentIngestionAttempt(ctx context.Context, documentID string, ingestionAttempt string) error
+	DeleteStaleDocumentPoints(ctx context.Context, documentID string, activeIngestionAttempt string) error
+}
+
 type DocumentIngestionTask struct {
 	RequestID       string `json:"requestId"`
 	JobID           string `json:"jobId"`
@@ -268,6 +352,16 @@ type ListDocumentsInput struct {
 	Page            PageInput
 }
 
+type ListChunksInput struct {
+	DocumentID string
+	Page       PageInput
+}
+
+type ChunkList struct {
+	Items []DocumentChunk
+	Page  Page
+}
+
 type Repository interface {
 	CreateKnowledgeBase(ctx context.Context, input CreateKnowledgeBaseRecord) (KnowledgeBase, error)
 	ListKnowledgeBases(ctx context.Context, scope AccessScope, page PageInput) (KnowledgeBaseList, error)
@@ -275,7 +369,7 @@ type Repository interface {
 	UpdateKnowledgeBase(ctx context.Context, input UpdateKnowledgeBaseRecord, scope AccessScope) (KnowledgeBase, error)
 	SoftDeleteKnowledgeBase(ctx context.Context, id string, deletedAt time.Time, scope AccessScope) error
 	CreateDocumentWithJob(ctx context.Context, input CreateDocumentWithJobRecord, scope AccessScope) (KnowledgeDocument, ProcessingJob, error)
-	MarkDocumentJobFailed(ctx context.Context, documentID string, jobID string, code string, message string, failedAt time.Time) error
+	MarkDocumentJobFailed(ctx context.Context, documentID string, jobID string, expectedAttempts *int32, code string, message string, failedAt time.Time) error
 	ListDocumentsByKnowledgeBase(ctx context.Context, knowledgeBaseID string, status *DocumentStatus, scope AccessScope, page PageInput) (DocumentList, error)
 	GetDocument(ctx context.Context, id string, scope AccessScope) (KnowledgeDocument, error)
 	ListParserConfigs(ctx context.Context, enabled *bool) ([]ParserConfig, error)
@@ -284,6 +378,12 @@ type Repository interface {
 	UpdateParserConfig(ctx context.Context, config ParserConfig, audit ParserConfigAudit) (ParserConfig, error)
 	SoftDeleteParserConfig(ctx context.Context, id string, deletedAt time.Time, audit ParserConfigAudit) error
 	GetEffectiveParserConfig(ctx context.Context, contentType string) (ParserConfig, error)
+	GetProcessingJob(ctx context.Context, id string) (ProcessingJob, error)
+	ClaimProcessingJob(ctx context.Context, id string, update JobStateUpdate) (ProcessingJob, error)
+	UpdateJobState(ctx context.Context, id string, update JobStateUpdate) (ProcessingJob, error)
+	UpdateDocumentProcessingState(ctx context.Context, id string, update DocumentStateUpdate) (KnowledgeDocument, error)
+	CompleteIngestion(ctx context.Context, input CompleteIngestionRecord) (ProcessingJob, error)
+	ListChunks(ctx context.Context, documentID string, scope AccessScope, page PageInput) (ChunkList, error)
 }
 
 type CreateKnowledgeBaseRecord struct {
@@ -329,4 +429,53 @@ type CreateDocumentWithJobRecord struct {
 	ParserConfigSnapshot json.RawMessage
 	CreatedAt            time.Time
 	UpdatedAt            time.Time
+}
+
+type DocumentStateUpdate struct {
+	Status       DocumentStatus
+	ErrorCode    *string
+	ErrorMessage *string
+	UpdatedAt    time.Time
+}
+
+type JobStateUpdate struct {
+	Status             string
+	CurrentStage       *string
+	ProgressPercent    int32
+	Message            *string
+	ErrorCode          *string
+	ErrorMessage       *string
+	Attempts           *int32
+	StartedAt          *time.Time
+	FinishedAt         *time.Time
+	UpdatedAt          time.Time
+	StaleRunningBefore *time.Time
+	ExpectedAttempts   *int32
+}
+
+type DocumentChunk struct {
+	ID                 string
+	KnowledgeBaseID    string
+	DocumentID         string
+	ChunkIndex         int32
+	SectionPath        *string
+	Content            string
+	TokenCount         *int32
+	ChunkType          *string
+	QdrantPointID      *string
+	EmbeddingProvider  *string
+	EmbeddingModel     *string
+	EmbeddingDimension *int32
+	Metadata           map[string]any
+	CreatedAt          time.Time
+}
+
+type CompleteIngestionRecord struct {
+	DocumentID       string
+	JobID            string
+	ExpectedAttempts *int32
+	ParserBackend    *string
+	Chunks           []DocumentChunk
+	UpdatedAt        time.Time
+	FinishedAt       time.Time
 }

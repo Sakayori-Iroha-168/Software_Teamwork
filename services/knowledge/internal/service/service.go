@@ -18,6 +18,8 @@ const (
 	defaultDocType  = "GENERAL"
 	maxTags         = 32
 	maxTagLength    = 64
+
+	defaultIngestionRunningLease = 30 * time.Minute
 )
 
 var (
@@ -29,12 +31,20 @@ type Clock func() time.Time
 
 type IDGenerator func(prefix string) string
 
+type Option func(*Service)
+
 type Service struct {
-	repo  Repository
-	files FileClient
-	queue IngestionQueue
-	now   Clock
-	newID IDGenerator
+	repo         Repository
+	files        FileClient
+	queue        IngestionQueue
+	source       SourceReader
+	parser       Parser
+	chunker      Chunker
+	embedder     Embedder
+	vectorIndex  VectorIndex
+	now          Clock
+	newID        IDGenerator
+	runningLease time.Duration
 }
 
 func New(repo Repository) *Service {
@@ -43,7 +53,8 @@ func New(repo Repository) *Service {
 		now: func() time.Time {
 			return time.Now().UTC()
 		},
-		newID: newID,
+		newID:        newID,
+		runningLease: defaultIngestionRunningLease,
 	}
 }
 
@@ -51,19 +62,49 @@ func NewWithOptions(repo Repository, now Clock, idGenerator IDGenerator) *Servic
 	return NewWithDependencies(repo, nil, nil, now, idGenerator)
 }
 
-func NewWithDependencies(repo Repository, files FileClient, queue IngestionQueue, now Clock, idGenerator IDGenerator) *Service {
+func NewWithDependencies(repo Repository, files FileClient, queue IngestionQueue, now Clock, idGenerator IDGenerator, opts ...Option) *Service {
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
 	if idGenerator == nil {
 		idGenerator = newID
 	}
-	return &Service{
-		repo:  repo,
-		files: files,
-		queue: queue,
-		now:   now,
-		newID: idGenerator,
+	s := &Service{
+		repo:         repo,
+		files:        files,
+		queue:        queue,
+		now:          now,
+		newID:        idGenerator,
+		runningLease: defaultIngestionRunningLease,
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+	return s
+}
+
+func WithProcessingPipeline(source SourceReader, parser Parser, chunker Chunker) Option {
+	return func(s *Service) {
+		s.source = source
+		s.parser = parser
+		s.chunker = chunker
+	}
+}
+
+func WithVectorIndex(embedder Embedder, vectorIndex VectorIndex) Option {
+	return func(s *Service) {
+		s.embedder = embedder
+		s.vectorIndex = vectorIndex
+	}
+}
+
+func WithIngestionRunningLease(duration time.Duration) Option {
+	return func(s *Service) {
+		if duration > 0 {
+			s.runningLease = duration
+		}
 	}
 }
 
@@ -333,7 +374,7 @@ func (s *Service) UploadDocument(ctx context.Context, reqCtx RequestContext, inp
 		JobStatus:            JobStatusQueued,
 		JobStage:             "uploaded",
 		JobMessage:           "document uploaded and queued for ingestion",
-		MaxAttempts:          3,
+		MaxAttempts:          DefaultIngestionMaxAttempts,
 		ParserConfigID:       parserSnapshot.ParserConfigID,
 		ParserConfigSnapshot: parserSnapshotJSON,
 		CreatedAt:            now,
@@ -351,7 +392,7 @@ func (s *Service) UploadDocument(ctx context.Context, reqCtx RequestContext, inp
 		KnowledgeBaseID: doc.KnowledgeBaseID,
 		UserID:          scope.UserID,
 	}); err != nil {
-		_ = s.repo.MarkDocumentJobFailed(ctx, doc.ID, job.ID, string(CodeDependency), "ingestion queue handoff failed", s.now())
+		_ = s.repo.MarkDocumentJobFailed(ctx, doc.ID, job.ID, nil, string(CodeDependency), "ingestion queue handoff failed", s.now())
 		return KnowledgeDocument{}, DependencyError("ingestion queue handoff failed", err)
 	}
 

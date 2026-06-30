@@ -30,6 +30,10 @@ Infrastructure dependencies:
 - Qdrant for vector search.
 - MinIO for object storage.
 
+`services/parser/` is a backend runtime boundary but is not a Go microservice in
+the PaddleOCR implementation path. Keep PaddleOCR runtime code in a Python
+service and let Go services call it over the documented internal HTTP API.
+
 ---
 
 ## Guidelines Index

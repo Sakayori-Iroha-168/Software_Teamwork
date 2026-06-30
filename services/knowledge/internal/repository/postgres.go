@@ -459,7 +459,7 @@ func (r *PostgresRepository) CreateDocumentWithJob(ctx context.Context, input se
 	return documentFromCreateRow(docRow), processingJobFromRow(jobRow), nil
 }
 
-func (r *PostgresRepository) MarkDocumentJobFailed(ctx context.Context, documentID string, jobID string, code string, message string, failedAt time.Time) error {
+func (r *PostgresRepository) MarkDocumentJobFailed(ctx context.Context, documentID string, jobID string, expectedAttempts *int32, code string, message string, failedAt time.Time) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return wrapPostgresError("begin mark document job failed transaction", err)
@@ -468,32 +468,356 @@ func (r *PostgresRepository) MarkDocumentJobFailed(ctx context.Context, document
 		_ = tx.Rollback(ctx)
 	}()
 
-	qtx := r.queries.WithTx(tx)
-	docRows, err := qtx.MarkDocumentFailed(ctx, sqlc.MarkDocumentFailedParams{
-		ID:           documentID,
-		ErrorCode:    code,
-		ErrorMessage: message,
-		UpdatedAt:    pgTime(failedAt),
-	})
-	if err != nil {
-		return wrapPostgresError("mark document failed", err)
-	}
-	jobRows, err := qtx.MarkProcessingJobFailed(ctx, sqlc.MarkProcessingJobFailedParams{
-		ID:           jobID,
-		ErrorCode:    code,
-		ErrorMessage: message,
-		FinishedAt:   pgTime(failedAt),
-	})
+	// A document can be soft-deleted while a worker is running. The processing job
+	// must still reach a terminal state so later redeliveries do not get stuck.
+	jobRows, err := tx.Exec(ctx, `
+UPDATE processing_jobs
+SET status = 'failed',
+    error_code = $3,
+    error_message = $4,
+    finished_at = $5,
+    updated_at = $5
+WHERE id = $1
+  AND document_id = $2
+  AND ($6::int4 IS NULL OR (attempts = $6 AND status = 'running'))`,
+		jobID,
+		documentID,
+		code,
+		message,
+		pgTime(failedAt),
+		pgInt4Ptr(expectedAttempts),
+	)
 	if err != nil {
 		return wrapPostgresError("mark processing job failed", err)
 	}
-	if docRows == 0 || jobRows == 0 {
+	if jobRows.RowsAffected() == 0 {
+		if expectedAttempts != nil {
+			return service.ErrConflict
+		}
 		return service.ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `
+UPDATE knowledge_documents
+SET status = 'failed',
+    error_code = $2,
+    error_message = $3,
+    updated_at = $4
+WHERE id = $1
+  AND deleted_at IS NULL`,
+		documentID,
+		code,
+		message,
+		pgTime(failedAt),
+	); err != nil {
+		return wrapPostgresError("mark document failed", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return wrapPostgresError("commit mark document job failed transaction", err)
 	}
 	return nil
+}
+
+func (r *PostgresRepository) GetProcessingJob(ctx context.Context, id string) (service.ProcessingJob, error) {
+	row, err := r.scanProcessingJob(ctx, r.pool.QueryRow(ctx, `
+SELECT id, knowledge_base_id, document_id, job_type, status, current_stage, progress_percent,
+       message, error_code, error_message, attempts, max_attempts, started_at, finished_at, created_at, updated_at
+FROM processing_jobs
+WHERE id = $1`, id))
+	if err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("get processing job", err)
+	}
+	return processingJobFromRow(row), nil
+}
+
+func (r *PostgresRepository) UpdateJobState(ctx context.Context, id string, update service.JobStateUpdate) (service.ProcessingJob, error) {
+	row, err := r.scanProcessingJob(ctx, r.pool.QueryRow(ctx, `
+UPDATE processing_jobs
+SET status = $2,
+    current_stage = $3,
+    progress_percent = $4,
+    message = $5,
+    error_code = $6,
+    error_message = $7,
+    attempts = COALESCE($8, attempts),
+    started_at = COALESCE($9, started_at),
+    finished_at = COALESCE($10, finished_at),
+    updated_at = $11
+WHERE id = $1
+  AND ($12::int4 IS NULL OR (attempts = $12 AND status = 'running'))
+RETURNING id, knowledge_base_id, document_id, job_type, status, current_stage, progress_percent,
+          message, error_code, error_message, attempts, max_attempts, started_at, finished_at, created_at, updated_at`,
+		id,
+		update.Status,
+		pgTextPtr(update.CurrentStage),
+		update.ProgressPercent,
+		pgTextPtr(update.Message),
+		pgTextPtr(update.ErrorCode),
+		pgTextPtr(update.ErrorMessage),
+		pgInt4Ptr(update.Attempts),
+		pgTimePtr(update.StartedAt),
+		pgTimePtr(update.FinishedAt),
+		pgTime(update.UpdatedAt),
+		pgInt4Ptr(update.ExpectedAttempts),
+	))
+	if errors.Is(err, pgx.ErrNoRows) && update.ExpectedAttempts != nil {
+		return service.ProcessingJob{}, service.ErrConflict
+	}
+	if err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("update processing job", err)
+	}
+	return processingJobFromRow(row), nil
+}
+
+func (r *PostgresRepository) ClaimProcessingJob(ctx context.Context, id string, update service.JobStateUpdate) (service.ProcessingJob, error) {
+	row, err := r.scanProcessingJob(ctx, r.pool.QueryRow(ctx, `
+UPDATE processing_jobs
+SET status = $2,
+    current_stage = $3,
+    progress_percent = $4,
+    message = $5,
+    error_code = NULL,
+    error_message = NULL,
+    attempts = attempts + 1,
+    started_at = COALESCE($6, started_at),
+    finished_at = NULL,
+    updated_at = $7
+WHERE id = $1
+  AND (
+    status IN ('queued', 'failed')
+    OR (
+      status = 'running'
+      AND $8::timestamptz IS NOT NULL
+      AND updated_at < $8
+    )
+  )
+  AND (max_attempts <= 0 OR attempts < max_attempts)
+RETURNING id, knowledge_base_id, document_id, job_type, status, current_stage, progress_percent,
+          message, error_code, error_message, attempts, max_attempts, started_at, finished_at, created_at, updated_at`,
+		id,
+		update.Status,
+		pgTextPtr(update.CurrentStage),
+		update.ProgressPercent,
+		pgTextPtr(update.Message),
+		pgTimePtr(update.StartedAt),
+		pgTime(update.UpdatedAt),
+		pgTimePtr(update.StaleRunningBefore),
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return service.ProcessingJob{}, service.ErrConflict
+	}
+	if err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("claim processing job", err)
+	}
+	return processingJobFromRow(row), nil
+}
+
+func (r *PostgresRepository) UpdateDocumentProcessingState(ctx context.Context, id string, update service.DocumentStateUpdate) (service.KnowledgeDocument, error) {
+	rows, err := r.pool.Exec(ctx, `
+UPDATE knowledge_documents
+SET status = $2,
+    error_code = $3,
+    error_message = $4,
+    updated_at = $5
+WHERE id = $1
+  AND deleted_at IS NULL`,
+		id,
+		string(update.Status),
+		pgTextPtr(update.ErrorCode),
+		pgTextPtr(update.ErrorMessage),
+		pgTime(update.UpdatedAt),
+	)
+	if err != nil {
+		return service.KnowledgeDocument{}, wrapPostgresError("update document processing state", err)
+	}
+	if rows.RowsAffected() == 0 {
+		return service.KnowledgeDocument{}, service.ErrNotFound
+	}
+	return r.GetDocument(ctx, id, service.AccessScope{CanReadAll: true})
+}
+
+func (r *PostgresRepository) CompleteIngestion(ctx context.Context, input service.CompleteIngestionRecord) (service.ProcessingJob, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("begin complete ingestion transaction", err)
+	}
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	var attempts int32
+	var status string
+	if err := tx.QueryRow(ctx, `
+SELECT attempts, status
+FROM processing_jobs
+WHERE id = $1
+  AND document_id = $2
+FOR UPDATE`,
+		input.JobID,
+		input.DocumentID,
+	).Scan(&attempts, &status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return service.ProcessingJob{}, service.ErrNotFound
+		}
+		return service.ProcessingJob{}, wrapPostgresError("lock processing job for completion", err)
+	}
+	if input.ExpectedAttempts != nil && (attempts != *input.ExpectedAttempts || status != service.JobStatusRunning) {
+		return service.ProcessingJob{}, service.ErrConflict
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM document_chunks WHERE document_id = $1`, input.DocumentID); err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("delete old document chunks", err)
+	}
+	for _, chunk := range input.Chunks {
+		metadata, err := json.Marshal(chunk.Metadata)
+		if err != nil {
+			return service.ProcessingJob{}, fmt.Errorf("marshal chunk metadata: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+INSERT INTO document_chunks (
+  id, knowledge_base_id, document_id, chunk_index, section_path, content, token_count,
+  chunk_type, qdrant_point_id, embedding_provider, embedding_model, embedding_dimension,
+  metadata, created_at
+) VALUES (
+  $1, $2, $3, $4, $5, $6, $7,
+  $8, $9, $10, $11, $12,
+  $13, $14
+)`,
+			chunk.ID,
+			chunk.KnowledgeBaseID,
+			chunk.DocumentID,
+			chunk.ChunkIndex,
+			pgTextPtr(chunk.SectionPath),
+			chunk.Content,
+			pgInt4Ptr(chunk.TokenCount),
+			pgTextPtr(chunk.ChunkType),
+			pgTextPtr(chunk.QdrantPointID),
+			pgTextPtr(chunk.EmbeddingProvider),
+			pgTextPtr(chunk.EmbeddingModel),
+			pgInt4Ptr(chunk.EmbeddingDimension),
+			metadata,
+			pgTime(chunk.CreatedAt),
+		); err != nil {
+			return service.ProcessingJob{}, wrapPostgresError("insert document chunk", err)
+		}
+	}
+	docRows, err := tx.Exec(ctx, `
+UPDATE knowledge_documents
+SET status = 'ready',
+    error_code = NULL,
+    error_message = NULL,
+    parser_backend = COALESCE($2, parser_backend),
+    updated_at = $3
+WHERE id = $1
+  AND deleted_at IS NULL`,
+		input.DocumentID,
+		pgTextPtr(input.ParserBackend),
+		pgTime(input.UpdatedAt),
+	)
+	if err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("mark document ready", err)
+	}
+	if docRows.RowsAffected() == 0 {
+		return service.ProcessingJob{}, service.ErrNotFound
+	}
+	row, err := r.scanProcessingJob(ctx, tx.QueryRow(ctx, `
+UPDATE processing_jobs
+SET status = 'succeeded',
+    current_stage = 'completed',
+    progress_percent = 100,
+    message = 'document ingestion completed',
+    error_code = NULL,
+    error_message = NULL,
+    finished_at = $2,
+    updated_at = $3
+WHERE id = $1
+  AND document_id = $4
+  AND ($5::int4 IS NULL OR (attempts = $5 AND status = 'running'))
+RETURNING id, knowledge_base_id, document_id, job_type, status, current_stage, progress_percent,
+          message, error_code, error_message, attempts, max_attempts, started_at, finished_at, created_at, updated_at`,
+		input.JobID,
+		pgTime(input.FinishedAt),
+		pgTime(input.UpdatedAt),
+		input.DocumentID,
+		pgInt4Ptr(input.ExpectedAttempts),
+	))
+	if errors.Is(err, pgx.ErrNoRows) && input.ExpectedAttempts != nil {
+		return service.ProcessingJob{}, service.ErrConflict
+	}
+	if err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("mark processing job succeeded", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return service.ProcessingJob{}, wrapPostgresError("commit complete ingestion transaction", err)
+	}
+	return processingJobFromRow(row), nil
+}
+
+func (r *PostgresRepository) ListChunks(ctx context.Context, documentID string, scope service.AccessScope, page service.PageInput) (service.ChunkList, error) {
+	limit, offset := limitOffset(page)
+	var count int64
+	if err := r.pool.QueryRow(ctx, `
+SELECT COUNT(*)::bigint
+FROM document_chunks c
+JOIN knowledge_documents d ON d.id = c.document_id
+JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
+WHERE c.document_id = $1
+  AND d.deleted_at IS NULL
+  AND kb.deleted_at IS NULL
+  AND ($2::boolean OR d.created_by = $3 OR kb.created_by = $3)`,
+		documentID,
+		scope.CanReadAll,
+		scope.UserID,
+	).Scan(&count); err != nil {
+		return service.ChunkList{}, wrapPostgresError("count document chunks", err)
+	}
+	if count == 0 {
+		if _, err := r.GetDocument(ctx, documentID, scope); err != nil {
+			return service.ChunkList{}, err
+		}
+	}
+	rows, err := r.pool.Query(ctx, `
+SELECT c.id, c.knowledge_base_id, c.document_id, c.chunk_index, c.section_path, c.content,
+       c.token_count, c.chunk_type, c.qdrant_point_id, c.embedding_provider, c.embedding_model,
+       c.embedding_dimension, c.metadata, c.created_at
+FROM document_chunks c
+JOIN knowledge_documents d ON d.id = c.document_id
+JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id
+WHERE c.document_id = $1
+  AND d.deleted_at IS NULL
+  AND kb.deleted_at IS NULL
+  AND ($2::boolean OR d.created_by = $3 OR kb.created_by = $3)
+ORDER BY c.chunk_index ASC, c.id ASC
+LIMIT $4 OFFSET $5`,
+		documentID,
+		scope.CanReadAll,
+		scope.UserID,
+		limit,
+		offset,
+	)
+	if err != nil {
+		return service.ChunkList{}, wrapPostgresError("list document chunks", err)
+	}
+	defer rows.Close()
+
+	items := []service.DocumentChunk{}
+	for rows.Next() {
+		chunk, err := scanDocumentChunk(rows)
+		if err != nil {
+			return service.ChunkList{}, wrapPostgresError("scan document chunk", err)
+		}
+		items = append(items, chunk)
+	}
+	if err := rows.Err(); err != nil {
+		return service.ChunkList{}, wrapPostgresError("iterate document chunks", err)
+	}
+	return service.ChunkList{
+		Items: items,
+		Page: service.Page{
+			Page:     page.Page,
+			PageSize: page.PageSize,
+			Total:    count,
+		},
+	}, nil
 }
 
 func limitOffset(page service.PageInput) (int32, int32) {
@@ -660,6 +984,76 @@ func processingJobFromRow(row sqlc.ProcessingJob) service.ProcessingJob {
 	}
 }
 
+func (r *PostgresRepository) scanProcessingJob(ctx context.Context, row pgx.Row) (sqlc.ProcessingJob, error) {
+	var job sqlc.ProcessingJob
+	err := row.Scan(
+		&job.ID,
+		&job.KnowledgeBaseID,
+		&job.DocumentID,
+		&job.JobType,
+		&job.Status,
+		&job.CurrentStage,
+		&job.ProgressPercent,
+		&job.Message,
+		&job.ErrorCode,
+		&job.ErrorMessage,
+		&job.Attempts,
+		&job.MaxAttempts,
+		&job.StartedAt,
+		&job.FinishedAt,
+		&job.CreatedAt,
+		&job.UpdatedAt,
+	)
+	if err != nil {
+		return sqlc.ProcessingJob{}, err
+	}
+	return job, ctx.Err()
+}
+
+func scanDocumentChunk(rows pgx.Rows) (service.DocumentChunk, error) {
+	var chunk service.DocumentChunk
+	var sectionPath pgtype.Text
+	var tokenCount pgtype.Int4
+	var chunkType pgtype.Text
+	var qdrantPointID pgtype.Text
+	var embeddingProvider pgtype.Text
+	var embeddingModel pgtype.Text
+	var embeddingDimension pgtype.Int4
+	var metadata []byte
+	var createdAt pgtype.Timestamptz
+	if err := rows.Scan(
+		&chunk.ID,
+		&chunk.KnowledgeBaseID,
+		&chunk.DocumentID,
+		&chunk.ChunkIndex,
+		&sectionPath,
+		&chunk.Content,
+		&tokenCount,
+		&chunkType,
+		&qdrantPointID,
+		&embeddingProvider,
+		&embeddingModel,
+		&embeddingDimension,
+		&metadata,
+		&createdAt,
+	); err != nil {
+		return service.DocumentChunk{}, err
+	}
+	chunk.SectionPath = textPtr(sectionPath)
+	chunk.TokenCount = int32Ptr(tokenCount)
+	chunk.ChunkType = textPtr(chunkType)
+	chunk.QdrantPointID = textPtr(qdrantPointID)
+	chunk.EmbeddingProvider = textPtr(embeddingProvider)
+	chunk.EmbeddingModel = textPtr(embeddingModel)
+	chunk.EmbeddingDimension = int32Ptr(embeddingDimension)
+	chunk.Metadata = map[string]any{}
+	if len(metadata) > 0 {
+		_ = json.Unmarshal(metadata, &chunk.Metadata)
+	}
+	chunk.CreatedAt = createdAt.Time
+	return chunk, nil
+}
+
 func wrapPostgresError(operation string, err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return service.ErrNotFound
@@ -694,6 +1088,14 @@ func int64Ptr(value pgtype.Int8) *int64 {
 	return &number
 }
 
+func int32Ptr(value pgtype.Int4) *int32 {
+	if !value.Valid {
+		return nil
+	}
+	number := value.Int32
+	return &number
+}
+
 func timePtr(value pgtype.Timestamptz) *time.Time {
 	if !value.Valid {
 		return nil
@@ -708,4 +1110,25 @@ func pgTime(value time.Time) pgtype.Timestamptz {
 
 func pgInt8(value int64) pgtype.Int8 {
 	return pgtype.Int8{Int64: value, Valid: value >= 0}
+}
+
+func pgTextPtr(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func pgInt4Ptr(value *int32) pgtype.Int4 {
+	if value == nil {
+		return pgtype.Int4{}
+	}
+	return pgtype.Int4{Int32: *value, Valid: true}
+}
+
+func pgTimePtr(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: *value, Valid: true}
 }
