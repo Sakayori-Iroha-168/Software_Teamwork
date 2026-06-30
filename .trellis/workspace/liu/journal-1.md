@@ -205,3 +205,69 @@ Fixed PR review findings by redacting sensitive operation-log string values, avo
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: File MinIO storage adapter
+
+**Date**: 2026-06-30
+**Task**: File MinIO storage adapter
+**Branch**: `L1nggTeam/feat/file-minio-storage`
+
+### Summary
+
+Implemented File Service MinIO object-store adapter, runtime configuration, tests, and documentation/spec alignment for issue #154.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a64c973` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 8: File MinIO storage self-check
+
+**Date**: 2026-06-30
+**Task**: File MinIO storage self-check
+**Branch**: `L1nggTeam/feat/file-minio-storage`
+
+### Summary
+
+Rechecked issue #154 acceptance, ran FILE_STORAGE_BACKEND=local HTTP smoke, and recorded the smoke result in File implementation docs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `add1229` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
