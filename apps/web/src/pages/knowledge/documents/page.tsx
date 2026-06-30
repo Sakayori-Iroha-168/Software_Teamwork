@@ -28,6 +28,7 @@ import {
 import { Input } from '@/components/ui/input'
 import {
   formatGatewayCapabilityError,
+  getGatewayCapabilityIssue,
   useDeleteDocument,
   useDocuments,
   useKnowledgeBases,
@@ -263,6 +264,7 @@ export function KnowledgeDocumentsPage({
   const totalPages = data ? Math.max(1, Math.ceil(data.page.total / PAGE_SIZE)) : 1
   const showPagination = totalPages > 1
   const isEmpty = !isLoading && !isError && data && data.items.length === 0
+  const documentListIssue = isError ? getGatewayCapabilityIssue(error, '文档列表') : null
 
   // ── Filtered items (client-side keyword search) ──
 
@@ -492,10 +494,14 @@ export function KnowledgeDocumentsPage({
               重试
             </Button>
           }
-          description={error instanceof Error ? error.message : '未知错误'}
+          description={documentListIssue?.description ?? '未知错误'}
           size="compact"
-          title="加载文档列表失败"
-          variant="error"
+          title={documentListIssue?.title ?? '加载文档列表失败'}
+          variant={
+            documentListIssue?.kind === 'forbidden'
+              ? 'forbidden'
+              : (documentListIssue?.variant ?? 'error')
+          }
         />
       )}
 
