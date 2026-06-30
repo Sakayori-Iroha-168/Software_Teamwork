@@ -244,37 +244,49 @@ func (s *ReportGenerationService) executeContentGeneration(ctx context.Context, 
 			}
 			return ReportGenerationExecutionResult{}, err
 		}
-		nextVersion, err := s.nextSectionVersion(ctx, section)
-		if err != nil {
-			return ReportGenerationExecutionResult{}, err
-		}
-		section.Content = generated.Content
-		section.Tables = generated.Tables
-		section.GenerationStatus = JobStatusSucceeded
-		section.ContentSource = ContentSourceAI
-		section.ManualEdited = false
-		section.Version = nextVersion
-		section.LastJobID = payload.JobID
 		now := s.clock()
-		section.GeneratedAt = &now
-		section.UpdatedAt = now
-		updated, err := s.repo.UpdateReportSection(ctx, section)
-		if err != nil {
-			return ReportGenerationExecutionResult{}, dependencyError("update generated report section", err)
-		}
-		if _, err := s.repo.CreateReportSectionVersion(ctx, ReportSectionVersion{
-			ID:        newID(),
-			ReportID:  report.ID,
-			SectionID: updated.ID,
-			Version:   nextVersion,
-			Source:    ContentSourceAI,
-			Content:   updated.Content,
-			Tables:    updated.Tables,
-			JobID:     payload.JobID,
-			CreatedBy: payload.UserID,
-			CreatedAt: now,
+		beforeGeneratedWrite := section
+		var updated ReportSection
+		if err := s.repo.WithinGenerationTx(ctx, func(txRepo ReportGenerationRepository) error {
+			existingVersions, err := txRepo.ListReportSectionVersions(ctx, section.ID)
+			if err != nil {
+				return dependencyError("list report section versions", err)
+			}
+			nextVersion := nextReportSectionVersion(section, existingVersions)
+			section.Content = generated.Content
+			section.Tables = generated.Tables
+			section.GenerationStatus = JobStatusSucceeded
+			section.ContentSource = ContentSourceAI
+			section.ManualEdited = false
+			section.Version = nextVersion
+			section.LastJobID = payload.JobID
+			section.GeneratedAt = &now
+			section.UpdatedAt = now
+			updated, err = txRepo.UpdateReportSection(ctx, section)
+			if err != nil {
+				return dependencyError("update generated report section", err)
+			}
+			if _, err := txRepo.CreateReportSectionVersion(ctx, ReportSectionVersion{
+				ID:        newID(),
+				ReportID:  report.ID,
+				SectionID: updated.ID,
+				Version:   nextVersion,
+				Source:    ContentSourceAI,
+				Content:   updated.Content,
+				Tables:    updated.Tables,
+				JobID:     payload.JobID,
+				CreatedBy: payload.UserID,
+				CreatedAt: now,
+			}); err != nil {
+				return dependencyError("create report section version", err)
+			}
+			return nil
 		}); err != nil {
-			return ReportGenerationExecutionResult{}, dependencyError("create report section version", err)
+			failed := beforeGeneratedWrite
+			failed.GenerationStatus = JobStatusFailed
+			failed.UpdatedAt = s.clock()
+			_, _ = s.repo.UpdateReportSection(ctx, failed)
+			return ReportGenerationExecutionResult{}, err
 		}
 		completed++
 		_ = s.repo.UpdateReportJobProgress(ctx, payload.JobID, completed, total)
@@ -297,11 +309,13 @@ func preserveManualEdits(job ReportJob) bool {
 	if !ok {
 		return true
 	}
-	value, ok := options["preserveManualEdits"].(bool)
-	if !ok {
-		return true
+	for _, key := range []string{"preserveUserEdits", "preserveManualEdits"} {
+		value, ok := options[key].(bool)
+		if ok && !value {
+			return false
+		}
 	}
-	return value
+	return true
 }
 
 func (s *ReportGenerationService) safeSettings(ctx context.Context) (ReportSettings, error) {
@@ -391,23 +405,6 @@ func createSectionSkeletons(ctx context.Context, repo ReportGenerationRepository
 		return nil
 	}
 	return createNodes(outline.Sections, "")
-}
-
-func (s *ReportGenerationService) nextSectionVersion(ctx context.Context, section ReportSection) (int, error) {
-	existing, err := s.repo.ListReportSectionVersions(ctx, section.ID)
-	if err != nil {
-		return 0, dependencyError("list report section versions", err)
-	}
-	next := section.Version + 1
-	if next <= 1 {
-		next = 1
-	}
-	for _, version := range existing {
-		if version.Version >= next {
-			next = version.Version + 1
-		}
-	}
-	return next, nil
 }
 
 func (s *ReportGenerationService) recordEvent(ctx context.Context, reportID, jobID, eventType, message string) error {

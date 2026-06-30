@@ -594,10 +594,36 @@ func (s *ReportService) UpdateSection(ctx context.Context, reqCtx RequestContext
 		return ReportSection{}, NewError(CodeConflict, "section content generation is in progress", nil)
 	}
 
-	section = applySectionUpdate(section, input, s.now())
-	updated, err := s.repo.UpdateReportSection(ctx, section)
+	contentChanged := sectionUpdateChangesContent(input)
+	now := s.now()
+	var updated ReportSection
+	err = s.repo.WithinTx(ctx, func(txRepo ReportRepository) error {
+		nextVersion := section.Version + 1
+		if contentChanged {
+			existing, err := txRepo.ListReportSectionVersions(ctx, sectionID)
+			if err != nil {
+				return dependencyError("list report section versions", err)
+			}
+			nextVersion = nextReportSectionVersion(section, existing)
+		}
+		candidate := applySectionUpdate(section, input, now)
+		if contentChanged {
+			candidate.Version = nextVersion
+		}
+		var err error
+		updated, err = txRepo.UpdateReportSection(ctx, candidate)
+		if err != nil {
+			return mapRepositoryReadError(err, "report section not found")
+		}
+		if contentChanged {
+			if err := createManualSectionVersionSnapshot(ctx, txRepo, updated, reqCtx.UserID, now); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return ReportSection{}, mapRepositoryReadError(err, "report section not found")
+		return ReportSection{}, err
 	}
 	recordOperationIfSupported(ctx, s.repo, OperationLog{
 		OperatorID:      reqCtx.UserID,
@@ -673,13 +699,30 @@ func (s *ReportService) SaveSections(ctx context.Context, reqCtx RequestContext,
 			if section.GenerationStatus == JobStatusRunning {
 				return NewError(CodeConflict, "section content generation is in progress", nil)
 			}
+			contentChanged := saveSectionChangesContent(item)
+			nextVersion := section.Version + 1
+			if contentChanged {
+				existingVersions, err := txRepo.ListReportSectionVersions(ctx, sectionID)
+				if err != nil {
+					return dependencyError("list report section versions", err)
+				}
+				nextVersion = nextReportSectionVersion(section, existingVersions)
+			}
 			section = applySectionSave(section, item, s.now())
+			if contentChanged {
+				section.Version = nextVersion
+			}
 			if err := validateSectionParent(reportID, section, byID); err != nil {
 				return err
 			}
 			updated, err := txRepo.UpdateReportSection(ctx, section)
 			if err != nil {
 				return mapRepositoryReadError(err, "report section not found")
+			}
+			if contentChanged {
+				if err := createManualSectionVersionSnapshot(ctx, txRepo, updated, reqCtx.UserID, updated.UpdatedAt); err != nil {
+					return err
+				}
 			}
 			byID[updated.ID] = updated
 			for i, existingSection := range existing {
@@ -898,6 +941,45 @@ func stringPtrValue(value *string) string {
 	return *value
 }
 
+func sectionUpdateChangesContent(input UpdateSectionInput) bool {
+	return input.Content != nil || input.Tables != nil
+}
+
+func saveSectionChangesContent(input SaveSectionInput) bool {
+	return input.Content != nil || input.Tables != nil
+}
+
+func nextReportSectionVersion(section ReportSection, existing []ReportSectionVersion) int {
+	next := section.Version + 1
+	if next <= 1 {
+		next = 1
+	}
+	for _, version := range existing {
+		if version.Version >= next {
+			next = version.Version + 1
+		}
+	}
+	return next
+}
+
+func createManualSectionVersionSnapshot(ctx context.Context, repo ReportRepository, section ReportSection, userID string, createdAt time.Time) error {
+	_, err := repo.CreateReportSectionVersion(ctx, ReportSectionVersion{
+		ID:        newID(),
+		ReportID:  section.ReportID,
+		SectionID: section.ID,
+		Version:   section.Version,
+		Source:    ContentSourceManual,
+		Content:   section.Content,
+		Tables:    section.Tables,
+		CreatedBy: userID,
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		return mapRepositoryReadError(err, "create report section version failed")
+	}
+	return nil
+}
+
 // --- Section versions ---
 
 func (s *ReportService) ListSectionVersions(ctx context.Context, reqCtx RequestContext, reportID, sectionID string) ([]ReportSectionVersion, error) {
@@ -919,6 +1001,9 @@ func (s *ReportService) CreateSectionVersion(ctx context.Context, reqCtx Request
 	if input.Source != ContentSourceManual && input.Source != ContentSourceAI {
 		return ReportSectionVersion{}, ValidationError(map[string]string{"source": "source must be manual or ai"})
 	}
+	if section.GenerationStatus == JobStatusRunning {
+		return ReportSectionVersion{}, NewError(CodeConflict, "section content generation is in progress", nil)
+	}
 
 	content := section.Content
 	if input.Content != nil {
@@ -929,32 +1014,52 @@ func (s *ReportService) CreateSectionVersion(ctx context.Context, reqCtx Request
 		tables = *input.Tables
 	}
 
-	existing, err := s.repo.ListReportSectionVersions(ctx, sectionID)
-	if err != nil {
-		return ReportSectionVersion{}, dependencyError("list report section versions", err)
-	}
-	nextVersion := 1
-	for _, version := range existing {
-		if version.Version >= nextVersion {
-			nextVersion = version.Version + 1
+	now := s.now()
+	var created ReportSectionVersion
+	err = s.repo.WithinTx(ctx, func(txRepo ReportRepository) error {
+		existing, err := txRepo.ListReportSectionVersions(ctx, sectionID)
+		if err != nil {
+			return dependencyError("list report section versions", err)
 		}
-	}
-
-	version := ReportSectionVersion{
-		ID:           newID(),
-		ReportID:     reportID,
-		SectionID:    sectionID,
-		Version:      nextVersion,
-		Source:       input.Source,
-		Content:      content,
-		Tables:       tables,
-		Requirements: input.Requirements,
-		CreatedBy:    reqCtx.UserID,
-		CreatedAt:    s.now(),
-	}
-	created, err := s.repo.CreateReportSectionVersion(ctx, version)
+		nextVersion := nextReportSectionVersion(section, existing)
+		version := ReportSectionVersion{
+			ID:           newID(),
+			ReportID:     reportID,
+			SectionID:    sectionID,
+			Version:      nextVersion,
+			Source:       input.Source,
+			Content:      content,
+			Tables:       tables,
+			Requirements: input.Requirements,
+			CreatedBy:    reqCtx.UserID,
+			CreatedAt:    now,
+		}
+		created, err = txRepo.CreateReportSectionVersion(ctx, version)
+		if err != nil {
+			return mapRepositoryReadError(err, "create report section version failed")
+		}
+		current := section
+		current.Content = content
+		current.Tables = tables
+		current.Version = nextVersion
+		current.UpdatedAt = now
+		switch input.Source {
+		case ContentSourceAI:
+			current.ContentSource = ContentSourceAI
+			current.ManualEdited = false
+			current.GenerationStatus = JobStatusSucceeded
+			current.GeneratedAt = &now
+		case ContentSourceManual:
+			current.ContentSource = ContentSourceManual
+			current.ManualEdited = true
+		}
+		if _, err := txRepo.UpdateReportSection(ctx, current); err != nil {
+			return mapRepositoryReadError(err, "report section not found")
+		}
+		return nil
+	})
 	if err != nil {
-		return ReportSectionVersion{}, mapRepositoryReadError(err, "create report section version failed")
+		return ReportSectionVersion{}, err
 	}
 	recordOperationIfSupported(ctx, s.repo, OperationLog{
 		OperatorID:      reqCtx.UserID,

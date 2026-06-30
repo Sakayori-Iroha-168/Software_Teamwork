@@ -714,6 +714,98 @@ API creates report_job -> asynq task id is stored for correlation -> worker upda
 outline generation -> parse AI response outside transaction -> transaction inserts current outline + skeletons -> rollback all on failure
 ```
 
+## Scenario: Document Section Version Current Switch
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing Document report section version creation, manual
+  section edit snapshotting, or section-regeneration overwrite behavior.
+- Applies to `services/document/internal/service/report_service.go`,
+  `services/document/internal/service/report_generation_service.go`,
+  `services/document/internal/http/reports.go`,
+  `services/document/internal/repository/reports.go`, and the matching Document
+  and Gateway OpenAPI section-version schemas.
+
+### 2. Signatures
+
+- HTTP route: `POST /reports/{reportId}/sections/{sectionId}/versions`.
+- Request fields: `source` (`manual` or `ai`), optional `requirements`,
+  optional `content`, optional `tables`.
+- Response fields: `id`, `reportId`, `sectionId`, `version`, `source`,
+  optional `content`, optional `tables`, optional `jobId`, `createdAt`.
+- Durable tables: `report_sections` and `report_section_versions`.
+
+### 3. Contracts
+
+- `report_sections.version` is the current section version reference unless a
+  future reviewed migration adds `current_version_id`.
+- Creating a section version must insert `report_section_versions` and switch
+  the current `report_sections` content/tables/version/source flags in the same
+  `ReportRepository.WithinTx` operation.
+- The next version number must be greater than both `ReportSection.version` and
+  every existing `ReportSectionVersion.version`.
+- Manual content or table edits through section save/update paths must create a
+  `manual` section-version snapshot in the same transaction as the current
+  section update.
+- AI generation may call the model outside the database transaction, but the
+  final generated content update plus `report_section_versions` insert must run
+  in one short `WithinGenerationTx` operation.
+- Manual edit preservation defaults to true. `preserveUserEdits=false` is the
+  public option; `preserveManualEdits=false` remains a backward-compatible
+  alias. Only an explicit false value may overwrite manual edits.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required response / behavior |
+| --- | --- |
+| `source` is not `manual` or `ai` | `400 validation_error` |
+| Target section belongs to another report | `404 not_found` |
+| Target section has `generation_status = running` | `409 conflict`; do not create a version |
+| Version insert succeeds but current-section switch fails | Roll back inserted version and return typed dependency/not-found error |
+| AI generated content update succeeds but version insert fails | Roll back the generated content switch; mark the section failed best-effort |
+| Manual edit changes only metadata | Do not create a new section version |
+
+### 5. Good/Base/Bad Cases
+
+- Good: `CreateSectionVersion` creates version 4, updates
+  `report_sections.version=4`, and returns the same version in one transaction.
+- Base: a manual metadata-only title/numbering save updates the current section
+  without adding a history row.
+- Bad: inserting `report_section_versions` and returning success while
+  `report_sections.version` still points at the previous content.
+
+### 6. Tests Required
+
+- Service tests for conflict while generation is running.
+- Service tests for version creation plus current-section switch in one
+  transaction.
+- Rollback tests where current-section update fails after version insertion.
+- Manual edit snapshot tests for single-section update and bulk save.
+- Generation tests for default preserve behavior, explicit
+  `preserveUserEdits=false`, and rollback when version insertion fails.
+- HTTP tests that assert `source`, `requirements`, `content`, and `tables` are
+  passed through to the service and returned in the response DTO.
+- OpenAPI parse/schema checks that Document and Gateway section-version source
+  enums and table field names stay aligned.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```text
+POST /sections/{id}/versions -> insert report_section_versions(version=3) -> return 201
+report_sections.version remains 2
+```
+
+#### Correct
+
+```text
+POST /sections/{id}/versions -> transaction:
+  insert report_section_versions(version=3)
+  update report_sections.content/tables/version/source
+return 201 after commit
+```
+
 ## Scenario: Document Initial Report Defaults Seed
 
 ### 1. Scope / Trigger
