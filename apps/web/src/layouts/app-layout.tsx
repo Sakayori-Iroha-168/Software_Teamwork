@@ -103,7 +103,9 @@ export function AppLayout({ children }: PropsWithChildren) {
         const newLeft = elRect.left - parentRect.left
         const newWidth = elRect.width
         setSliderStyle((prev) =>
-          prev.left === newLeft && prev.width === newWidth ? prev : { left: newLeft, width: newWidth },
+          prev.left === newLeft && prev.width === newWidth
+            ? prev
+            : { left: newLeft, width: newWidth },
         )
       }
     })

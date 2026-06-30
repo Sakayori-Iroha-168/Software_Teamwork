@@ -211,8 +211,17 @@ export function ReportGeneratePage() {
       typeQuery.isError ||
       templateQuery.isError ||
       materialQuery.isError ||
-      !typeQuery.data?.length,
-    [typeQuery.isError, templateQuery.isError, materialQuery.isError, typeQuery.data],
+      !typeQuery.data?.length ||
+      !templateQuery.data?.items?.length ||
+      !materialQuery.data?.items?.length,
+    [
+      typeQuery.isError,
+      templateQuery.isError,
+      materialQuery.isError,
+      typeQuery.data,
+      templateQuery.data,
+      materialQuery.data,
+    ],
   )
 
   useEffect(() => {
