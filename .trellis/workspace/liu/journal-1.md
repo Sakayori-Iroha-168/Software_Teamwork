@@ -370,3 +370,36 @@ Added a public frontend readiness proposal that classifies F-001 to F-012 by L1/
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: S-020 readiness evidence self-check
+
+**Date**: 2026-06-30
+**Task**: S-020 readiness evidence self-check
+**Branch**: `Special/docs/frontend-readiness-task-plan`
+
+### Summary
+
+Re-read issue #264 and strengthened the public proposal with the missing authoritative references and explicit backend readiness evidence for F-014, F-015, F-016, and S-022.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b6ac21` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
