@@ -193,14 +193,10 @@ func (c *KnowledgeToolClient) searchKnowledge(ctx context.Context, arguments jso
 		return toolFailure("retrieval_failed", "knowledge retrieval service failed"), nil
 	}
 
-	// Generate sanitized summary
+	// Generate sanitized summary with size limits at structure level
 	summary := generateSearchSummary(results)
 	
-	// Truncate if too large
-	if len(summary) > maxKnowledgeResultSize {
-		summary = truncateUTF8(summary, maxKnowledgeResultSize)
-	}
-
+	// No byte-level truncation - structure-level limits ensure valid JSON
 	return agent.ToolResult{Content: summary}, nil
 }
 

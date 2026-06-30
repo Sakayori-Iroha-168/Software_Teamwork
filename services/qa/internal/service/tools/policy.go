@@ -38,10 +38,10 @@ func NewPolicy(cfg PolicyConfig) (*Policy, error) {
 }
 
 // IsAllowed checks if a tool is in the whitelist.
-// If the whitelist is empty, all tools are allowed (default behavior).
+// Empty whitelist means no tools are allowed (secure default).
 func (p *Policy) IsAllowed(toolName string) bool {
 	if len(p.enabledTools) == 0 {
-		return true
+		return false
 	}
 	_, ok := p.enabledTools[toolName]
 	return ok

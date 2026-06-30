@@ -362,7 +362,7 @@ func (s *ConfigService) LoadRuntimeConfiguration(ctx context.Context) (RuntimeCo
 		servers = append(servers, *s.bootstrap.MCPServer)
 	}
 	agentConfig := qaConfig.Agent
-	if qaConfig.ID == "" && len(agentConfig.EnabledToolNames) == 0 {
+	if len(agentConfig.EnabledToolNames) == 0 {
 		agentConfig.EnabledToolNames = []string{"search_knowledge"}
 	}
 	return RuntimeConfiguration{
