@@ -104,6 +104,7 @@ Override host ports in `deploy/.env`.
 | `DOCUMENT_FILE_SERVICE_URL` | document | yes | Internal File Service URL. |
 | `DOCUMENT_AI_GATEWAY_URL` | document | yes | Internal AI Gateway base URL. |
 | `DOCUMENT_AI_GATEWAY_PROFILE_ID` | document | yes | Seeded placeholder profile id, `default-chat`. |
+| `DOCUMENT_AI_GATEWAY_SERVICE_TOKEN` | document | yes | Local service token for AI Gateway internal profile APIs. |
 | `AI_GATEWAY_DATABASE_URL` | ai-gateway | yes | AI Gateway PostgreSQL DSN. |
 | `AI_GATEWAY_SERVICE_TOKEN_HASHES` | ai-gateway | yes | SHA-256 hashes for allowed service tokens. |
 | `AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF` | ai-gateway | yes | Local encryption key reference placeholder. |

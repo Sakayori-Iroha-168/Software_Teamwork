@@ -281,6 +281,7 @@ services:
       DOCUMENT_FILE_SERVICE_URL: http://file:8082
       DOCUMENT_AI_GATEWAY_URL: http://ai-gateway:8086
       DOCUMENT_AI_GATEWAY_PROFILE_ID: default-chat
+      DOCUMENT_AI_GATEWAY_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-dev-internal-service-token-change-me}
       DOCUMENT_PANDOC_PATH: pandoc
       DOCUMENT_LIBREOFFICE_PATH: soffice
     ports:
