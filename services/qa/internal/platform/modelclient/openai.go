@@ -1,6 +1,7 @@
 package modelclient
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/httpclient"
@@ -24,15 +26,24 @@ type Config struct {
 	TokenHeader string
 	Model       string
 	ProfileID   string
-	MaxTokens   int
-	Timeout     time.Duration
+	// ParallelToolCalls controls the transport flag sent to AI Gateway. QA
+	// still owns tool execution policy and may execute returned calls
+	// sequentially even when a provider can return more than one call.
+	ParallelToolCalls bool
+	MaxTokens         int
+	Timeout           time.Duration
+	// Stream opts into AI Gateway server-sent events. Function calling itself
+	// does not require streaming, so the default request path remains JSON.
+	Stream bool
 }
 
 type Client struct {
 	endpoint  string
 	model     string
 	profileID string
+	parallel  bool
 	maxTokens int
+	stream    bool
 	http      *http.Client
 }
 
@@ -54,7 +65,9 @@ func New(cfg Config) (*Client, error) {
 		endpoint:  cfg.Endpoint,
 		model:     cfg.Model,
 		profileID: cfg.ProfileID,
+		parallel:  cfg.ParallelToolCalls,
 		maxTokens: cfg.MaxTokens,
+		stream:    cfg.Stream,
 		http: &http.Client{
 			Timeout: cfg.Timeout,
 			Transport: httpclient.HeaderTransport{
@@ -66,13 +79,23 @@ func New(cfg Config) (*Client, error) {
 }
 
 type completionRequest struct {
-	Model      string                 `json:"model"`
-	ProfileID  string                 `json:"profile_id,omitempty"`
-	Messages   []agent.Message        `json:"messages"`
-	Tools      []agent.ToolDefinition `json:"tools,omitempty"`
-	ToolChoice string                 `json:"tool_choice,omitempty"`
-	MaxTokens  int                    `json:"max_tokens"`
-	Stream     bool                   `json:"stream"`
+	Model             string                 `json:"model"`
+	ProfileID         string                 `json:"profile_id,omitempty"`
+	Messages          []agent.Message        `json:"messages"`
+	Tools             []agent.ToolDefinition `json:"tools,omitempty"`
+	ToolChoice        any                    `json:"tool_choice,omitempty"`
+	ParallelToolCalls bool                   `json:"parallel_tool_calls"`
+	MaxTokens         int                    `json:"max_tokens"`
+	Stream            bool                   `json:"stream"`
+}
+
+type usagePayload struct {
+	PromptTokens            int `json:"prompt_tokens"`
+	CompletionTokens        int `json:"completion_tokens"`
+	TotalTokens             int `json:"total_tokens"`
+	CompletionTokensDetails struct {
+		ReasoningTokens int `json:"reasoning_tokens"`
+	} `json:"completion_tokens_details"`
 }
 
 type completionResponse struct {
@@ -80,24 +103,18 @@ type completionResponse struct {
 		Message      agent.Message `json:"message"`
 		FinishReason string        `json:"finish_reason"`
 	} `json:"choices"`
-	Usage struct {
-		PromptTokens            int `json:"prompt_tokens"`
-		CompletionTokens        int `json:"completion_tokens"`
-		TotalTokens             int `json:"total_tokens"`
-		CompletionTokensDetails struct {
-			ReasoningTokens int `json:"reasoning_tokens"`
-		} `json:"completion_tokens_details"`
-	} `json:"usage"`
+	Usage usagePayload `json:"usage"`
 }
 
 func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools []agent.ToolDefinition) (agent.Completion, error) {
 	payload := completionRequest{
-		Model:     c.model,
-		ProfileID: c.profileID,
-		Messages:  messages,
-		Tools:     tools,
-		MaxTokens: c.maxTokens,
-		Stream:    false,
+		Model:             c.model,
+		ProfileID:         c.profileID,
+		Messages:          messages,
+		Tools:             tools,
+		ParallelToolCalls: c.parallel,
+		MaxTokens:         c.maxTokens,
+		Stream:            c.stream,
 	}
 	if len(tools) > 0 {
 		payload.ToolChoice = "auto"
@@ -111,20 +128,29 @@ func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools [
 		return agent.Completion{}, fmt.Errorf("create completion request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Accept", "application/json")
+	if payload.Stream {
+		request.Header.Set("Accept", "text/event-stream")
+	} else {
+		request.Header.Set("Accept", "application/json")
+	}
 	request.Header.Set("X-Caller-Service", "qa")
 	if requestID := service.RequestIDFromContext(ctx); requestID != "" {
 		request.Header.Set("X-Request-Id", requestID)
 	}
+	if userID := service.UserIDFromContext(ctx); userID != "" {
+		request.Header.Set("X-User-Id", userID)
+	}
 
 	response, err := c.http.Do(request)
 	if err != nil {
-		return agent.Completion{}, fmt.Errorf("call AI gateway: %w", err)
+		return agent.Completion{}, service.NewError(service.CodeDependency, "AI gateway request failed", fmt.Errorf("call AI gateway: %w", err))
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return agent.Completion{}, fmt.Errorf("AI gateway returned HTTP %d", response.StatusCode)
+		return agent.Completion{}, normalizeGatewayError(response.StatusCode, response.Body)
+	}
+	if isEventStream(response.Header.Get("Content-Type")) {
+		return decodeStreamCompletion(response.Body)
 	}
 	limited := io.LimitReader(response.Body, maxResponseBytes+1)
 	data, err := io.ReadAll(limited)
@@ -142,19 +168,131 @@ func (c *Client) Complete(ctx context.Context, messages []agent.Message, tools [
 		return agent.Completion{}, errors.New("completion response has no choices")
 	}
 	choice := decoded.Choices[0]
-	reasoningTokens := decoded.Usage.CompletionTokensDetails.ReasoningTokens
-	completionTokens := decoded.Usage.CompletionTokens
+	return agent.Completion{Message: choice.Message, FinishReason: choice.FinishReason, Usage: tokenUsageFromPayload(decoded.Usage)}, nil
+}
+
+func normalizeGatewayError(statusCode int, body io.Reader) error {
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, 4096))
+	if statusCode == http.StatusBadRequest {
+		return service.NewError(service.CodeValidation, "AI gateway rejected model request", fmt.Errorf("AI gateway returned HTTP %d", statusCode))
+	}
+	return service.NewError(service.CodeDependency, "AI gateway request failed", fmt.Errorf("AI gateway returned HTTP %d", statusCode))
+}
+
+type streamChunk struct {
+	Choices []struct {
+		Delta        agent.Message `json:"delta"`
+		FinishReason string        `json:"finish_reason"`
+	} `json:"choices"`
+	Usage usagePayload `json:"usage"`
+}
+
+type toolCallAccumulator struct {
+	calls   []agent.ToolCall
+	byIndex map[int]int
+}
+
+func newToolCallAccumulator() *toolCallAccumulator {
+	return &toolCallAccumulator{byIndex: map[int]int{}}
+}
+
+func (a *toolCallAccumulator) apply(deltas []agent.ToolCall) {
+	for _, delta := range deltas {
+		index := len(a.calls)
+		if delta.Index != nil {
+			index = *delta.Index
+		}
+		position, ok := a.byIndex[index]
+		if !ok {
+			position = len(a.calls)
+			a.byIndex[index] = position
+			idx := index
+			a.calls = append(a.calls, agent.ToolCall{Index: &idx})
+		}
+		call := &a.calls[position]
+		if delta.ID != "" {
+			call.ID = delta.ID
+		}
+		if delta.Type != "" {
+			call.Type = delta.Type
+		}
+		call.Function.Name += delta.Function.Name
+		call.Function.Arguments += delta.Function.Arguments
+	}
+}
+
+func isEventStream(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
+}
+
+func decodeStreamCompletion(body io.Reader) (agent.Completion, error) {
+	message := agent.Message{Role: agent.RoleAssistant}
+	accumulator := newToolCallAccumulator()
+	var finishReason string
+	var usage agent.TokenUsage
+	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxResponseBytes)
+	var totalBytes int
+	sawDone := false
+	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		totalBytes += len(line) + 1
+		if totalBytes > maxResponseBytes {
+			return agent.Completion{}, errors.New("completion response exceeds size limit")
+		}
+		if len(line) == 0 || bytes.HasPrefix(line, []byte(":")) {
+			continue
+		}
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(bytes.TrimPrefix(line, []byte("data:")))
+		if bytes.Equal(payload, []byte("[DONE]")) {
+			sawDone = true
+			break
+		}
+		var chunk streamChunk
+		if err := json.Unmarshal(payload, &chunk); err != nil {
+			return agent.Completion{}, fmt.Errorf("decode completion stream chunk: %w", err)
+		}
+		for _, choice := range chunk.Choices {
+			if choice.Delta.Role != "" {
+				message.Role = choice.Delta.Role
+			}
+			message.Content += choice.Delta.Content
+			accumulator.apply(choice.Delta.ToolCalls)
+			if choice.FinishReason != "" {
+				finishReason = choice.FinishReason
+			}
+		}
+		if chunk.Usage.TotalTokens > 0 || chunk.Usage.PromptTokens > 0 || chunk.Usage.CompletionTokens > 0 {
+			usage = tokenUsageFromPayload(chunk.Usage)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return agent.Completion{}, fmt.Errorf("read completion stream: %w", err)
+	}
+	if !sawDone {
+		return agent.Completion{}, service.NewError(service.CodeDependency, "AI gateway request failed", errors.New("AI gateway stream ended before done"))
+	}
+	message.ToolCalls = accumulator.calls
+	return agent.Completion{Message: message, FinishReason: finishReason, Usage: usage}, nil
+}
+
+func tokenUsageFromPayload(payload usagePayload) agent.TokenUsage {
+	reasoningTokens := payload.CompletionTokensDetails.ReasoningTokens
+	completionTokens := payload.CompletionTokens
 	if reasoningTokens > 0 && completionTokens >= reasoningTokens {
 		completionTokens -= reasoningTokens
 	}
 	usage := agent.TokenUsage{
-		PromptTokens:     decoded.Usage.PromptTokens,
+		PromptTokens:     payload.PromptTokens,
 		CompletionTokens: completionTokens,
 		ReasoningTokens:  reasoningTokens,
-		TotalTokens:      decoded.Usage.TotalTokens,
+		TotalTokens:      payload.TotalTokens,
 	}
 	if usage.TotalTokens == 0 {
 		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens + usage.ReasoningTokens
 	}
-	return agent.Completion{Message: choice.Message, FinishReason: choice.FinishReason, Usage: usage}, nil
+	return usage
 }

@@ -35,9 +35,11 @@ type Config struct {
 	AIGatewayURL         string
 	AIGatewayToken       string
 	AIGatewayTokenHeader string
+	AIGatewayProfileID   string
 	ModelID              string
 	ModelTimeout         time.Duration
 	MaxTokens            int
+	AIGatewayStream      bool
 
 	MCPTransport         string
 	MCPServerCommand     string
@@ -72,6 +74,7 @@ func Load() (Config, error) {
 		AIGatewayURL:         envOr("AI_GATEWAY_URL", defaultAIGatewayURL),
 		AIGatewayToken:       aiGatewayToken,
 		AIGatewayTokenHeader: envOr("AI_GATEWAY_TOKEN_HEADER", defaultAIGatewayTokenHeader),
+		AIGatewayProfileID:   strings.TrimSpace(os.Getenv("AI_GATEWAY_PROFILE_ID")),
 		ModelID:              envOr("MODEL_ID", "deepseek-chat"),
 		MCPTransport:         strings.ToLower(envOr("MCP_TRANSPORT", TransportDisabled)),
 		MCPServerCommand:     strings.TrimSpace(os.Getenv("MCP_SERVER_COMMAND")),
@@ -119,6 +122,9 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	if cfg.SettingsOpen, err = boolEnv("QA_SETTINGS_OPEN", false); err != nil {
+		return Config{}, err
+	}
+	if cfg.AIGatewayStream, err = boolEnv("AI_GATEWAY_STREAM", false); err != nil {
 		return Config{}, err
 	}
 

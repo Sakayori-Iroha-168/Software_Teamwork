@@ -124,7 +124,8 @@ func (r *fakeRepository) SaveModelInvocation(ctx context.Context, _ string, invo
 }
 
 type fakeAgentRunner struct {
-	input []agent.Message
+	input  []agent.Message
+	userID string
 }
 type blockingAgentRunner struct{ started chan struct{} }
 
@@ -164,7 +165,8 @@ func (r cancelBeforeCompletedObserverRunner) RunWithObserver(_ context.Context, 
 	return agent.Result{Final: final, Messages: append(input, final), Iterations: 1}, nil
 }
 
-func (r *fakeAgentRunner) RunWithObserver(_ context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
+func (r *fakeAgentRunner) RunWithObserver(ctx context.Context, input []agent.Message, observer agent.Observer) (agent.Result, error) {
+	r.userID = UserIDFromContext(ctx)
 	r.input = append([]agent.Message(nil), input...)
 	observer(agent.Event{Type: agent.EventModelStarted, Iteration: 1})
 	observer(agent.Event{Type: agent.EventModelCompleted, Iteration: 1, Usage: agent.TokenUsage{PromptTokens: 10, CompletionTokens: 4, TotalTokens: 14}})
@@ -242,6 +244,9 @@ func TestAskPersistsConversationMessagesAndDisplayableSteps(t *testing.T) {
 	}
 	if len(runner.input) < 2 || runner.input[0].Role != agent.RoleSystem || runner.input[len(runner.input)-1].Content != "锅炉检查要求" {
 		t.Fatalf("unexpected agent input: %+v", runner.input)
+	}
+	if runner.userID != "user-id" {
+		t.Fatalf("agent context userID = %q", runner.userID)
 	}
 }
 
@@ -454,6 +459,39 @@ func TestAskPersistsModelFailureReason(t *testing.T) {
 	}
 	if len(repository.invocations) != 1 || repository.invocations[0].Status != "failed" || repository.invocations[0].ErrorMessage != "answer generation failed" {
 		t.Fatalf("invocations=%+v", repository.invocations)
+	}
+}
+
+func TestAskPreservesGatewayValidationErrorClassification(t *testing.T) {
+	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active"}}
+	modelErr := NewError(CodeValidation, "AI gateway rejected model request", errors.New("AI gateway returned HTTP 400"))
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: errorAgentRunner{err: modelErr}, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []ProgressEvent
+	_, err = qa.Ask(context.Background(), "user-id", "conversation-id", AskInput{Message: "hello"}, func(event ProgressEvent) {
+		events = append(events, event)
+	})
+	appErr, ok := Classify(err)
+	if !ok || appErr.Code != CodeValidation || appErr.Message != "AI gateway rejected model request" {
+		t.Fatalf("error=%v, want validation_error", err)
+	}
+	if repository.finalization.Status != "failed" || repository.finalization.TerminationReason != string(CodeValidation) {
+		t.Fatalf("finalization=%+v", repository.finalization)
+	}
+	if len(repository.invocations) != 1 || repository.invocations[0].ErrorCode != string(CodeValidation) {
+		t.Fatalf("invocations=%+v", repository.invocations)
+	}
+	if len(repository.savedEvents) == 0 {
+		t.Fatal("expected saved stream events")
+	}
+	last := repository.savedEvents[len(repository.savedEvents)-1]
+	if last.EventType != "error" || last.Payload["code"] != string(CodeValidation) {
+		t.Fatalf("last saved event=%+v, want validation error event", last)
+	}
+	if len(events) == 0 || events[len(events)-1].Payload["code"] != string(CodeValidation) {
+		t.Fatalf("observed events=%+v, want validation error event", events)
 	}
 }
 
