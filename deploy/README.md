@@ -145,9 +145,12 @@ problems. Compose health checks identify container-level dependency failures.
 - optional AI model profile placeholders `default-chat`, `default-embedding`,
   and `default-rerank`.
 
-The AI profiles are enabled local placeholders for readiness checks. They do
-not contain real provider credentials, so model invocation still requires
-operators to configure a real provider key.
+The AI profiles are enabled local placeholders for readiness checks and include
+fake encrypted provider credentials. They are not real API keys, so model
+invocation still requires operators to configure a real provider key.
+Their default provider URL is `http://host.docker.internal:11434/v1`; Compose
+maps that hostname to the Docker host for Linux engines with
+`host.docker.internal:host-gateway`.
 
 ## Request Id Troubleshooting
 
@@ -171,7 +174,7 @@ same id in the owner service logs.
 | `auth /readyz` returns `postgres unavailable` | Auth migration or PostgreSQL failed | `docker compose logs postgres migrate-auth auth` |
 | Knowledge upload returns `502 dependency_error` | File Service or Redis queue unavailable | `docker compose logs file knowledge redis` |
 | Document readyz returns dependency error | Document DB migration failed or DB is unreachable | `docker compose logs migrate-document document postgres` |
-| QA message call fails on model invocation | Optional `ai-gateway` profile not running or no real provider credential | `docker compose --profile ai ps`, `docker compose logs ai-gateway qa` |
+| QA message call fails on model invocation | Optional `ai-gateway` profile not running, fake local credential still in use, or host provider is not listening on `host.docker.internal:11434` | `docker compose --profile ai ps`, `docker compose logs ai-gateway qa` |
 | MinIO bucket missing | `minio-init` did not complete | `docker compose logs minio minio-init` |
 | Host port conflict | Another local process uses a default port | Change the matching `*_PORT` in `deploy/.env` |
 

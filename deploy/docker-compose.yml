@@ -313,6 +313,8 @@ services:
       AI_GATEWAY_SECRET_MODE: encrypted_column
       AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF: ${AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY_REF:-local-demo-key-v1}
       AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY: ${AI_GATEWAY_CREDENTIAL_ENCRYPTION_KEY:-local-demo-credential-key-change-me}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${AI_GATEWAY_HTTP_PORT:-8086}:8086"
     depends_on:
