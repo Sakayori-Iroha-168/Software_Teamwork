@@ -811,3 +811,36 @@ Addressed latest Codex review by allowing answer.completed to use messageId as t
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: F-016 citation and EOF follow-up
+
+**Date**: 2026-06-30
+**Task**: F-016 citation and EOF follow-up
+**Branch**: `Frontend/feat/qa-capability-aligned-chat`
+
+### Summary
+
+Addressed latest Codex review by accepting citation snapshots without messageId and treating normal EOF without answer.completed as a fatal stream error.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `67c538d` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

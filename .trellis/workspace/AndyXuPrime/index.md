@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-06-30
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~813 | Active |
+| `journal-1.md` | ~846 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-06-30 | F-016 citation and EOF follow-up | `67c538d` | `Frontend/feat/qa-capability-aligned-chat` |
 | 23 | 2026-06-30 | F-016 completed message id fallback | `519668d` | `Frontend/feat/qa-capability-aligned-chat` |
 | 22 | 2026-06-30 | F-016 rebase onto develop 92d3afc | `8798068` | `Frontend/feat/qa-capability-aligned-chat` |
 | 21 | 2026-06-30 | F-016 rebase onto develop 6db45e7 | `e481f1e` | `Frontend/feat/qa-capability-aligned-chat` |
