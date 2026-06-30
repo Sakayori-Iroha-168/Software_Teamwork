@@ -152,6 +152,108 @@ func TestListConversationsNormalizesDocumentedOptions(t *testing.T) {
 	}
 }
 
+func TestExtractCitationsFromMessagesAssignsStableNumbers(t *testing.T) {
+	score := 0.92
+	toolResult := `{"results":[{"documentId":"doc-1","documentName":"手册.pdf","chunkId":"chunk-1","knowledgeBaseId":"kb-1","quoteText":"变压器应保持清洁","score":0.92}]}`
+	messages := []agent.Message{
+		{Role: agent.RoleSystem, Content: "system"},
+		{Role: agent.RoleUser, Content: "question"},
+		{Role: agent.RoleAssistant, ToolCalls: []agent.ToolCall{{ID: "call-1", Function: agent.FunctionCall{Name: "search_knowledge"}}}},
+		{Role: agent.RoleTool, Name: "search_knowledge", Content: toolResult},
+		{Role: agent.RoleAssistant, Content: "answer"},
+	}
+	citations := extractCitationsFromMessages(messages)
+	if len(citations) != 1 {
+		t.Fatalf("got %d citations, want 1", len(citations))
+	}
+	c := citations[0]
+	if c.CitationNo != 1 || c.DocumentID != "doc-1" || c.Text != "变压器应保持清洁" || c.Score == nil || *c.Score != score {
+		t.Fatalf("unexpected citation: %+v", c)
+	}
+	if c.Metadata == nil {
+		t.Fatal("metadata must not be nil")
+	}
+}
+
+func TestExtractCitationsFromMessagesHandlesPrefixedToolName(t *testing.T) {
+	toolResult := `{"results":[{"documentId":"doc-2","documentName":"规范.pdf","chunkId":"c2","contentPreview":"预览文本"}]}`
+	messages := []agent.Message{
+		{Role: agent.RoleTool, Name: "knowledge__search_knowledge", Content: toolResult},
+	}
+	citations := extractCitationsFromMessages(messages)
+	if len(citations) != 1 || citations[0].Text != "预览文本" {
+		t.Fatalf("unexpected citations from prefixed tool: %+v", citations)
+	}
+}
+
+func TestExtractCitationsFromMessagesAssignsSequentialNumbers(t *testing.T) {
+	result1 := `{"results":[{"documentId":"d1","quoteText":"first"},{"documentId":"d2","quoteText":"second"}]}`
+	result2 := `{"results":[{"documentId":"d3","quoteText":"third"}]}`
+	messages := []agent.Message{
+		{Role: agent.RoleTool, Name: "search_knowledge", Content: result1},
+		{Role: agent.RoleTool, Name: "search_knowledge", Content: result2},
+	}
+	citations := extractCitationsFromMessages(messages)
+	if len(citations) != 3 {
+		t.Fatalf("got %d citations, want 3", len(citations))
+	}
+	for i, c := range citations {
+		if c.CitationNo != i+1 {
+			t.Errorf("citation %d: citationNo=%d, want %d", i, c.CitationNo, i+1)
+		}
+	}
+}
+
+func TestAskSavesCitationsFromSearchKnowledgeToolResult(t *testing.T) {
+	now := time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC)
+	repo := &fakeRepository{conversation: Conversation{ID: "conv-id", OwnerUserID: "u", Title: "新对话", Status: "active", CreatedAt: now, UpdatedAt: now}}
+	toolResult := `{"results":[{"documentId":"doc-1","documentName":"手册.pdf","chunkId":"c1","quoteText":"关键片段","knowledgeBaseId":"kb-1"}]}`
+	runner := &fakeAgentRunnerWithToolResult{toolResult: toolResult}
+	qa, err := NewQAService(repo, fakeRuntimeProvider{runner: runner, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa.now = func() time.Time { return now }
+	saver := &fakeCitationSaver{}
+	qa.SetCitationSaver(saver)
+	result, err := qa.Ask(context.Background(), "u", "conv-id", AskInput{Message: "巡检要点"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Citations) != 1 {
+		t.Fatalf("expected 1 citation in result, got %d", len(result.Citations))
+	}
+	if saver.savedMessageID == "" || len(saver.saved) != 1 {
+		t.Fatalf("citation not saved: messageID=%q saved=%d", saver.savedMessageID, len(saver.saved))
+	}
+	if saver.saved[0].CitationNo != 1 || saver.saved[0].DocumentID != "doc-1" {
+		t.Fatalf("unexpected saved citation: %+v", saver.saved[0])
+	}
+}
+
+type fakeCitationSaver struct {
+	savedMessageID string
+	saved          []Citation
+}
+
+func (s *fakeCitationSaver) SaveCitations(_ context.Context, messageID string, citations []Citation) ([]Citation, error) {
+	s.savedMessageID = messageID
+	s.saved = append([]Citation(nil), citations...)
+	return citations, nil
+}
+
+// fakeAgentRunnerWithToolResult produces an agent result that includes a
+// search_knowledge tool call and result message, simulating knowledge retrieval.
+type fakeAgentRunnerWithToolResult struct {
+	toolResult string
+}
+
+func (r *fakeAgentRunnerWithToolResult) RunWithObserver(_ context.Context, input []agent.Message, _ agent.Observer) (agent.Result, error) {
+	toolMsg := agent.Message{Role: agent.RoleTool, Name: "search_knowledge", Content: r.toolResult}
+	final := agent.Message{Role: agent.RoleAssistant, Content: "回答内容"}
+	return agent.Result{Final: final, Messages: append(append([]agent.Message(nil), input...), toolMsg, final), Iterations: 1}, nil
+}
+
 func TestCancelActiveRunCancelsAgentAndPersistsCancelledMessage(t *testing.T) {
 	now := time.Date(2026, 6, 29, 10, 0, 0, 0, time.UTC)
 	repository := &fakeRepository{conversation: Conversation{ID: "conversation-id", OwnerUserID: "user-id", Status: "active", CreatedAt: now, UpdatedAt: now}}

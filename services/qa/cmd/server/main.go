@@ -94,6 +94,7 @@ func main() {
 		logger.Error("resource service initialization failed", "service", "qa", "error", err)
 		os.Exit(1)
 	}
+	qaService.SetCitationSaver(resourceService)
 	handler, err := httpapi.NewServer(qaService, settingsService, resourceService, httpapi.Config{
 		MaxRequestBytes: cfg.MaxRequestBytes, Logger: logger, Ready: repo.Ping,
 		AdminUserIDs: cfg.AdminUserIDs, SettingsOpen: cfg.SettingsOpen,
