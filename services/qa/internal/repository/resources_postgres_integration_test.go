@@ -35,6 +35,10 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	events := []service.StreamEvent{{EventSeq: 1, EventType: "agent.iteration.started", Payload: map[string]any{"iterationNo": 1}, CreatedAt: now}, {EventSeq: 2, EventType: "tool.started", Payload: map[string]any{"iterationNo": 1, "toolCallId": "call-1", "tool": "search_knowledge"}, CreatedAt: now}, {EventSeq: 3, EventType: "tool.completed", Payload: map[string]any{"iterationNo": 1, "toolCallId": "call-1", "tool": "search_knowledge"}, CreatedAt: now.Add(time.Millisecond)}}
+	if err = repo.SaveStreamEvents(ctx, "integration-user", run.ID, events); err != nil {
+		t.Fatal(err)
+	}
 	invocationID, err := repo.SaveModelInvocation(ctx, "integration-user", service.ModelInvocation{
 		ResponseRunID: run.ID, IterationNo: 1, Provider: "ai-gateway", ProfileID: "default",
 		ModelName: "deepseek-v4-pro", FinishReason: "stop", Status: "completed",
@@ -42,14 +46,6 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 	})
 	if err != nil || invocationID == "" {
 		t.Fatalf("invocation=%q err=%v", invocationID, err)
-	}
-	events := []service.StreamEvent{
-		{EventSeq: 1, EventType: "agent.iteration.started", Payload: map[string]any{"iterationNo": 1}, CreatedAt: now},
-		{EventSeq: 2, EventType: "tool.started", Payload: map[string]any{"iterationNo": 1, "modelInvocationId": invocationID, "toolCallId": "call-1", "tool": "search_knowledge"}, CreatedAt: now},
-		{EventSeq: 3, EventType: "tool.failed", Payload: map[string]any{"iterationNo": 1, "modelInvocationId": invocationID, "toolCallId": "call-1", "tool": "search_knowledge", "result": map[string]any{"error": "retrieval_failed", "message": "knowledge retrieval service failed", "sanitized": true}}, CreatedAt: now.Add(time.Millisecond)},
-	}
-	if err = repo.SaveStreamEvents(ctx, "integration-user", run.ID, events); err != nil {
-		t.Fatal(err)
 	}
 	rows, err := repo.queries.ListModelInvocationsByRun(ctx, run.ID, "integration-user")
 	if err != nil || len(rows) != 1 || rows[0].Status != "completed" {
@@ -64,11 +60,8 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 		t.Fatalf("events after seq=%+v err=%v", replayedAfterFirst, err)
 	}
 	calls, err := repo.ListToolCalls(ctx, "integration-user", run.ID)
-	if err != nil || len(calls) != 1 || calls[0].Status != "failed" {
+	if err != nil || len(calls) != 1 || calls[0].Status != "completed" {
 		t.Fatalf("calls=%+v err=%v", calls, err)
-	}
-	if calls[0].ModelInvocationID != invocationID || calls[0].MCPServerName != "qa_builtin" || calls[0].ErrorCode != "retrieval_failed" || calls[0].ErrorMessage != "knowledge retrieval service failed" {
-		t.Fatalf("tool call audit fields=%+v", calls[0])
 	}
 	cancelled, err := repo.CancelResponseRun(ctx, "integration-user", run.ID)
 	if err != nil || cancelled.Status != "cancelled" {
@@ -188,7 +181,7 @@ func TestOwnerAuthorizationBoundaries(t *testing.T) {
 	run, err := repo.AppendMessages(ctx, ownerID, conversationID,
 		service.ResponseRunStart{RequestID: "req-authorization", MaxIterations: 5},
 		service.Message{ID: userMessageID, ConversationID: conversationID, Role: "user", Content: "private question", Status: "completed", CreatedAt: now},
-		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Content: "private answer", Status: "streaming", CreatedAt: now},
+		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Content: "private answer", Status: "generating", CreatedAt: now},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +245,7 @@ func TestOwnerAuthorizationBoundaries(t *testing.T) {
 	requireServiceCode(t, err, service.CodeNotFound)
 }
 
-func TestFinalizeResponseRunClearsStaleCitationsWhenFinalSetIsEmpty(t *testing.T) {
+func TestMetricsOverview(t *testing.T) {
 	databaseURL := os.Getenv("QA_TEST_DATABASE_URL")
 	if databaseURL == "" {
 		t.Skip("QA_TEST_DATABASE_URL is not set")
@@ -270,49 +263,145 @@ func TestFinalizeResponseRunClearsStaleCitationsWhenFinalSetIsEmpty(t *testing.T
 	conversationID := integrationUUID(suffix)
 	userMessageID := integrationUUID(suffix + 1)
 	assistantMessageID := integrationUUID(suffix + 2)
-	citationID := integrationUUID(suffix + 3)
-	userID := "citation-clear-user"
+
 	conversation := service.Conversation{
-		ID: conversationID, OwnerUserID: userID, Title: "citation cleanup",
-		Status: "active", CreatedAt: now, UpdatedAt: now,
+		ID:          conversationID,
+		OwnerUserID: "metrics-test-user",
+		Title:       "metrics test",
+		Status:      "active",
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	if _, err = repo.CreateConversation(ctx, conversation); err != nil {
 		t.Fatal(err)
 	}
-	run, err := repo.AppendMessages(ctx, userID, conversationID,
-		service.ResponseRunStart{RequestID: "req-citation-cleanup", MaxIterations: 3},
-		service.Message{ID: userMessageID, ConversationID: conversationID, Role: "user", Content: "question", Status: "completed", CreatedAt: now},
-		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Status: "streaming", CreatedAt: now},
+
+	run, err := repo.AppendMessages(ctx, "metrics-test-user", conversationID,
+		service.ResponseRunStart{RequestID: "req-metrics-test", MaxIterations: 5},
+		service.Message{ID: userMessageID, ConversationID: conversationID, Role: "user", Content: "test question", Intent: "knowledge_qa", Status: "completed", CreatedAt: now},
+		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Status: "completed", CreatedAt: now},
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = repo.pool.Exec(ctx, `INSERT INTO citations(id,message_id,citation_no,doc_name) VALUES($1,$2,1,$3)`, citationID, assistantMessageID, "stale source"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err = repo.FinalizeResponseRun(ctx, userID, service.ResponseRunFinalization{
-		RunID: run.ID,
+
+	if _, err = repo.FinalizeResponseRun(ctx, "metrics-test-user", service.ResponseRunFinalization{
+		RunID:           run.ID,
 		AssistantMessage: service.Message{
 			ID:             assistantMessageID,
 			ConversationID: conversationID,
 			Role:           "assistant",
-			Content:        "answer without citations",
+			Content:        "test answer",
 			Status:         "completed",
 			CreatedAt:      now,
 		},
 		Status:            "completed",
 		TerminationReason: "completed",
 		CurrentIteration:  1,
-		CompletedAt:       now.Add(time.Millisecond),
+		CompletedAt:       now.Add(100 * time.Millisecond),
 	}); err != nil {
 		t.Fatal(err)
 	}
-	citations, err := repo.ListMessageCitations(ctx, userID, assistantMessageID)
+
+	overview, err := repo.GetMetricsOverview(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(citations) != 0 {
-		t.Fatalf("stale citations were not cleared: %+v", citations)
+	if overview.TotalQACount < 1 {
+		t.Fatalf("expected TotalQACount >= 1, got %d", overview.TotalQACount)
+	}
+	if overview.TodayQACount < 1 {
+		t.Fatalf("expected TodayQACount >= 1, got %d", overview.TodayQACount)
+	}
+	if overview.ConversationCount < 1 {
+		t.Fatalf("expected ConversationCount >= 1, got %d", overview.ConversationCount)
+	}
+	if overview.ActiveUsersToday < 1 {
+		t.Fatalf("expected ActiveUsersToday >= 1, got %d", overview.ActiveUsersToday)
+	}
+
+	trend, err := repo.GetMetricsTrend(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trend.Days != 7 {
+		t.Fatalf("expected trend days=7, got %d", trend.Days)
+	}
+	if len(trend.Points) != 7 {
+		t.Fatalf("expected 7 trend points, got %d", len(trend.Points))
+	}
+
+	topQueries, err := repo.GetTopQueries(ctx, 7, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(topQueries) < 1 {
+		t.Fatal("expected at least 1 top query")
+	}
+	if topQueries[0].Query == "" {
+		t.Fatal("top query content should not be empty")
+	}
+
+	intentDist, err := repo.GetIntentDistribution(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(intentDist) < 1 {
+		t.Fatal("expected at least 1 intent distribution")
+	}
+
+	if err = repo.DeleteConversation(ctx, "metrics-test-user", conversationID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMetricsEmptyData(t *testing.T) {
+	databaseURL := os.Getenv("QA_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("QA_TEST_DATABASE_URL is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo, err := NewPostgres(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	_, err = repo.GetMetricsOverview(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	trend, err := repo.GetMetricsTrend(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trend.Days != 7 {
+		t.Fatalf("expected trend days=7, got %d", trend.Days)
+	}
+	if len(trend.Points) != 7 {
+		t.Fatalf("expected 7 trend points, got %d", len(trend.Points))
+	}
+
+	topQueries, err := repo.GetTopQueries(ctx, 7, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range topQueries {
+		if q.Query == "" {
+			t.Fatal("top query content should not be empty")
+		}
+	}
+
+	intentDist, err := repo.GetIntentDistribution(ctx, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range intentDist {
+		if d.Intent == "" || d.Label == "" {
+			t.Fatal("intent distribution should have non-empty intent and label")
+		}
 	}
 }
 

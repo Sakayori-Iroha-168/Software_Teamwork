@@ -76,3 +76,50 @@ func TestCheckCitationSourcesPropagatesContextAndMapsVisibility(t *testing.T) {
 		t.Fatalf("paths were not checked: %+v", seen)
 	}
 }
+
+func TestGetStatsPropagatesTrustedContext(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/v1/stats" {
+			t.Errorf("path=%q", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("method=%q", r.Method)
+		}
+		for name, want := range map[string]string{"X-Service-Token": "service-token", "X-Caller-Service": "qa", "X-User-Id": "user-1", "X-Request-Id": "req-stats-test"} {
+			if got := r.Header.Get(name); got != want {
+				t.Errorf("%s=%q want %q", name, got, want)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"knowledgeBaseCount":10,"documentCount":100},"requestId":"req-stats-test"}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "service-token", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := service.WithRequestID(context.Background(), "req-stats-test")
+	stats, err := client.GetStats(ctx, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.KnowledgeBaseCount != 10 || stats.DocumentCount != 100 {
+		t.Fatalf("stats=%+v", stats)
+	}
+}
+
+func TestGetStatsReturnsErrorOnNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"error":{"code":"service_unavailable"}}`))
+	}))
+	defer server.Close()
+	client, err := New(server.URL, "service-token", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.GetStats(context.Background(), "user-1")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

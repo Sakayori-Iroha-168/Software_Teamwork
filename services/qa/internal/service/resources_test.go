@@ -90,15 +90,45 @@ func (r *resourceRepositoryStub) GetIntentDistribution(context.Context, int) ([]
 	return nil, nil
 }
 
+type metricsRepositoryStub struct {
+	resourceRepositoryStub
+	metricsOverview       MetricsOverview
+	metricsOverviewErr    error
+	metricsTrend          MetricsTrend
+	metricsTrendErr       error
+	topQueries            []TopQuery
+	topQueriesErr         error
+	intentDistribution    []IntentDistribution
+	intentDistributionErr error
+}
+
+func (r *metricsRepositoryStub) GetMetricsOverview(_ context.Context, days int) (MetricsOverview, error) {
+	return r.metricsOverview, r.metricsOverviewErr
+}
+func (r *metricsRepositoryStub) GetMetricsTrend(_ context.Context, days int) (MetricsTrend, error) {
+	return r.metricsTrend, r.metricsTrendErr
+}
+func (r *metricsRepositoryStub) GetTopQueries(_ context.Context, days, limit int) ([]TopQuery, error) {
+	return r.topQueries, r.topQueriesErr
+}
+func (r *metricsRepositoryStub) GetIntentDistribution(_ context.Context, days int) ([]IntentDistribution, error) {
+	return r.intentDistribution, r.intentDistributionErr
+}
+
 type knowledgeRetrieverStub struct {
 	input   RetrievalTestInput
 	results []RetrievalTestResult
 	err     error
+	stats   KnowledgeStats
 }
 
 func (r *knowledgeRetrieverStub) Retrieve(_ context.Context, _ string, input RetrievalTestInput) ([]RetrievalTestResult, error) {
 	r.input = input
 	return r.results, r.err
+}
+
+func (r *knowledgeRetrieverStub) GetStats(_ context.Context, _ string) (KnowledgeStats, error) {
+	return r.stats, nil
 }
 
 type llmTesterStub struct{}
@@ -436,3 +466,154 @@ func (resourceLLMTester) TestLLM(context.Context, RuntimeLLMConfig) (LLMConnecti
 type resourceCancellerStub struct{}
 
 func (resourceCancellerStub) CancelActiveRun(string) {}
+
+func TestGetMetricsOverview(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		metricsOverview: MetricsOverview{
+			TotalQACount:       100,
+			TodayQACount:       10,
+			ConversationCount:  50,
+			AvgLatencyMS:       200,
+			ActiveUsersToday:   5,
+			TotalQuestionCount: 100,
+		},
+	}
+	retriever := &knowledgeRetrieverStub{
+		stats: KnowledgeStats{KnowledgeBaseCount: 3, DocumentCount: 10},
+	}
+	resources, err := NewResourceService(repository, retriever, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetMetricsOverview(context.Background(), "user-1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TotalQACount != 100 || result.TodayQACount != 10 || result.ConversationCount != 50 {
+		t.Fatalf("metrics overview=%+v", result)
+	}
+	if result.KnowledgeBaseCount != 3 || result.DocumentCount != 10 {
+		t.Fatalf("expected knowledge stats in overview: %+v", result)
+	}
+}
+
+func TestGetMetricsOverviewEmptyData(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		metricsOverview: MetricsOverview{},
+	}
+	resources, err := NewResourceService(repository, &knowledgeRetrieverStub{}, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetMetricsOverview(context.Background(), "user-1", 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TotalQACount != 0 || result.TodayQACount != 0 {
+		t.Fatalf("expected zero metrics with empty data: %+v", result)
+	}
+}
+
+func TestGetMetricsTrend(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		metricsTrend: MetricsTrend{
+			Days: 7,
+			Points: []MetricsTrendPoint{
+				{Date: "2026-06-25", Count: 5, QuestionCount: 5},
+				{Date: "2026-06-26", Count: 8, QuestionCount: 8},
+			},
+		},
+	}
+	resources, err := NewResourceService(repository, &knowledgeRetrieverStub{}, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetMetricsTrend(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Days != 7 || len(result.Points) != 2 {
+		t.Fatalf("metrics trend=%+v", result)
+	}
+}
+
+func TestGetTopQueries(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		topQueries: []TopQuery{
+			{Query: "how to use", Count: 10, AvgLatencyMS: 150},
+			{Query: "what is", Count: 8, AvgLatencyMS: 120},
+		},
+	}
+	resources, err := NewResourceService(repository, &knowledgeRetrieverStub{}, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetTopQueries(context.Background(), 7, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 || result[0].Query != "how to use" {
+		t.Fatalf("top queries=%+v", result)
+	}
+}
+
+func TestGetTopQueriesEmptyData(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		topQueries: nil,
+	}
+	resources, err := NewResourceService(repository, &knowledgeRetrieverStub{}, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetTopQueries(context.Background(), 7, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected empty top queries: %+v", result)
+	}
+}
+
+func TestGetIntentDistribution(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		intentDistribution: []IntentDistribution{
+			{Intent: "knowledge_qa", Label: "知识问答", Count: 100, Percent: 70.5},
+			{Intent: "general_chat", Label: "一般对话", Count: 40, Percent: 28.6},
+		},
+	}
+	resources, err := NewResourceService(repository, &knowledgeRetrieverStub{}, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetIntentDistribution(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 2 || result[0].Intent != "knowledge_qa" {
+		t.Fatalf("intent distribution=%+v", result)
+	}
+}
+
+func TestGetIntentDistributionEmptyData(t *testing.T) {
+	repository := &metricsRepositoryStub{
+		intentDistribution: nil,
+	}
+	resources, err := NewResourceService(repository, &knowledgeRetrieverStub{}, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := resources.GetIntentDistribution(context.Background(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 0 {
+		t.Fatalf("expected empty intent distribution: %+v", result)
+	}
+}

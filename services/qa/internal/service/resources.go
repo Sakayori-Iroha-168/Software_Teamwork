@@ -361,6 +361,8 @@ type MetricsOverview struct {
 	ConversationCount  int   `json:"conversationCount"`
 	AvgLatencyMS       int64 `json:"avgLatencyMs"`
 	ActiveUsersToday   int   `json:"activeUsersToday"`
+	KnowledgeBaseCount int   `json:"knowledgeBaseCount"`
+	DocumentCount      int   `json:"documentCount"`
 }
 
 type MetricsTrendPoint struct {
@@ -369,8 +371,9 @@ type MetricsTrendPoint struct {
 	QuestionCount int    `json:"questionCount"`
 }
 type MetricsTrend struct {
-	Days   int                 `json:"days"`
-	Points []MetricsTrendPoint `json:"points"`
+	Days    int                 `json:"days"`
+	Points  []MetricsTrendPoint `json:"points"`
+	Trend30d []MetricsTrendPoint `json:"trend30d"`
 }
 type TopQuery struct {
 	Query        string    `json:"query"`
@@ -414,16 +417,26 @@ type CitationSourceChecker interface {
 	CheckCitationSources(context.Context, string, []string) (map[string]bool, error)
 }
 
+type KnowledgeStatsRetriever interface {
+	GetStats(context.Context, string) (KnowledgeStats, error)
+}
+
+type KnowledgeStats struct {
+	KnowledgeBaseCount int `json:"knowledgeBaseCount"`
+	DocumentCount      int `json:"documentCount"`
+}
+
 type ActiveRunCanceller interface{ CancelActiveRun(string) }
 
 type ResourceService struct {
-	repository    ResourceRepository
-	retriever     KnowledgeRetriever
-	sourceChecker CitationSourceChecker
-	llmTester     LLMConnectionTester
-	bootstrap     RuntimeLLMConfig
-	canceller     ActiveRunCanceller
-	now           func() time.Time
+	repository             ResourceRepository
+	retriever              KnowledgeRetriever
+	sourceChecker          CitationSourceChecker
+	knowledgeStatsRetriever KnowledgeStatsRetriever
+	llmTester              LLMConnectionTester
+	bootstrap              RuntimeLLMConfig
+	canceller              ActiveRunCanceller
+	now                    func() time.Time
 }
 
 func NewResourceService(repository ResourceRepository, retriever KnowledgeRetriever, tester LLMConnectionTester, bootstrap RuntimeLLMConfig, canceller ActiveRunCanceller) (*ResourceService, error) {
@@ -431,7 +444,8 @@ func NewResourceService(repository ResourceRepository, retriever KnowledgeRetrie
 		return nil, errors.New("resource repository, retriever, LLM tester and run canceller are required")
 	}
 	sourceChecker, _ := retriever.(CitationSourceChecker)
-	return &ResourceService{repository: repository, retriever: retriever, sourceChecker: sourceChecker, llmTester: tester, bootstrap: bootstrap, canceller: canceller, now: time.Now}, nil
+	knowledgeStatsRetriever, _ := retriever.(KnowledgeStatsRetriever)
+	return &ResourceService{repository: repository, retriever: retriever, sourceChecker: sourceChecker, knowledgeStatsRetriever: knowledgeStatsRetriever, llmTester: tester, bootstrap: bootstrap, canceller: canceller, now: time.Now}, nil
 }
 
 func (s *ResourceService) GetResponseRun(ctx context.Context, userID, id string) (ResponseRun, error) {
@@ -733,17 +747,59 @@ func validateRetrievalSettings(value RetrievalSettings) error {
 func (s *ResourceService) GetRetrievalTestRun(ctx context.Context, userID, id string) (RetrievalTestRun, error) {
 	return s.repository.GetRetrievalTestRun(ctx, userID, id)
 }
-func (s *ResourceService) GetMetricsOverview(ctx context.Context, days int) (MetricsOverview, error) {
-	return s.repository.GetMetricsOverview(ctx, days)
+func (s *ResourceService) GetMetricsOverview(ctx context.Context, userID string, days int) (MetricsOverview, error) {
+	overview, err := s.repository.GetMetricsOverview(ctx, days)
+	if err != nil {
+		return overview, err
+	}
+	if s.knowledgeStatsRetriever != nil {
+		stats, err := s.knowledgeStatsRetriever.GetStats(ctx, userID)
+		if err == nil {
+			overview.KnowledgeBaseCount = stats.KnowledgeBaseCount
+			overview.DocumentCount = stats.DocumentCount
+		}
+	}
+	return overview, nil
 }
 func (s *ResourceService) GetMetricsTrend(ctx context.Context, days int) (MetricsTrend, error) {
-	return s.repository.GetMetricsTrend(ctx, days)
+	trend, err := s.repository.GetMetricsTrend(ctx, days)
+	if err != nil {
+		return trend, err
+	}
+	if days == 30 {
+		trend.Trend30d = trend.Points
+	} else {
+		trend.Trend30d = []MetricsTrendPoint{}
+	}
+	return trend, nil
 }
 func (s *ResourceService) GetTopQueries(ctx context.Context, days, limit int) ([]TopQuery, error) {
 	return s.repository.GetTopQueries(ctx, days, limit)
 }
 func (s *ResourceService) GetIntentDistribution(ctx context.Context, days int) ([]IntentDistribution, error) {
-	return s.repository.GetIntentDistribution(ctx, days)
+	items, err := s.repository.GetIntentDistribution(ctx, days)
+	if err != nil {
+		return items, err
+	}
+	for i := range items {
+		items[i].Label = intentLabel(items[i].Intent)
+	}
+	return items, nil
+}
+
+func intentLabel(value string) string {
+	switch value {
+	case "knowledge_qa":
+		return "知识问答"
+	case "general_chat":
+		return "一般对话"
+	case "report_generation":
+		return "报告生成"
+	case "data_analysis":
+		return "数据分析"
+	default:
+		return "未知"
+	}
 }
 
 func validateLLMProfile(provider, profileID, model string, timeout int, temperature float64, maxTokens int) map[string]string {

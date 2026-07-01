@@ -127,7 +127,7 @@ func (f fakeResourceServiceWithCreate) CreateRetrievalTestRun(ctx context.Contex
 func (fakeResourceService) GetRetrievalTestRun(context.Context, string, string) (service.RetrievalTestRun, error) {
 	return service.RetrievalTestRun{}, nil
 }
-func (fakeResourceService) GetMetricsOverview(context.Context, int) (service.MetricsOverview, error) {
+func (fakeResourceService) GetMetricsOverview(context.Context, string, int) (service.MetricsOverview, error) {
 	return service.MetricsOverview{}, nil
 }
 func (fakeResourceService) GetMetricsTrend(context.Context, int) (service.MetricsTrend, error) {
@@ -613,6 +613,21 @@ func TestListEventsRequiresResponseRunId(t *testing.T) {
 	}
 }
 
+func TestMetricsOverviewRequiresSettingsPermission(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/overview", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
 func TestStreamIncludesCitationDeltaEvents(t *testing.T) {
 	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
 		observer(service.ProgressEvent{Type: "tool.completed", Sequence: 1, Payload: map[string]any{"tool": "search_knowledge"}})
@@ -639,6 +654,64 @@ func TestStreamIncludesCitationDeltaEvents(t *testing.T) {
 	}
 	if !strings.Contains(body, `"score":0.95`) {
 		t.Fatalf("missing score in citation.delta: %s", body)
+	}
+}
+
+func TestMetricsTrendRequiresSettingsPermission(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/trend", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestTopQueriesRequiresSettingsPermission(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/top-queries", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestIntentDistributionRequiresSettingsPermission(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/intent-distribution", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"forbidden"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestMetricsOverviewReturnsSuccessWithPermission(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/overview", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-User-Permissions", "qa:settings:read")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
 

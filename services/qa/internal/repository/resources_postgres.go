@@ -560,8 +560,11 @@ func (r *Postgres) GetMetricsOverview(ctx context.Context, days int) (service.Me
 	if days <= 0 {
 		days = 1
 	}
+	if days > 366 {
+		days = 366
+	}
 	var v service.MetricsOverview
-	err := r.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM messages WHERE role='user'),(SELECT count(*) FROM messages WHERE role='user' AND created_at>=current_date),(SELECT count(*) FROM conversations WHERE deleted_at IS NULL),(SELECT COALESCE(avg(latency_ms),0)::bigint FROM response_runs WHERE started_at>=now()-make_interval(days=>$1)),(SELECT count(DISTINCT external_user_id) FROM conversations WHERE created_at>=current_date)`, days).Scan(&v.TotalQACount, &v.TodayQACount, &v.ConversationCount, &v.AvgLatencyMS, &v.ActiveUsersToday)
+	err := r.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id WHERE c.deleted_at IS NULL),(SELECT count(*) FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id WHERE c.deleted_at IS NULL AND rr.completed_at>=current_date),(SELECT count(*) FROM conversations WHERE deleted_at IS NULL),(SELECT COALESCE(avg(rr.latency_ms),0)::bigint FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id WHERE c.deleted_at IS NULL AND rr.completed_at>=now()-make_interval(days=>$1)),(SELECT count(DISTINCT c.external_user_id) FROM conversations c WHERE c.deleted_at IS NULL AND c.created_at>=current_date)`, days).Scan(&v.TotalQACount, &v.TodayQACount, &v.ConversationCount, &v.AvgLatencyMS, &v.ActiveUsersToday)
 	v.TotalQuestionCount = v.TotalQACount
 	if err != nil {
 		return v, fmt.Errorf("get QA metrics overview: %w", err)
@@ -572,7 +575,10 @@ func (r *Postgres) GetMetricsTrend(ctx context.Context, days int) (service.Metri
 	if days <= 0 {
 		days = 30
 	}
-	rows, err := r.pool.Query(ctx, `WITH dates AS(SELECT generate_series(current_date-($1-1),current_date,'1 day')::date d) SELECT d::text,count(m.id) FROM dates LEFT JOIN messages m ON m.role='user' AND m.created_at>=d AND m.created_at<d+1 GROUP BY d ORDER BY d`, days)
+	if days > 366 {
+		days = 366
+	}
+	rows, err := r.pool.Query(ctx, `WITH dates AS(SELECT generate_series(current_date-($1-1),current_date,'1 day')::date d) SELECT d::text,count(rr.id) FROM dates LEFT JOIN (SELECT rr.* FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id AND c.deleted_at IS NULL) rr ON rr.completed_at>=d AND rr.completed_at<d+1 GROUP BY d ORDER BY d`, days)
 	if err != nil {
 		return service.MetricsTrend{}, err
 	}
@@ -592,10 +598,16 @@ func (r *Postgres) GetTopQueries(ctx context.Context, days, limit int) ([]servic
 	if days <= 0 {
 		days = 7
 	}
+	if days > 366 {
+		days = 366
+	}
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := r.pool.Query(ctx, `SELECT cb.content,count(*),COALESCE(avg(rr.latency_ms),0)::bigint,max(m.created_at) FROM messages m JOIN message_content_blocks cb ON cb.message_id=m.id AND cb.block_order=0 LEFT JOIN response_runs rr ON rr.user_message_id=m.id WHERE m.role='user' AND m.created_at>=now()-make_interval(days=>$1) GROUP BY cb.content ORDER BY count(*) DESC,max(m.created_at) DESC LIMIT $2`, days, limit)
+	if limit > 100 {
+		limit = 100
+	}
+	rows, err := r.pool.Query(ctx, `SELECT COALESCE(NULLIF(m.content_preview,''),left(mcb.content,80),'(untitled)'),count(*),COALESCE(avg(rr.latency_ms),0)::bigint,max(m.created_at) FROM messages m JOIN conversations c ON c.id=m.conversation_id AND c.deleted_at IS NULL LEFT JOIN response_runs rr ON rr.user_message_id=m.id LEFT JOIN message_content_blocks mcb ON mcb.message_id=m.id AND mcb.block_order=0 WHERE m.role='user' AND m.created_at>=now()-make_interval(days=>$1) GROUP BY COALESCE(NULLIF(m.content_preview,''),left(mcb.content,80),'(untitled)') ORDER BY count(*) DESC,max(m.created_at) DESC LIMIT $2`, days, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -614,7 +626,10 @@ func (r *Postgres) GetIntentDistribution(ctx context.Context, days int) ([]servi
 	if days <= 0 {
 		days = 7
 	}
-	rows, err := r.pool.Query(ctx, `SELECT COALESCE(intent,'unknown'),count(*) FROM messages WHERE role='user' AND created_at>=now()-make_interval(days=>$1) GROUP BY COALESCE(intent,'unknown') ORDER BY count(*) DESC`, days)
+	if days > 366 {
+		days = 366
+	}
+	rows, err := r.pool.Query(ctx, `SELECT COALESCE(rr.intent_type,m.intent,'unknown'),count(*) FROM response_runs rr JOIN conversations c ON c.id=rr.conversation_id AND c.deleted_at IS NULL LEFT JOIN messages m ON m.id=rr.user_message_id WHERE rr.completed_at>=now()-make_interval(days=>$1) GROUP BY COALESCE(rr.intent_type,m.intent,'unknown') ORDER BY count(*) DESC`, days)
 	if err != nil {
 		return nil, err
 	}
@@ -626,7 +641,6 @@ func (r *Postgres) GetIntentDistribution(ctx context.Context, days int) ([]servi
 		if err := rows.Scan(&v.Intent, &v.Count); err != nil {
 			return nil, err
 		}
-		v.Label = intentLabel(v.Intent)
 		total += v.Count
 		items = append(items, v)
 	}
@@ -636,18 +650,4 @@ func (r *Postgres) GetIntentDistribution(ctx context.Context, days int) ([]servi
 		}
 	}
 	return items, rows.Err()
-}
-func intentLabel(value string) string {
-	switch value {
-	case "knowledge_qa":
-		return "知识问答"
-	case "general_chat":
-		return "一般对话"
-	case "report_generation":
-		return "报告生成"
-	case "data_analysis":
-		return "数据分析"
-	default:
-		return "未知"
-	}
 }
