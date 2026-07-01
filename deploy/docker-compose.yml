@@ -101,6 +101,7 @@ services:
       dockerfile: Dockerfile
       args:
         IMAGE_REGISTRY_PREFIX: ${DOCKER_IMAGE_REGISTRY_PREFIX:-}
+        RAGFLOW_DEPS_IMAGE: ${RAGFLOW_DEPS_IMAGE:-infiniflow/ragflow_deps:51ce6aab}
     command: ["./entrypoint.sh", "--disable-taskexecutor"]
     environment:
       DB_TYPE: postgres
@@ -142,6 +143,7 @@ services:
       dockerfile: Dockerfile
       args:
         IMAGE_REGISTRY_PREFIX: ${DOCKER_IMAGE_REGISTRY_PREFIX:-}
+        RAGFLOW_DEPS_IMAGE: ${RAGFLOW_DEPS_IMAGE:-infiniflow/ragflow_deps:51ce6aab}
     command: ["./entrypoint.sh", "--disable-webserver", "--workers=${KNOWLEDGE_RUNTIME_WORKERS:-2}"]
     environment:
       DB_TYPE: postgres
@@ -286,6 +288,8 @@ services:
       migrate-knowledge:
         condition: service_completed_successfully
       migrate-document:
+        condition: service_completed_successfully
+      migrate-qa:
         condition: service_completed_successfully
     restart: "no"
 
