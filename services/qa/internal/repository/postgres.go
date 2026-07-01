@@ -536,6 +536,24 @@ func (r *Postgres) replaceCitations(ctx context.Context, tx pgx.Tx, runID, messa
 	return nil
 }
 
+func (r *Postgres) SaveCitations(ctx context.Context, userID, messageID string, citations []service.Citation) error {
+	if err := r.authorizeMessageForUser(ctx, userID, messageID); err != nil {
+		return err
+	}
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin save citations: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := r.replaceCitations(ctx, tx, "", messageID, citations, r.hasCitationSnapshotColumns(ctx)); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit save citations: %w", err)
+	}
+	return nil
+}
+
 func nullableInt(value *int) any {
 	if value == nil {
 		return nil
