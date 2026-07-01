@@ -1,7 +1,6 @@
 package smoke_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
