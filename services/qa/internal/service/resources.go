@@ -361,8 +361,8 @@ type MetricsOverview struct {
 	ConversationCount  int   `json:"conversationCount"`
 	AvgLatencyMS       int64 `json:"avgLatencyMs"`
 	ActiveUsersToday   int   `json:"activeUsersToday"`
-	KnowledgeBaseCount int   `json:"knowledgeBaseCount"`
-	DocumentCount      int   `json:"documentCount"`
+	KnowledgeBaseCount int   `json:"knowledgeBaseCount,omitempty"`
+	DocumentCount      int   `json:"documentCount,omitempty"`
 }
 
 type MetricsTrendPoint struct {
