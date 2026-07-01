@@ -97,6 +97,7 @@ VALID_COMPOSE = textwrap.dedent(
 VALID_CHINA_ENV = textwrap.dedent(
     """
     DOCKER_IMAGE_REGISTRY_PREFIX=docker.m.daocloud.io/library/
+    RAGFLOW_DEPS_IMAGE=docker.m.daocloud.io/infiniflow/ragflow_deps:51ce6aab
     POSTGRES_IMAGE=docker.m.daocloud.io/library/postgres:16-alpine
     REDIS_IMAGE=docker.m.daocloud.io/library/redis:7-alpine
     QDRANT_IMAGE=docker.m.daocloud.io/qdrant/qdrant:v1.18.2
@@ -165,6 +166,8 @@ class DockerPolicyTests(unittest.TestCase):
         dockerfile = textwrap.dedent(
             """
             ARG IMAGE_REGISTRY_PREFIX=
+            ARG RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps:51ce6aab
+            FROM ${RAGFLOW_DEPS_IMAGE} AS deps
             FROM ${IMAGE_REGISTRY_PREFIX}ubuntu:24.04 AS base
             RUN uv sync --python 3.13 --frozen
             CMD ["./entrypoint.sh"]

@@ -92,7 +92,7 @@ Override host ports in `deploy/.env`.
 | `FILE_DATABASE_URL` | file | yes | File metadata PostgreSQL DSN. |
 | `FILE_STORAGE_BACKEND` | file | no | `local` in Compose for durable local smoke tests. |
 | `DATABASE_URL` | knowledge | no | Optional PostgreSQL for parser-config admin routes. |
-| `VENDOR_RUNTIME_URL` | knowledge | yes | RAGFlow vendor HTTP base URL (default in Compose: host gateway to :9380). |
+| `VENDOR_RUNTIME_URL` | knowledge | yes | RAGFlow vendor HTTP base URL (default in Compose: `http://knowledge-runtime-api:9380`). |
 | `KNOWLEDGE_AUTO_START_INGESTION` | knowledge | no | Auto-call vendor `/documents/parse` after upload (default `true`). |
 | `QA_DATABASE_URL` | qa | yes | QA PostgreSQL DSN. |
 | `KNOWLEDGE_SERVICE_URL` | qa | yes | Internal Knowledge Service URL. |
@@ -181,14 +181,17 @@ Invoke-RestMethod "http://localhost:8080/api/v1/knowledge-queries" -Method Post 
 ```
 
 Knowledge routes require the RAGFlow runtime at `VENDOR_RUNTIME_URL`
-(default `http://host.docker.internal:9380`). With the `knowledge-v2` profile you
-can run `knowledge-runtime-api` and `knowledge-runtime-worker` in compose:
+(default `http://knowledge-runtime-api:9380` inside Compose). With the
+`knowledge-v2` profile you can run `knowledge-runtime-api` and
+`knowledge-runtime-worker` in compose:
 
 ```powershell
 cd deploy
-$env:VENDOR_RUNTIME_URL = "http://knowledge-runtime-api:9380"
 docker compose --profile knowledge-v2 up -d elasticsearch knowledge-minio-init knowledge-runtime-api knowledge-runtime-worker knowledge
 ```
+
+Use an explicit `VENDOR_RUNTIME_URL` override only when the runtime is started
+outside Compose for local Python development.
 
 See `services/knowledge/runtime/README.md` and `services/knowledge-runtime/README.md`.
 

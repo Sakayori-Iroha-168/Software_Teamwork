@@ -49,7 +49,8 @@ docker compose up -d --build
 
 这个 overlay 当前固定为：
 
-- 基础镜像和 Compose 基础设施镜像：显式使用 `docker.m.daocloud.io/...`。
+- 基础镜像、RAGFlow deps 镜像和 Compose 基础设施镜像：显式使用
+  `docker.m.daocloud.io/...`。
 - Alpine、Debian、PyPI/uv：使用阿里云镜像。
 - Go module：`GOPROXY=https://goproxy.cn,direct`，`GOSUMDB=sum.golang.google.cn`。
 
@@ -91,6 +92,7 @@ export REDIS_IMAGE=redis:7-alpine
 export QDRANT_IMAGE=qdrant/qdrant:v1.18.2
 export MINIO_IMAGE=minio/minio:RELEASE.2025-09-07T16-13-09Z
 export MINIO_MC_IMAGE=minio/mc:RELEASE.2025-08-13T08-35-41Z
+export RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps:51ce6aab
 ```
 
 如果企业 registry 使用重写后的完整镜像名，把这些变量设成完整目标镜像，同时给
@@ -165,8 +167,9 @@ export DOCKER_IMAGE_REGISTRY_PREFIX=registry.example.com/dockerhub/
 
 该值会直接改写 Dockerfile `FROM` 镜像名，必须包含末尾 `/`，并且目标 registry 必须
 提供 `golang:1.25-alpine`、`alpine:3.22`、`python:3.12-slim` 等同名路径。Compose
-基础设施镜像不使用这个前缀，必须通过 `POSTGRES_IMAGE`、`REDIS_IMAGE`、
-`QDRANT_IMAGE`、`MINIO_IMAGE` 和 `MINIO_MC_IMAGE` 单独设置完整镜像名。
+基础设施镜像和 namespaced runtime dependency 镜像不使用这个前缀，必须通过
+`POSTGRES_IMAGE`、`REDIS_IMAGE`、`QDRANT_IMAGE`、`MINIO_IMAGE`、`MINIO_MC_IMAGE`
+和 `RAGFLOW_DEPS_IMAGE` 单独设置完整镜像名。
 
 ## Go 构建
 
