@@ -101,12 +101,16 @@ func (s *Server) handleListParserConfigs(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
+	_, ok := s.gatewayContext(w, r)
+	if !ok {
+		return
+	}
 	result, err := s.knowledge.GetStats(r.Context())
 	if err != nil {
 		writeAppError(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": result, "requestId": requestIDFromContext(r.Context())}, "")
+	writeJSON(w, http.StatusOK, result, requestIDFromContext(r.Context()))
 }
 
 func (s *Server) handleCreateParserConfig(w http.ResponseWriter, r *http.Request) {

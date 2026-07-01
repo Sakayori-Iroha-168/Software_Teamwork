@@ -5807,6 +5807,8 @@ components:
       properties:
         query:
           type: string
+        contentPreview:
+          type: string
         count:
           type: integer
           minimum: 0
