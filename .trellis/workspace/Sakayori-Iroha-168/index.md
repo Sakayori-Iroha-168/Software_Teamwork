@@ -29,7 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 2 | 2026-07-01 | Knowledge real Gateway API | `b27b506`, `fabfc13` | `Frontend/feat/knowledge-real-api` |
+| 3 | 2026-07-01 | Knowledge real Gateway API | `b27b506`, `fabfc13` | `Frontend/feat/knowledge-real-api` |
+| 2 | 2026-07-01 | Issue 354 storage boundary docs cleanup | `10556b0` | `Special/docs/sync-trellis-spec-docs` |
 | 1 | 2026-07-01 | Clean docs contract ownership duplication | `8fa9164` | `docs/service-doc-audit-cleanup` |
 <!-- @@@/auto:session-history -->
 

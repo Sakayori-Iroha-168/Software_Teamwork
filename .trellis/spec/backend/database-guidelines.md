@@ -23,22 +23,27 @@ Confirmed Go infrastructure target stack:
 
 Current repository facts from `docs/architecture/technology-decisions.md`:
 
-- Auth, Knowledge, QA, Document, and AI Gateway use `pgx/v5@v5.7.6`. New
-  PostgreSQL services should reuse that major version and must not reintroduce
-  `pgx/v4` or a third pgx major version without updating the technology
-  baseline.
+- Auth, Knowledge, QA, Document, File, and AI Gateway use `pgx/v5@v5.9.2`.
+  New PostgreSQL services should reuse that major version and must not
+  reintroduce `pgx/v4` or a third pgx major version without updating the
+  technology baseline.
+- The repository-wide recommended `sqlc` CLI version is `v1.31.1`. Regenerate
+  service query packages with
+  `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate`; do not use an
+  unpinned `sqlc generate` command in docs, CI, or handoff notes.
 - Gateway directly uses `go-redis/v9@v9.21.0`; Knowledge indirectly uses
   `go-redis/v9@v9.14.1` through asynq. Aligning Redis client versions is a
   follow-up decision, not an implementation-PR side effect.
 - Knowledge and Document have fixed `asynq v0.26.0`; new asynchronous jobs
   should reuse that version unless a documented decision upgrades it.
-- File Service runtime currently has memory/local/MinIO object-store adapters.
-  PostgreSQL metadata repository files and migrations exist, but
-  `cmd/server` still uses a memory metadata repository until the runtime
-  integration lands.
-- Qdrant remains a Knowledge target; the runtime adapter and Knowledge
-  embedding/rerank retrieval loop are not implemented just because AI Gateway
-  exposes embedding and rerank endpoints.
+- File Service runtime has memory/local/MinIO object-store adapters, a
+  PostgreSQL metadata repository, migrations, and service-token validation.
+  `FILE_DATABASE_URL` being empty is a local/test fallback, not the production
+  persistence baseline.
+- Knowledge owns Qdrant vector persistence and retrieval hydration. Keep
+  Qdrant as a Knowledge boundary and treat missing real-dependency smoke as a
+  validation gap, not permission for QA, Gateway, or AI Gateway to mutate
+  Qdrant directly.
 
 Do not introduce an ORM by default. If a service needs one, document the reason
 in that service README, update `docs/architecture/technology-decisions.md`,
@@ -116,8 +121,10 @@ func (r *UserRepository) FindByID(ctx context.Context, id UserID) (User, error) 
 
 ### 2. Signatures
 
-- Module dependency: `github.com/jackc/pgx/v5 v5.7.6`.
+- Module dependency: `github.com/jackc/pgx/v5 v5.9.2`.
 - sqlc config: `sql_package: "pgx/v5"`.
+- sqlc generation command:
+  `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate`.
 - Pool import: `github.com/jackc/pgx/v5/pgxpool`.
 - Pool constructor: `pgxpool.New(ctx, databaseURL)`.
 - Startup reachability check: `pool.Ping(ctx)` when the service is expected to
@@ -136,6 +143,10 @@ func (r *UserRepository) FindByID(ctx context.Context, id UserID) (User, error) 
   before leaving `internal/repository`.
 - New PostgreSQL services must not introduce `github.com/jackc/pgx/v4` or a
   third pgx major version without updating `docs/architecture/technology-decisions.md`.
+- New or regenerated query packages must use the pinned `sqlc@v1.31.1`
+  command. Knowledge and QA may still contain older generated code until their
+  SQL changes, but the next SQL edit must regenerate with the pinned command
+  and commit the result.
 - Migrating from `pgxpool.Connect` to `pgxpool.New` must not silently change
   startup behavior. If the old service failed startup when PostgreSQL was
   unreachable, call `pool.Ping(ctx)` before registering the repository.
@@ -156,10 +167,11 @@ func (r *UserRepository) FindByID(ctx context.Context, id UserID) (User, error) 
 
 ### 5. Good/Base/Bad Cases
 
-- Good: service `go.mod` requires `pgx/v5@v5.7.6`, `sqlc.yaml` uses
+- Good: service `go.mod` requires `pgx/v5@v5.9.2`, `sqlc.yaml` uses
   `pgx/v5`, startup preserves required PostgreSQL reachability checks,
   repository maps `pgtype.Text` / `pgtype.Timestamptz` to domain fields,
-  handlers import only service interfaces, and goose applies cleanly.
+  generated query code is refreshed with `sqlc@v1.31.1`, handlers import only
+  service interfaces, and goose applies cleanly.
 - Base: an existing service migration preserves public/internal API semantics
   and only changes dependency/import/mapping code plus docs.
 - Bad: leaving v4 in `go.mod`, hand-editing generated sqlc code without
@@ -635,6 +647,20 @@ Knowledge upload -> File Service stores raw bytes -> Knowledge transaction creat
 
 - PostgreSQL owns durable report state for report types, templates, materials, reports, outlines, sections, section versions, jobs, attempts, events, files, and operation logs.
 - `report_jobs`, `report_job_attempts`, and `report_events` are the durable authority for job status, retry history, failure summaries, and public progress events.
+- Report job progress JSON must use numeric `completed` and `total` fields. Terminal status updates (`succeeded`, `partial_succeeded`, `failed`, `canceled`) must preserve existing meaningful progress such as `1/2` from multi-step generation, and only write default progress (`1/1` for success-like states, `0/1` for failure-like states) when no detailed progress exists.
+- `reports.status`, `reports.latest_job_id`, and `reports.generated_at` are a denormalized public snapshot of generation lifecycle, not the detailed job authority. Generation job `pending`/`running` states must set `latest_job_id` and the matching generating report status. Terminal `partial_succeeded` keeps the report in the closest usable generated state (`outline_generated` for outline jobs, `generated` for content or section jobs), while `failed` and `canceled` map to report `failed`. Content or section `succeeded` and `partial_succeeded` jobs set `generated_at`.
+- `report_sections.outline_id` scopes sections to the outline version that created
+  or owns them. Report-level `content_generation` and `content_regeneration`
+  must generate only sections whose `outline_id` matches the current
+  `report_outlines.is_current` row. `section_regeneration` is the explicit
+  section-targeted exception and may regenerate the requested section after the
+  same-report ownership check.
+- AI-generated outline creation and the derived `report_sections` skeleton
+  creation are one business write. They must run in one short repository
+  transaction after the AI response is parsed; if any skeleton insert fails,
+  the new current outline, previous-current flag updates, and partial skeletons
+  must all roll back.
+- When building JSON with PostgreSQL parameters, cast ambiguous parameters explicitly, for example `jsonb_build_object('completed', $2::int, 'total', $3::int)`, so pgx/PostgreSQL can infer parameter types in integration tests and production.
 - Redis/asynq may store queue payloads, delivery metadata, and task identifiers only. It must not be the only source of report job or event truth.
 - File bytes for templates, materials, and generated report files belong to the File Service. Document tables may persist only service-internal file references and display metadata, never MinIO object keys or bucket names.
 - Repository methods return service-layer domain structs, not generated sqlc rows or raw driver types.
@@ -648,19 +674,28 @@ Knowledge upload -> File Service stores raw bytes -> Knowledge transaction creat
 | Invalid report/job UUID at repository boundary | `validation_error` |
 | Missing report job | `not_found` |
 | Duplicate report/job/attempt/event ID | `conflict` |
+| Section skeleton insert fails after creating a current outline | rollback outline/current-flag/partial sections and return dependency error |
 | PostgreSQL connect/query failure | wrapped dependency error |
 
 ### 5. Good/Base/Bad Cases
 
-- Good: service creates a report job row in PostgreSQL, records attempts/events in PostgreSQL, and stores only the asynq task ID for queue correlation.
+- Good: service creates a report job row in PostgreSQL, records attempts/events in PostgreSQL, stores only the asynq task ID for queue correlation, and commits AI outline plus derived section skeletons atomically.
 - Base: the first implementation slice provides schema, repository, transactions, health checks, and readiness checks without implementing AI generation or DOCX export.
-- Bad: worker stores final job status only in Redis, repository returns sqlc rows to HTTP handlers, or public responses/logs expose `file_ref`, object keys, prompts, provider raw errors, or database details.
+- Bad: worker stores final job status only in Redis, repository returns sqlc rows to HTTP handlers, outline generation leaves a new current outline with missing/partial skeletons after failure, or public responses/logs expose `file_ref`, object keys, prompts, provider raw errors, or database details.
 
 ### 6. Tests Required
 
 - Config tests for required Document Service dependency keys and invalid URL rejection.
 - Handler tests for `/healthz` and `/readyz` response envelopes, request ID propagation, and dependency failure status.
 - Repository integration tests, gated by `DOCUMENT_TEST_DATABASE_URL`, that apply migrations and verify report type, report, job, attempt, event, and transaction behavior.
+- Repository integration tests for multi-step jobs must assert `UpdateReportJobProgress` survives terminal status updates instead of being overwritten by generic `1/1` or `0/1` defaults.
+- Service tests for content generation must cover old and current outline
+  sections and assert progress totals include only current outline sections.
+- Service tests must simulate section skeleton creation failure and assert the
+  new current outline and partial skeletons are rolled back.
+- Repository integration tests, gated by `DOCUMENT_TEST_DATABASE_URL`, should
+  cover the report-generation transaction by creating an outline and section
+  inside the transaction, forcing an error, and asserting rollback.
 - Build and package checks from `services/document`: `go test ./...`, `go build ./cmd/server`, `sqlc generate`, and migration apply against an empty PostgreSQL database when migration tooling is available.
 
 ### 7. Wrong vs Correct
@@ -669,12 +704,14 @@ Knowledge upload -> File Service stores raw bytes -> Knowledge transaction creat
 
 ```text
 asynq task executes -> Redis stores final job status -> API reads Redis as truth
+outline generation -> insert current outline -> skeleton insert fails -> incomplete current outline remains
 ```
 
 #### Correct
 
 ```text
 API creates report_job -> asynq task id is stored for correlation -> worker updates report_jobs/report_job_attempts/report_events in PostgreSQL
+outline generation -> parse AI response outside transaction -> transaction inserts current outline + skeletons -> rollback all on failure
 ```
 
 ## Scenario: Document Initial Report Defaults Seed
