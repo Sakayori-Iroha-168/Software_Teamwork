@@ -20,6 +20,9 @@ COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/knowledge ./cmd/server
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/knowledge-adapter ./cmd/adapter
 
 FROM ${IMAGE_REGISTRY_PREFIX}alpine:${ALPINE_VERSION}
 
@@ -30,10 +33,14 @@ RUN --mount=type=cache,target=/var/cache/apk \
     fi \
     && apk add --update-cache --cache-dir /var/cache/apk ca-certificates
 
-RUN addgroup -S knowledge && adduser -S -G knowledge knowledge
+RUN apk add --no-cache wget && \
+    addgroup -S knowledge && adduser -S -G knowledge knowledge
 COPY --from=build /out/knowledge /usr/local/bin/knowledge
+COPY --from=build /out/knowledge-adapter /usr/local/bin/knowledge-adapter
+COPY runtime/entrypoint.sh /usr/local/bin/knowledge-entrypoint
+RUN chmod +x /usr/local/bin/knowledge-entrypoint
 
 USER knowledge
 EXPOSE 8083
 
-ENTRYPOINT ["knowledge"]
+ENTRYPOINT ["/usr/local/bin/knowledge-entrypoint"]
