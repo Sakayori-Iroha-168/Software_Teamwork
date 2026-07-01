@@ -48,7 +48,8 @@ Knowledge Service 的工程选型以 [技术选型基线](../../architecture/tec
 | 文档解析协调与切片 | 调用 Parser service 获取 parsed content，并在 Knowledge 内做语义切片和切片详情保存。 |
 | 向量索引 | 生成 embedding，维护 Qdrant collection、point 和检索 payload。 |
 | 删除清理 | 文档删除后消费 `delete_cleanup` job，调用 File Service 删除不透明 `file_ref`，并按 `document_id` 清理 Qdrant points。 |
-| 检索查询 | 根据 query、知识库范围、Top K、阈值和标签过滤返回召回结果。 |
+| 检索查询 | 根据 query、知识库范围、Top K、阈值、标签过滤、rerank 和 chunk feedback 权重返回召回结果。 |
+| Chunk feedback 权重 | 接收 QA 内部上报的引用 chunk 反馈信号，维护 feedback 聚合权重，并作为后续 `knowledge-queries` 的排名算子。 |
 
 `knowledge` 不负责用户登录、RBAC 源数据、底层对象存储实现、OCR/PaddleOCR
 运行时、LLM 回答生成或 DOCX 报告导出。知识库文档公开资源、处理状态和原始文件流入口由
@@ -72,6 +73,7 @@ knowledge service
    +--> File service base file APIs for raw source bytes
    +--> Parser service /internal/v1/parsed-documents for normalized parsed content
    +--> AI Gateway /internal/v1/embeddings and /internal/v1/rerankings
+   +--> Internal chunk-feedback resources for ranking signals from QA citations
 ```
 
 Gateway 调用 knowledge 服务时应传递：
@@ -112,7 +114,8 @@ Knowledge 已进入 Gateway active contract 的公开资源包括：
 | `DocumentSummary` | 文档 ID、知识库 ID、文件名、处理状态、错误摘要、切片数、标签和解析信息。 |
 | `DocumentChunk` | 切片 ID、章节路径、切片文本、token 数、embedding 元数据和 Qdrant point ID。 |
 | `KnowledgeQueryRequest` | query、knowledgeBaseIds、topK、scoreThreshold、tags、metadataFilter、rerank 配置。 |
-| `KnowledgeQuerySummary` | 检索请求 ID、原始 query、召回结果列表和 trace。 |
+| `KnowledgeQuerySummary` | 检索请求 ID、原始 query、召回结果列表和 trace；trace 可包含 `feedbackApplied` 表示是否应用 chunk feedback 排名信号。 |
+| `ChunkFeedbackEvent` / `ChunkFeedbackStat` | 内部数据模型，用于保存 QA message feedback 归因后的 chunk 反馈事件和聚合权重，不作为前端公开资源。 |
 
 字段详情以 [`docs/services/gateway/api/public.openapi.yaml`](../gateway/api/public.openapi.yaml) 为准，不在本文档重复定义完整 schema。
 
@@ -143,7 +146,7 @@ uploaded | parsing | chunking | embedding | ready | failed
 | `rerank` | 是否请求重排序；配置 AI Gateway rerank adapter 时调用 `/internal/v1/rerankings`。 |
 | `rerankTopN` | 重排序后保留数量，必须小于等于 `topK`；未配置 reranker 时仍会按向量顺序截断。 |
 
-响应必须返回可溯源字段，例如 `knowledgeBaseId`、`documentId`、`chunkId`、`documentName`、`sectionPath`、`score` 和 `contentPreview`。不要向前端返回原始向量、完整 Qdrant payload、内部 object key、prompt 或下游服务 URL。
+响应必须返回可溯源字段，例如 `knowledgeBaseId`、`documentId`、`chunkId`、`documentName`、`sectionPath`、`score` 和 `contentPreview`。不要向前端返回原始向量、完整 Qdrant payload、内部 object key、prompt、下游服务 URL、原始用户反馈事件或 chunk feedback 权重明细。
 
 检索实现必须从 Qdrant hit 中读取最小 payload 后回 PostgreSQL hydrate。测试中允许用
 seeded `document_chunks` 和 fake vector hit 替代真实 worker/Qdrant，只要请求、

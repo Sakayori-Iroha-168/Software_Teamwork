@@ -28,7 +28,7 @@
 | --- | --- | --- |
 | 文档状态 | active | README、数据模型、公开设计 OpenAPI 和服务内部 OpenAPI 存在。 |
 | 代码状态 | partial | Go service、PostgreSQL repository、QA sessions/messages/SSE heartbeat/replay、资源查询、settings、MCP/model tooling、ResponseRun Agent Loop、function-calling adapter 和 QA -> AI Gateway env-gated smoke 已实现。 |
-| 契约对齐 | partial | Gateway 25 个 QA active operations 均有 proxy route；QA 内部 routes 也注册，模型调用通过 AI Gateway chat completions；Knowledge `knowledge-queries` 已落地，但完整 RAG/citation 跨服务闭环仍未证明。 |
+| 契约对齐 | partial | Gateway QA active operations 已覆盖 sessions/messages/attachments/runs/citations/settings/retrieval/metrics；#414 新增 message feedback 契约仍待实现和 route matrix 同步。模型调用通过 AI Gateway chat completions；Knowledge `knowledge-queries` 已落地，但完整 RAG/citation/feedback 跨服务闭环仍未证明。 |
 | 数据持久化 | postgres | runtime 使用 PostgreSQL；配置 secret 使用本地加密 key。 |
 | 测试状态 | covered / partial | 单元测试覆盖 service、repository mapping、HTTP、MCP/model/local tools、SSE/tool/citation 安全边界；QA -> AI Gateway chat 已有 env-gated smoke，完整 QA/Knowledge/Gateway 端到端仍未覆盖。 |
 | 建议动作 | 补联调 / 回写文档 | 在受控或真实 provider 环境按需运行 QA -> AI Gateway smoke；继续补 QA + Knowledge 与 Gateway/Auth 完整联调。 |
@@ -57,6 +57,7 @@
 | --- | --- | --- | --- |
 | 完整 QA + Knowledge + AI Gateway RAG smoke 未证明 | `docs/services/gateway/api/public.openapi.yaml`、QA RAG 流程、#304 | QA / Knowledge / frontend | Knowledge `knowledge-queries` 已落地；仍需跨 Gateway/Auth/Knowledge/AI Gateway 的可复现 smoke。 |
 | 引用快照、引用详情和批量查询仍未完全闭环 | #93 / #325 | QA / frontend | 保留现有脱敏资源摘要，继续补 citation snapshot/detail/batch query 契约与持久化验证。 |
+| 消息反馈到 Knowledge chunk feedback 尚未实现 | #414 / Gateway OpenAPI `upsertQAMessageFeedback` | QA / Knowledge / frontend | 公开契约已定义为 message-level feedback；后端需补 QA `message_feedback` upsert、citation 归因、Knowledge internal chunk-feedback 调用和错误/重试测试。 |
 | QA -> AI Gateway smoke 依赖外部受控环境 | `docs/services/ai-gateway/api/internal.openapi.yaml` | QA / AI Gateway | 已提供 env-gated 入口；普通 CI 不启动 AI Gateway/provider，真实 provider 仍只允许显式手工运行。 |
 | 真实 MCP/Knowledge/Model 端到端测试未证明 | QA README | integration | 补 Compose 或 smoke；在根级联调环境完成前不写成 required。 |
 | AI Gateway service-token 配置需联调 | QA config / AI Gateway middleware | QA / AI Gateway / deploy | 验证 `AI_GATEWAY_TOKEN` 缺省复用 `INTERNAL_SERVICE_TOKEN` 与 AI Gateway token hashes 一致，并补 profile seed 说明。 |
@@ -67,7 +68,8 @@
 | --- | --- | --- | --- | --- |
 | 模型调用边界 | 文档要求业务服务通过 AI Gateway 调模型 | `services/qa/internal/config/config.go` 默认 `AI_GATEWAY_URL=http://localhost:8086/internal/v1/chat/completions`，token header 默认 `X-Service-Token`，不再要求 `DEEPSEEK_API_KEY` fallback | 与架构方向一致；仍需部署联调 token hash 和 caller header | 补 QA -> AI Gateway smoke。 |
 | Knowledge retrieval dependency | QA 文档将检索作为 RAG 主路径 | Knowledge 已实现 `knowledge-queries`，QA 仍缺完整 RAG/citation 跨服务 smoke | 单服务测试通过不等于用户问答闭环已验收 | 补 #304 端到端 sample、#95 retrieval tests 和 #93/#325 citation snapshot/detail/batch query。 |
-| Gateway active QA paths | Gateway 25 个 QA operations active | QA 内部 routes 全注册 | route 层对齐，但业务结果依赖外部服务 | 增加跨服务 contract smoke。 |
+| Message feedback dependency | Gateway OpenAPI 已新增 `POST /api/v1/messages/{messageId}/feedback`；QA 应根据 citations 找 chunk 并调用 Knowledge 内部 chunk feedback | develop 尚未看到对应 QA handler/repository/Knowledge client 实现 | 若前端先接入会得到未实现或代理缺失；也容易把 chunkId 暴露给前端 | 后续实现必须先落 QA upsert 与 owner 校验，再以 saved citations 归因；前端请求只允许提交 `vote`。 |
+| Gateway active QA paths | Gateway QA operations active，#414 新增 message feedback | develop 已注册既有 QA routes；message feedback 尚待 handler/proxy/contract test | route 层对齐会随 #414 实现前暂时不完整 | 增加 message feedback route matrix、QA handler 和跨服务 contract smoke。 |
 | MCP 原始信息不得暴露 | 文档要求只返回脱敏摘要 | 代码有 tool-call summary 和 local tool safety tests | 当前方向一致 | 持续补审计和字段级契约测试。 |
 | Agent Run 状态 | README 描述 Agent Run、termination 和 maxIterations | develop 已包含 ResponseRun、终止原因、模型调用摘要、function-calling adapter 和基础测试 | 容易把 Agent Loop 可用误读为完整 RAG/citation 已完成 | 本文将 Agent Loop 和真实 RAG/citation smoke 分开记录。 |
 | `sqlc` 生成器版本 | 技术基线固定 `sqlc` CLI 推荐版本为 `v1.31.1` | `services/qa/internal/repository/sqlc/*.go` 头部仍记录 `sqlc v1.29.0`；本次版本修复不改非 Docker 生成代码 | 代码生成器版本与文档基线出入，后续 SQL 变更时容易继续沿用旧生成器 | 下次修改 QA SQL 或 repository 生成代码时，使用 `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate` 重新生成并提交。 |
@@ -97,7 +99,7 @@
 | 单元测试 | `cd services/qa && go test ./internal/repository ./internal/service ./internal/service/agent ./internal/platform/modelclient` | pass（既有记录，2026-06-30；本轮文档审计未重跑） | 真实 DB tests 可能被 env gate 跳过。 |
 | 服务构建 | `cd services/qa && go build -buildvcs=false ./cmd/server && go build -buildvcs=false ./cmd/agent` | pass（既有记录，2026-06-30；本轮文档审计未重跑） | `-buildvcs=false` 用于规避本地 worktree VCS stamping。 |
 | 集成测试 | `QA_TEST_DATABASE_URL=... go test ./internal/repository` | not run | 需要 PostgreSQL。 |
-| 契约测试 | Gateway QA schema contract + QA HTTP/service safety tests | partial / guarded | `cd services/gateway && go test ./internal/http -run QA` 覆盖 25 个 QA-owned Gateway active paths 的 schema/auth/content type 与 internal `$ref` drift；QA service fake-backed SSE 安全测试不依赖 PostgreSQL。 |
+| 契约测试 | Gateway QA schema contract + QA HTTP/service safety tests | partial / guarded | `cd services/gateway && go test ./internal/http -run QA` 已覆盖既有 QA-owned Gateway active paths 的 schema/auth/content type 与 internal `$ref` drift；#414 新增 message feedback 后应扩展到 26 个 QA-owned operations。QA service fake-backed SSE 安全测试不依赖 PostgreSQL。 |
 | QA -> AI Gateway smoke | `QA_AI_GATEWAY_SMOKE=1 go test ./internal/platform/modelclient -run '^TestAIGatewaySmoke$' -count=1 -v` | env-gated | 需要运行中的 AI Gateway、有效 service token、显式 chat profile 和受控或真实 provider；默认 CI skip。 |
 | 完整手工 smoke | Gateway -> QA session -> message stream | not run | 需要 Auth/Gateway/Redis/Knowledge/Model。 |
 

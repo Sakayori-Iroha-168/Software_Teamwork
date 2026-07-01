@@ -22,6 +22,7 @@ tags:
   - name: Messages
   - name: Attachments
   - name: Citations
+  - name: Feedback
   - name: Reasoning
   - name: AgentRuns
   - name: Settings
@@ -257,6 +258,28 @@ paths:
                   items:
                     type: array
                     items: { $ref: '#/components/schemas/Citation' }
+        default: { $ref: '#/components/responses/Error' }
+  /messages/{messageId}/feedback:
+    post:
+      tags: [Feedback]
+      summary: Create or update assistant message feedback
+      description: |
+        Records message-level user feedback. Clients send only the vote for the
+        assistant message; QA derives cited chunks from saved citations and
+        forwards chunk feedback to Knowledge through an internal resource.
+      parameters:
+        - $ref: '#/components/parameters/MessageId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MessageFeedbackRequest' }
+      responses:
+        '200':
+          description: Message feedback saved
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessageFeedback' }
         default: { $ref: '#/components/responses/Error' }
   /citations/{citationId}:
     get:
@@ -749,6 +772,25 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/Citation' }
+    MessageFeedbackVote:
+      type: string
+      enum: [up, down, none]
+      description: Message-level user feedback. `none` clears a previous vote.
+    MessageFeedbackRequest:
+      type: object
+      required: [vote]
+      properties:
+        vote: { $ref: '#/components/schemas/MessageFeedbackVote' }
+      additionalProperties: false
+      description: Clients must not submit chunk IDs, retrieval scores, rerank scores, prompts, tool payloads, or storage identifiers.
+    MessageFeedback:
+      type: object
+      properties:
+        id: { type: string }
+        messageId: { type: string }
+        vote: { $ref: '#/components/schemas/MessageFeedbackVote' }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
     StreamEvent:
       type: object
       properties:

@@ -784,7 +784,8 @@ POST /api/v1/knowledge-queries
       "scoreThreshold": 0.35,
       "hitCount": 1,
       "rerank": true,
-      "rerankTopN": 5
+      "rerankTopN": 5,
+      "feedbackApplied": true
     }
   },
   "requestId": "req_123"
@@ -797,8 +798,57 @@ POST /api/v1/knowledge-queries
 - browser-facing API 返回 `contentPreview`，不得返回原始向量、完整 Qdrant payload、prompt、`file_ref`、bucket、object key、MinIO URL、签名 URL 或 provider 原始响应体。
 - `qa` 和 `document` 应通过该接口复用检索能力。
 - 检索建模为创建 `knowledge-query` 资源，不使用 `search` 动作路径。
+- Knowledge 可以将 `chunk_feedback_stats.feedback_score` 作为向量相似度和 rerank 之外的排名算子；公开结果不得暴露原始 feedback 权重或用户反馈事件，只能在 trace 中返回 `feedbackApplied` 这类可观测布尔字段。
 
-### 7.2 创建知识查询测试
+### 7.2 写入 chunk feedback（内部）
+
+```http
+POST /internal/v1/chunk-feedback
+```
+
+该接口只供 `qa` 等后端服务调用，不进入 Gateway public active paths。QA 在收到 `POST /api/v1/messages/{messageId}/feedback` 后，根据该消息保存的 citations 读取 `chunkId`，再调用本接口。前端不得提交 chunk ID 或直接调用 Knowledge internal API。
+
+请求：
+
+```json
+{
+  "source": "qa_message_feedback",
+  "feedbackEventId": "mf_001",
+  "userId": "user_001",
+  "entries": [
+    {
+      "chunkId": "chunk_001",
+      "documentId": "doc_001",
+      "knowledgeBaseId": "kb_001",
+      "messageId": "msg_002",
+      "citationId": "cite_001",
+      "vote": "up"
+    }
+  ]
+}
+```
+
+响应：
+
+```json
+{
+  "data": {
+    "accepted": 1,
+    "skipped": 0
+  },
+  "requestId": "req_123"
+}
+```
+
+规则：
+
+- `source` 当前只接受 `qa_message_feedback`；后续新增来源必须先补 internal OpenAPI 和数据模型。
+- `vote` 为 `up`、`down` 或 `none`。`none` 表示清除/抵消已有反馈，具体权重算法由 Knowledge 拥有。
+- Knowledge 必须基于 chunk ID 映射到 `document_chunks`，写入 `chunk_feedback_events` 并更新 `chunk_feedback_stats`。
+- 该接口不得返回 raw user feedback、完整 citation 快照、prompt、Qdrant payload、内部 URL 或 storage object key。
+- 幂等键建议包含 `source`、`feedbackEventId`、`chunkId`、`messageId` 和 `citationId`；QA 重试不得重复累计权重。
+
+### 7.3 创建知识查询测试
 
 管理员接口：
 

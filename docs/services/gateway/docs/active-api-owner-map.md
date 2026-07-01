@@ -127,6 +127,7 @@ Current missing scope is limited to management overview and cross-service metric
 | `PATCH` | `/api/v1/response-runs/{responseRunId}` | `qa` | `qa-agent-runs` | `updateQAResponseRun` | `bearerAuth` |
 | `GET` | `/api/v1/response-runs/{responseRunId}/tool-calls` | `qa` | `qa-agent-runs` | `listQAResponseRunToolCalls` | `bearerAuth` |
 | `GET` | `/api/v1/messages/{messageId}/citations` | `qa` | `qa-citations` | `listQAMessageCitations` | `bearerAuth` |
+| `POST` | `/api/v1/messages/{messageId}/feedback` | `qa` | `qa-message-feedback` | `upsertQAMessageFeedback` | `bearerAuth` |
 | `GET` | `/api/v1/citations/{citationId}` | `qa` | `qa-citations` | `getQACitation` | `bearerAuth` |
 | `POST` | `/api/v1/citation-lookups` | `qa` | `qa-citations` | `createQACitationLookup` | `bearerAuth` |
 | `GET` | `/api/v1/qa-config-versions/current` | `qa` | `qa-settings` | `getCurrentQAConfigVersion` | `bearerAuth` |

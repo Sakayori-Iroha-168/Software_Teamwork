@@ -284,6 +284,31 @@ paths:
               schema:
                 $ref: "#/components/schemas/KnowledgeStatisticsResponse"
         "401": { $ref: "#/components/responses/Error" }
+  /internal/v1/chunk-feedback:
+    post:
+      tags: [knowledge]
+      summary: Apply feedback signals to knowledge chunks
+      operationId: internalCreateChunkFeedback
+      description: |
+        Internal resource used by QA to attribute message-level user feedback to
+        saved citation chunks. Knowledge owns the accumulated feedback weights
+        and applies them as one ranking signal in later knowledge-queries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChunkFeedbackRequest"
+      responses:
+        "202":
+          description: Chunk feedback accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChunkFeedbackResponse"
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
 components:
   parameters:
     Page:
@@ -514,6 +539,9 @@ components:
         hitCount: { type: integer, minimum: 0 }
         rerank: { type: boolean }
         rerankTopN: { type: integer, minimum: 1, nullable: true }
+        feedbackApplied:
+          type: boolean
+          description: Whether accumulated chunk feedback was applied as a ranking signal. Raw feedback weights and events are not exposed.
     KnowledgeQuerySummary:
       type: object
       required: [id, query, results, trace]
@@ -529,6 +557,46 @@ components:
       required: [data, requestId]
       properties:
         data: { $ref: "#/components/schemas/KnowledgeQuerySummary" }
+        requestId: { type: string }
+    ChunkFeedbackVote:
+      type: string
+      enum: [up, down, none]
+    ChunkFeedbackEntry:
+      type: object
+      required: [chunkId, messageId, vote]
+      properties:
+        chunkId: { type: string }
+        documentId: { type: string }
+        knowledgeBaseId: { type: string }
+        messageId: { type: string }
+        citationId: { type: string, nullable: true }
+        vote: { $ref: "#/components/schemas/ChunkFeedbackVote" }
+      additionalProperties: false
+    ChunkFeedbackRequest:
+      type: object
+      required: [source, entries]
+      properties:
+        source:
+          type: string
+          enum: [qa_message_feedback]
+        feedbackEventId: { type: string }
+        userId: { type: string }
+        entries:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ChunkFeedbackEntry" }
+      additionalProperties: false
+    ChunkFeedbackSummary:
+      type: object
+      required: [accepted, skipped]
+      properties:
+        accepted: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+    ChunkFeedbackResponse:
+      type: object
+      required: [data, requestId]
+      properties:
+        data: { $ref: "#/components/schemas/ChunkFeedbackSummary" }
         requestId: { type: string }
     PageInfo:
       type: object

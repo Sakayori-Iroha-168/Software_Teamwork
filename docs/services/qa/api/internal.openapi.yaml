@@ -47,6 +47,8 @@ paths:
     $ref: '../../gateway/api/public.openapi.yaml#/paths/~1api~1v1~1response-runs~1{responseRunId}~1tool-calls'
   /internal/v1/messages/{messageId}/citations:
     $ref: '../../gateway/api/public.openapi.yaml#/paths/~1api~1v1~1messages~1{messageId}~1citations'
+  /internal/v1/messages/{messageId}/feedback:
+    $ref: '../../gateway/api/public.openapi.yaml#/paths/~1api~1v1~1messages~1{messageId}~1feedback'
   /internal/v1/citations/{citationId}:
     $ref: '../../gateway/api/public.openapi.yaml#/paths/~1api~1v1~1citations~1{citationId}'
   /internal/v1/citation-lookups:

@@ -202,7 +202,53 @@ parser service
 - `idx_document_chunks_knowledge_base_id` 支持知识库级聚合。
 - `idx_document_chunks_qdrant_point_id` 支持向量点反查。
 
-### 6.5 KnowledgeQuery
+### 6.5 ChunkFeedback
+
+用户反馈对知识 chunk 的长期排序信号。QA 负责把 message-level 点赞/点踩根据已保存 citations 归因到 chunk；Knowledge 负责持久化 chunk feedback 事件、聚合权重，并在后续 `knowledge-queries` 排名时把它作为算子之一。
+
+建议拆分为事件表和聚合表：
+
+| 逻辑实体 | 表名建议 | 说明 |
+| --- | --- | --- |
+| `ChunkFeedbackEvent` | `chunk_feedback_events` | 从 QA 等调用方接收的反馈事件，保留 message/citation/source 归因，便于审计和幂等。 |
+| `ChunkFeedbackStat` | `chunk_feedback_stats` | 每个 chunk 的聚合反馈状态，用于查询排序时快速读取。 |
+
+`ChunkFeedbackEvent` 字段：
+
+| 逻辑字段 | HTTP 字段 | PostgreSQL 字段 | 类型 | 说明 |
+| --- | --- | --- | --- | --- |
+| `ID` | internal only | `id` | text | 反馈事件 ID。 |
+| `Source` | `source` | `source` | text | 当前为 `qa_message_feedback`。 |
+| `FeedbackEventID` | `feedbackEventId` | `feedback_event_id` | text nullable | QA message feedback 记录 ID，用于幂等和排查。 |
+| `UserID` | `userId` | `external_user_id` | text nullable | 触发反馈的用户；用于反作弊、审计或个性化策略前置，不作为公开字段返回。 |
+| `ChunkID` | `chunkId` | `chunk_id` | text | 被反馈的 chunk。 |
+| `DocumentID` | `documentId` | `document_id` | text nullable | 引用快照中的文档 ID。 |
+| `KnowledgeBaseID` | `knowledgeBaseId` | `knowledge_base_id` | text nullable | 引用快照中的知识库 ID。 |
+| `MessageID` | `messageId` | `message_id` | text | 来源 QA message。 |
+| `CitationID` | `citationId` | `citation_id` | text nullable | 来源 citation。 |
+| `Vote` | `vote` | `vote` | text | `up`、`down` 或 `none`。 |
+| `WeightDelta` | internal only | `weight_delta` | numeric | Knowledge 根据 vote 和策略计算的增量。 |
+| `CreatedAt` | internal only | `created_at` | timestamptz | 创建时间。 |
+
+`ChunkFeedbackStat` 字段：
+
+| 逻辑字段 | PostgreSQL 字段 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `ChunkID` | `chunk_id` | text | 与 `document_chunks.id` 对齐。 |
+| `UpCount` | `up_count` | integer | 正反馈计数。 |
+| `DownCount` | `down_count` | integer | 负反馈计数。 |
+| `FeedbackScore` | `feedback_score` | numeric | 归一化后的排序信号，范围和计算方式由 Knowledge runtime 策略定义。 |
+| `UpdatedAt` | `updated_at` | timestamptz | 最近更新时间。 |
+
+约束与索引：
+
+- `chunk_feedback_events.chunk_id` 必须能映射到 `document_chunks.id`；找不到 chunk 的 entry 应被跳过并计入 accepted/skipped summary，不返回内部详情。
+- 建议唯一约束 `(source, feedback_event_id, chunk_id, message_id, citation_id)`，保证 QA 重试不会重复累计。
+- `idx_chunk_feedback_events_chunk_id_created_at` 支持审计和回放。
+- `chunk_feedback_stats.chunk_id` 唯一，查询排序时按 chunk IDs 批量读取。
+- 原始用户 vote、message/citation 归因和 feedback score 不进入公开 chunk 或 query result 字段；前端最多通过 trace 看到 `feedbackApplied`。
+
+### 6.6 KnowledgeQuery
 
 检索查询当前不持久化，但作为资源建模以保持 RESTful 契约稳定。
 
@@ -225,11 +271,11 @@ parser service
 | --- | --- | --- | --- |
 | `ID` | `id` | string | 查询资源 ID，建议使用 `kq_` 前缀。 |
 | `Results` | `results` | array | 检索命中列表。 |
-| `Trace` | `trace` | object | embedding、collection、topK、阈值和命中数。 |
+| `Trace` | `trace` | object | embedding、collection、topK、阈值、命中数、rerank 和 `feedbackApplied`。 |
 
-检索结果从 Qdrant 命中 payload 取 `chunk_id`，再回 PostgreSQL hydrate `document_chunks` 和 `knowledge_documents`。只有文档状态为 `ready` 且调用方有权限访问的结果才会返回。
+检索结果从 Qdrant 命中 payload 取 `chunk_id`，再回 PostgreSQL hydrate `document_chunks`、`knowledge_documents` 和可用的 `chunk_feedback_stats`。只有文档状态为 `ready` 且调用方有权限访问的结果才会返回。排序时允许把向量相似度、rerank score 和 `feedback_score` 组合为最终排名；公开 `score` 仍表示对调用方可解释的检索相关性，不暴露原始 feedback 权重。
 
-### 6.6 RuntimeConfig
+### 6.7 RuntimeConfig
 
 运行配置当前保存在进程内存中，用于管理台和本地开发。后续如果需要跨实例生效，应新增 `runtime_configs` 或配置中心集成，不能把配置散落到业务表。
 
@@ -248,7 +294,7 @@ parser service
 | `ProcessingTimeoutSec` | `processingTimeoutSec` | integer | 处理超时秒数。 |
 | `SecretRefs` | `secretRefs` | object | 外部密钥引用名，不保存密钥明文。 |
 
-### 6.7 RetrievalContractFixture
+### 6.8 RetrievalContractFixture
 
 检索实现和契约测试依赖的是持久化数据契约，而不是 A-11 worker
 进程是否已经真实跑通。A-12 和 A-14 可以在测试中 seed 以下最小数据：

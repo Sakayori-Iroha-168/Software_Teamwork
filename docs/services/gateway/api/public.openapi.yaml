@@ -55,6 +55,8 @@ tags:
   description: QA-owned response runs and sanitized tool-call summaries.
 - name: qa-citations
   description: QA-owned answer citation snapshots and citation details.
+- name: qa-message-feedback
+  description: QA-owned user feedback on assistant messages and downstream chunk feedback attribution.
 - name: qa-settings
   description: QA runtime configuration and AI Gateway profile references.
 - name: qa-retrieval-tests
@@ -2126,6 +2128,45 @@ paths:
                 $ref: '#/components/schemas/QACitationListResponse'
         '404':
           $ref: '#/components/responses/Error'
+  /api/v1/messages/{messageId}/feedback:
+    parameters:
+    - $ref: '#/components/parameters/MessageId'
+    post:
+      tags:
+      - qa-message-feedback
+      summary: Create or update QA message feedback
+      operationId: upsertQAMessageFeedback
+      x-owner-service: qa
+      description: |
+        Records the current user's feedback for an assistant message. The public
+        request is message-scoped only: clients send a vote for the message and
+        must not send chunk IDs, internal scores, prompts, or retrieval payloads.
+        QA owns the feedback event and derives cited chunk IDs from saved
+        citations before calling Knowledge through an internal chunk-feedback
+        resource. Knowledge owns chunk feedback weights and retrieval ranking.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageFeedbackRequest'
+      responses:
+        '200':
+          description: QA message feedback saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageFeedbackResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '409':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
   /api/v1/citations/{citationId}:
     parameters:
     - $ref: '#/components/parameters/CitationId'
@@ -3125,6 +3166,9 @@ components:
           type: integer
           nullable: true
           minimum: 1
+        feedbackApplied:
+          type: boolean
+          description: Whether Knowledge applied accumulated chunk feedback as a ranking signal for this query. Raw feedback weights and user feedback events are not exposed.
     KnowledgeQuerySummary:
       type: object
       required:
@@ -4812,6 +4856,58 @@ components:
             $ref: '#/components/schemas/QAMessage'
         page:
           $ref: '#/components/schemas/PageMeta'
+        requestId:
+          type: string
+    MessageFeedbackVote:
+      type: string
+      description: |
+        User-visible feedback for an assistant message. `none` clears a previous
+        vote without asking the client to know which chunks were cited.
+      enum:
+      - up
+      - down
+      - none
+    MessageFeedbackRequest:
+      type: object
+      required:
+      - vote
+      properties:
+        vote:
+          $ref: '#/components/schemas/MessageFeedbackVote'
+      additionalProperties: false
+      description: |
+        Message-scoped feedback. Clients must not include chunk IDs, retrieval
+        scores, rerank scores, prompt text, tool payloads, or internal storage
+        identifiers. QA derives chunk attribution from saved citations.
+    MessageFeedbackSummary:
+      type: object
+      required:
+      - id
+      - messageId
+      - vote
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+        messageId:
+          type: string
+        vote:
+          $ref: '#/components/schemas/MessageFeedbackVote'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    MessageFeedbackResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/MessageFeedbackSummary'
         requestId:
           type: string
     QAThinkingStep:

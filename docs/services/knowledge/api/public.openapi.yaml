@@ -858,6 +858,9 @@ components:
         hitCount: { type: integer }
         rerank: { type: boolean }
         rerankTopN: { type: integer, nullable: true }
+        feedbackApplied:
+          type: boolean
+          description: Whether accumulated chunk feedback was applied as a ranking signal. Raw feedback weights and events are not exposed.
     SupportMaterial:
       type: object
       properties:

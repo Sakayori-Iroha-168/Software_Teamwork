@@ -146,13 +146,15 @@ AI Gateway 是内部模型服务，只提供 `/internal/v1/**` 给 `qa`、`knowl
 
 知识库管理、文档处理状态、切片详情、原始文件内容和知识检索已经进入 gateway OpenAPI。前端只能调用 gateway active paths，不能直接调用 `services/knowledge`。逐项 method/path/schema 以 [`docs/services/gateway/api/public.openapi.yaml`](../services/gateway/api/public.openapi.yaml) 和 [Gateway Active API Owner Map](../services/gateway/docs/active-api-owner-map.md) 为准；本文只规定跨前后端协作规则。
 
-Knowledge 公开资源族包括 `knowledge-bases`、知识库下的 `documents`、独立 `documents` 子资源、`documents/{documentId}/chunks`、`documents/{documentId}/content` 和 `knowledge-queries`。检索使用 `knowledge-queries` 资源，不使用 `/search`、`/retrieval/search` 或其他动作路径。返回字段、分页结构和错误响应以 Gateway OpenAPI 为准。
+Knowledge 公开资源族包括 `knowledge-bases`、知识库下的 `documents`、独立 `documents` 子资源、`documents/{documentId}/chunks`、`documents/{documentId}/content` 和 `knowledge-queries`。检索使用 `knowledge-queries` 资源，不使用 `/search`、`/retrieval/search` 或其他动作路径。Knowledge 可以在内部把 chunk feedback 权重作为排名算子，并在 query trace 中用 `feedbackApplied` 标记是否应用；前端不得读取、写入或缓存原始 feedback 权重、反馈事件或 ranking payload。返回字段、分页结构和错误响应以 Gateway OpenAPI 为准。
 
 ## QA 接口
 
 智能问答会话、消息、回答运行、引用、配置、检索体验测试和统计已经进入 gateway OpenAPI。前端只能调用 gateway active paths，不能直接调用 `services/qa` 或 AI Gateway。逐项 method/path/schema 以 Gateway OpenAPI 和 owner map 为准。
 
-QA 公开资源族包括 `qa-sessions`、会话下的 `messages` 和 `events`、`response-runs`、消息引用和引用 lookup、QA/LLM 配置版本、连接测试、检索体验测试和 `qa-metrics`。前端只展示 QA 返回的 `thinking` / `reasoning.step` 安全摘要和 tool-call summary，不展示或缓存完整 prompt、私有 chain-of-thought、MCP 原始参数/结果、内部 URL、provider 原始错误或存储 object key。
+QA 公开资源族包括 `qa-sessions`、会话下的 `messages` 和 `events`、`response-runs`、消息引用和引用 lookup、消息反馈、QA/LLM 配置版本、连接测试、检索体验测试和 `qa-metrics`。前端只展示 QA 返回的 `thinking` / `reasoning.step` 安全摘要和 tool-call summary，不展示或缓存完整 prompt、私有 chain-of-thought、MCP 原始参数/结果、内部 URL、provider 原始错误或存储 object key。
+
+消息反馈只通过 `POST /api/v1/messages/{messageId}/feedback` 提交 message-level `vote`。前端不得发送 `chunkId`、citation 原文、检索分数、rerank 分数、feedback score、prompt 或工具 payload。QA 负责根据已保存 citations 归因到 chunk，Knowledge 负责内部 chunk feedback 权重和后续 `knowledge-queries` 排名。
 
 ## Admin Runtime Configuration 接口
 

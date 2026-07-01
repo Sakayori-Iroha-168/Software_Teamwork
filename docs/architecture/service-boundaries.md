@@ -11,9 +11,9 @@
 | `gateway` | 面向前端、管理端、后端模块和工具调用方的公开 API；路由；基于 Redis 的会话缓存；认证上下文透传；响应/错误包裹结构；请求 ID；轻量聚合。 | `/api/v1/**`、`/healthz`、`/readyz`。 | 持久化用户/角色/权限、文档解析、向量检索、LLM 工作流、报告生成业务逻辑。 |
 | `auth` | 用户、凭证、角色、权限、会话或令牌、会话身份签发和撤销。 | 用户创建、会话创建/删除、当前用户、权限检查、供 gateway 缓存的会话身份。 | 文件元数据、知识索引、QA 消息、报告记录。 |
 | `file` | 基础文件上传/内容 API、原始对象、对象存储协调、最小 file 元数据生命周期、面向后端服务的 MinIO 中间层。 | 不直接拥有前端公开 API；通过内部 `/internal/v1/files/**` 为 `knowledge`、`document` 等 owner service 提供基础文件能力。 | 知识库归属、知识文档状态、知识分块、向量索引、RAG、报告生成、报告材料/模板/报告文件业务状态、QA 会话附件元数据/解析状态/临时 chunk 归属。QA 会话附件原始 bytes 通过内部 file API 保存。 |
-| `knowledge` | 知识库、知识文档上传入口、文档摄取状态、原始文档内容资源、分块、嵌入工作流、检索策略、检索查询、Qdrant 索引归属、文档解析器运行时配置。 | 通过 gateway 暴露知识库 CRUD、文档上传/详情/内容/分块列表、知识查询和管理员解析器配置资源；需要保存或读取原始文件时内部调用 file，需要解析原始 bytes 时内部调用 parser，需要生成嵌入或 rerank 时内部调用 AI Gateway。 | 用户身份、底层对象存储实现、OCR/PaddleOCR 运行时、LLM 答案生成、DOCX 导出、provider API key 存储。 |
+| `knowledge` | 知识库、知识文档上传入口、文档摄取状态、原始文档内容资源、分块、嵌入工作流、检索策略、检索查询、chunk feedback 权重、Qdrant 索引归属、文档解析器运行时配置。 | 通过 gateway 暴露知识库 CRUD、文档上传/详情/内容/分块列表、知识查询和管理员解析器配置资源；需要保存或读取原始文件时内部调用 file，需要解析原始 bytes 时内部调用 parser，需要生成嵌入或 rerank 时内部调用 AI Gateway；内部接收 QA 根据 citations 归因后的 chunk feedback 信号。 | 用户身份、底层对象存储实现、OCR/PaddleOCR 运行时、LLM 答案生成、DOCX 导出、provider API key 存储、QA 消息反馈事件归属。 |
 | `parser` | 内部文档解析运行时，把原始文档 bytes 转成规范化 parsed content；首个目标后端为 Python/PaddleOCR。 | 不通过 gateway 暴露；只提供内部 `/internal/v1/parsed-documents`、`/healthz`、`/readyz`。 | 知识库/文档业务状态、processing job、chunk 持久化、embedding、Qdrant 写入、检索、parser admin 配置公开契约、对象存储元数据、QA 会话附件业务状态和临时 chunk 持久化。 |
-| `qa` | 聊天会话、消息、Agent Host / ReAct 循环、MCP 工具编排、响应运行记录、模型调用摘要、工具调用记录、引用、会话临时附件元数据/解析状态/临时 chunk/Agent 检索入口、QA 配置版本、检索测试运行和 QA 指标。 | 暴露 `/api/v1/qa-sessions/**`（含 `/api/v1/qa-sessions/{sessionId}/attachments/**`）、`/api/v1/response-runs/**`、`/api/v1/messages/{messageId}/citations`、`/api/v1/citations/**`、`/api/v1/qa-config-versions/**`、`/api/v1/llm-config-versions/**`、`/api/v1/llm-connection-tests`、`/api/v1/retrieval-test-runs/**`、`/api/v1/qa-metrics/**` 下的 QA 路由；内部调用 AI Gateway 获取 OpenAI 兼容的 chat completions 和 Function Calling 传输；调用 MCP Client 进行工具发现/执行；保存会话附件原始 bytes 时内部调用 file，解析附件时内部调用 parser。 | 知识库 CRUD、文件上传、报告记录管理、provider API key 存储、具体 MCP server 实现、直接 provider 调用、会话附件原始 bytes 存储实现、OCR/文档解析运行时、把会话临时附件写入 knowledge 长期索引、在公开前端契约中暴露原始 MCP 工具 schema、原始工具结果、`file_ref` 或 object key。 |
+| `qa` | 聊天会话、消息、Agent Host / ReAct 循环、MCP 工具编排、响应运行记录、模型调用摘要、工具调用记录、引用、消息反馈事件、会话临时附件元数据/解析状态/临时 chunk/Agent 检索入口、QA 配置版本、检索测试运行和 QA 指标。 | 暴露 `/api/v1/qa-sessions/**`（含 `/api/v1/qa-sessions/{sessionId}/attachments/**`）、`/api/v1/response-runs/**`、`/api/v1/messages/{messageId}/citations`、`/api/v1/messages/{messageId}/feedback`、`/api/v1/citations/**`、`/api/v1/qa-config-versions/**`、`/api/v1/llm-config-versions/**`、`/api/v1/llm-connection-tests`、`/api/v1/retrieval-test-runs/**`、`/api/v1/qa-metrics/**` 下的 QA 路由；内部调用 AI Gateway 获取 OpenAI 兼容的 chat completions 和 Function Calling 传输；调用 MCP Client 进行工具发现/执行；保存会话附件原始 bytes 时内部调用 file，解析附件时内部调用 parser；根据已保存 citations 向 Knowledge 上报 chunk feedback。 | 知识库 CRUD、文件上传、报告记录管理、provider API key 存储、具体 MCP server 实现、直接 provider 调用、会话附件原始 bytes 存储实现、OCR/文档解析运行时、把会话临时附件写入 knowledge 长期索引、计算或持久化 Knowledge chunk feedback 权重、在公开前端契约中暴露原始 MCP 工具 schema、原始工具结果、`file_ref`、chunk feedback 权重或 object key。 |
 | `document` | 报告模板、材料、报告记录、大纲、章节内容、报告任务、生成文件元数据、统计数据和报告操作日志。 | 暴露 `/api/v1/report-*` 和 `/api/v1/reports/**` 下的报告生成路由；涉及文件或模型输出时，使用 file 服务处理文件对象存储/内容，使用 AI Gateway 进行模型调用。 | QA 聊天、知识索引、auth 持久化、provider API key 存储、直接暴露 MinIO object key 或存储 URL。 |
 | `ai-gateway` | 模型 profile、provider 配置、API key 写入状态、OpenAI 兼容的 chat completions、Function Calling 传输、embeddings、OpenAI 风格 rerankings、provider 错误归一化。 | 内部 `/internal/v1/model-profiles`、`/internal/v1/chat/completions`、`/internal/v1/embeddings`、`/internal/v1/rerankings`；健康检查和就绪检查。 | 面向前端的 API、QA 会话/消息、Agent Run 状态、MCP 工具发现/执行、知识分块持久化、Qdrant 写入、报告记录、报告导出、领域权限决策。 |
 
@@ -32,6 +32,7 @@
 | QA Agent 答案生成 | 公开入口、SSE 转发、认证上下文透传和响应归一化。 | `qa` | 已生效的 gateway 契约。QA 负责会话/消息/引用状态，运行 ReAct 循环，调用 AI Gateway 获取 OpenAI 兼容的 Function Calling 传输，并调用 MCP Client 使用已批准工具。公开工具调用字段仅为脱敏后的摘要。 |
 | QA 会话附件上传与解析 | 公开文件上传入口、owner 授权和响应归一化。 | `qa` | QA 拥有会话附件元数据、解析状态、临时 chunk 和 Agent 检索入口。QA 内部调用 file 保存原始 bytes（file 拥有原始对象），内部调用 parser 做 OCR/文档解析（parser 仅解析、不持久化业务状态）。会话临时附件不写入 knowledge 的长期知识库或向量索引。非归属会话返回 not_found，公开响应不暴露 `file_ref`、object key、bucket 或内部 URL。 |
 | 引用来源查询 | 公开入口和响应归一化。 | `qa` | 已保存引用快照的已生效 gateway 契约。来源知识分块和原始文档内容仍以 knowledge/file 为权威。 |
+| QA 消息反馈与 chunk 权重 | 公开 message-level feedback 入口和响应归一化。 | `qa` 公开资源；`knowledge` 内部 chunk 权重 | 前端只提交 `/api/v1/messages/{messageId}/feedback` 的 `vote`。QA 保存消息反馈并根据该消息 citations 读取 `chunkId`；Knowledge 通过内部 `/internal/v1/chunk-feedback` 接收归因后的信号、维护聚合权重，并在后续 `knowledge-queries` 排名时作为算子使用。前端不得提交 chunk IDs、feedback score 或 ranking payload。 |
 | 报告模板管理 | 公开入口和认证上下文透传。 | `document` | Document 服务负责模板元数据、模板结构和模板文件引用。 |
 | 报告材料管理 | 公开入口和认证上下文透传。 | `document` | Document 服务负责报告任务使用的材料元数据和材料文件引用；原始文件对象存储应复用 file 服务，而不是把材料当作知识库文档处理。 |
 | 报告记录管理 | 公开入口和认证上下文透传。 | `document` | Document 服务负责报告草稿、生命周期状态、大纲、章节和软删除规则。 |
@@ -49,7 +50,7 @@
 
 以下下游前端/后端接口在团队最终确定请求和响应结构前，只登记在
 `docs/services/gateway/api/public.openapi.yaml` 顶层 `x-missing-contracts`，
-不进入 active paths。QA 会话、消息、SSE、响应运行、引用、配置、检索测试和指标路由
+不进入 active paths。QA 会话、消息、SSE、响应运行、引用、消息反馈、配置、检索测试和指标路由
 已不再缺失；它们是已生效的 gateway 契约。
 
 | 领域 | 占位路径 | 归属方 |
