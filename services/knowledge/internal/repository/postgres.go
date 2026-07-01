@@ -1353,7 +1353,7 @@ func pgTimePtr(value *time.Time) pgtype.Timestamptz {
 
 func (r *PostgresRepository) GetStats(ctx context.Context) (service.KnowledgeBaseStats, error) {
 	var kbCount, docCount int
-	err := r.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM knowledge_bases WHERE deleted_at IS NULL), (SELECT count(*) FROM documents WHERE deleted_at IS NULL)`).Scan(&kbCount, &docCount)
+	err := r.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM knowledge_bases WHERE deleted_at IS NULL), (SELECT count(*) FROM knowledge_documents WHERE deleted_at IS NULL)`).Scan(&kbCount, &docCount)
 	if err != nil {
 		return service.KnowledgeBaseStats{}, wrapPostgresError("get knowledge stats", err)
 	}

@@ -2599,6 +2599,7 @@ export interface components {
         };
         QATopQuery: {
             query: string;
+            contentPreview?: string;
             count: number;
             avgLatencyMs?: number;
             /** Format: date-time */
