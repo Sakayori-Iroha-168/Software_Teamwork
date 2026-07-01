@@ -410,3 +410,67 @@ func TestAttachmentServiceSearchSessionAttachments(t *testing.T) {
 		t.Fatalf("results = %+v", results)
 	}
 }
+
+func TestAttachmentServiceCleanupExpiredFileDeleteFailure(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &attachmentRepoStub{
+		conversation: Conversation{ID: "sess-1"},
+		attachments: []SessionAttachment{{
+			ID: "att-1", SessionID: "sess-1", FileRef: "file-1", Status: AttachmentStatusReady,
+			ExpiresAt: now.Add(-time.Hour),
+		}, {
+			ID: "att-2", SessionID: "sess-1", FileRef: "file-2", Status: AttachmentStatusReady,
+			ExpiresAt: now.Add(-time.Hour),
+		}},
+	}
+	deleteErr := errors.New("file service unavailable")
+	files := &testFileClient{data: map[string][]byte{"file-1": []byte("a"), "file-2": []byte("b")}, deleteErr: deleteErr}
+	svc, err := NewAttachmentService(repo, files, testParserClient{}, AttachmentServiceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expired, err := svc.CleanupExpired(context.Background(), 10)
+	if err == nil {
+		t.Fatal("CleanupExpired() should return an error when file deletion fails")
+	}
+	if !errors.Is(err, deleteErr) {
+		t.Fatalf("CleanupExpired() error = %v, want %v", err, deleteErr)
+	}
+	if len(expired) != 2 {
+		t.Fatalf("CleanupExpired() returned %d attachments, want 2 (still returned even on file delete failure)", len(expired))
+	}
+	// File data should remain since deletion failed.
+	if len(files.data) != 2 {
+		t.Fatalf("file data after failed cleanup = %d entries, want 2 (files leaked)", len(files.data))
+	}
+}
+
+func TestAttachmentServiceDeleteFileDeleteFailure(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &attachmentRepoStub{
+		conversation: Conversation{ID: "sess-1"},
+		attachments: []SessionAttachment{{
+			ID: "att-1", SessionID: "sess-1", FileRef: "file-1", Status: AttachmentStatusReady,
+			ExpiresAt: now.Add(time.Hour),
+		}},
+	}
+	deleteErr := errors.New("file service unavailable")
+	files := &testFileClient{data: map[string][]byte{"file-1": []byte("data")}, deleteErr: deleteErr}
+	svc, err := NewAttachmentService(repo, files, testParserClient{}, AttachmentServiceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = svc.Delete(context.Background(), "user-1", "sess-1", "att-1")
+	if err == nil {
+		t.Fatal("Delete() should return an error when file deletion fails")
+	}
+	if !errors.Is(err, deleteErr) {
+		t.Fatalf("Delete() error = %v, want %v", err, deleteErr)
+	}
+	// File data should remain since deletion failed.
+	if _, ok := files.data["file-1"]; !ok {
+		t.Fatal("file data was unexpectedly deleted despite deletion error")
+	}
+}

@@ -215,7 +215,8 @@ func (c *ParserHTTPClient) Parse(ctx context.Context, filename, contentType stri
 	}
 	var envelope struct {
 		Data struct {
-			Pages []struct {
+			Content string `json:"content"`
+			Pages   []struct {
 				PageNumber int    `json:"pageNumber"`
 				Content    string `json:"content"`
 			} `json:"pages"`
@@ -235,8 +236,16 @@ func (c *ParserHTTPClient) Parse(ctx context.Context, filename, contentType stri
 			Content:    content,
 		})
 	}
+	// Fall back to top-level data.content when pages is absent (e.g. text/docx backends).
 	if len(chunks) == 0 {
-		return service.ParsedAttachment{}, fmt.Errorf("parser returned no content")
+		topLevel := strings.TrimSpace(envelope.Data.Content)
+		if topLevel == "" {
+			return service.ParsedAttachment{}, fmt.Errorf("parser returned no content")
+		}
+		chunks = append(chunks, service.ParsedAttachmentChunk{
+			PageNumber: 1,
+			Content:    topLevel,
+		})
 	}
 	pageCount := len(envelope.Data.Pages)
 	if pageCount == 0 {

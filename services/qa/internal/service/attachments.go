@@ -233,7 +233,9 @@ func (s *AttachmentService) Delete(ctx context.Context, userID, sessionID, attac
 		return err
 	}
 	if att.FileRef != "" {
-		_ = s.fileClient.Delete(context.WithoutCancel(ctx), att.FileRef)
+		if delErr := s.fileClient.Delete(context.WithoutCancel(ctx), att.FileRef); delErr != nil {
+			return fmt.Errorf("delete file %s after attachment soft-delete: %w", att.FileRef, delErr)
+		}
 	}
 	return nil
 }
@@ -286,10 +288,17 @@ func (s *AttachmentService) CleanupExpired(ctx context.Context, limit int) ([]Se
 	if err != nil {
 		return nil, err
 	}
+	var errs []error
 	for _, att := range expired {
-		if att.FileRef != "" {
-			_ = s.fileClient.Delete(context.WithoutCancel(ctx), att.FileRef)
+		if att.FileRef == "" {
+			continue
 		}
+		if delErr := s.fileClient.Delete(context.WithoutCancel(ctx), att.FileRef); delErr != nil {
+			errs = append(errs, fmt.Errorf("delete file %s for attachment %s: %w", att.FileRef, att.ID, delErr))
+		}
+	}
+	if len(errs) > 0 {
+		return expired, fmt.Errorf("cleanup file deletion failures (%d/%d): %w", len(errs), len(expired), errors.Join(errs...))
 	}
 	return expired, nil
 }
