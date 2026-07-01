@@ -993,3 +993,36 @@ Added deterministic local integration seed data for Auth, Knowledge, Document, Q
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: F-021 model profile status controls
+
+**Date**: 2026-07-01
+**Task**: F-021 model profile status controls
+**Branch**: `Frontend/fix/model-profile-status-controls`
+
+### Summary
+
+Implemented admin model profile enabled/default form controls, preserved API key safety, added frontend regression tests, and verified focused/unit/build checks. Full frontend check still fails on pre-existing untouched Prettier baseline files.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0f96498` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
