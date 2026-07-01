@@ -181,6 +181,8 @@ Override host ports in `deploy/.env`.
 | `PARSER_BACKEND` | parser | no | Defaults to `ppstructurev3` for structured PDF/image parsing; set `document` only for local text/Office parsing without OCR dependencies. |
 | `QA_DATABASE_URL` | qa | yes | QA PostgreSQL DSN. |
 | `KNOWLEDGE_SERVICE_URL` | qa | yes | Internal Knowledge Service URL. |
+| `FILE_SERVICE_URL` | qa | yes | Internal File Service URL for QA session attachment upload/read/delete; Compose sets `http://file:8082`. |
+| `PARSER_SERVICE_URL` | qa | yes | Internal Parser Service URL for QA session attachment parsing; Compose sets `http://parser:8087`. |
 | `AI_GATEWAY_URL` | qa | yes | Internal chat completions URL; useful when `--profile ai` is running. |
 | `DOCUMENT_DATABASE_URL` | document | yes | Document PostgreSQL DSN. |
 | `DOCUMENT_REDIS_ADDR` | document | yes | Redis/asynq endpoint. |
