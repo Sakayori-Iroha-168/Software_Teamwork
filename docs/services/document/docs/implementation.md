@@ -50,7 +50,7 @@
 | report files / content | `internal/http/report_files.go`、`internal/service/report_file_service.go`、`internal/worker/worker.go` | Gateway / Document OpenAPI | report file service/http/worker tests | `POST /report-files` 创建文件元数据和异步任务；`report_file_creation` worker 使用内置 `SimpleDOCXGenerator` 从已保存章节生成基础 DOCX，上传 File Service 后 content endpoint 可读取。 |
 | report settings | `internal/http/admin_handlers.go`、`internal/service/admin_service.go`、`internal/repository/admin.go` | Gateway / Document OpenAPI | HTTP/service/repository tests | 持久化 AI Gateway profile 引用、默认模板和文件默认值；`PATCH` 仅 admin/super_admin。 |
 | statistics / operation logs | `internal/http/admin_handlers.go`、`internal/service/admin_service.go`、`internal/repository/admin.go` | Gateway / Document OpenAPI | HTTP/service/repository tests | 支持概览、每日趋势和操作日志过滤；日志写入路径做敏感字段脱敏。 |
-| Document MCP tool adapter | `internal/service/mcp_tools.go` | Document README / requirements | MCP tool service tests | 提供 `generate_report_outline`、`regenerate_report_outline`、`generate_report_text`、`regenerate_report_text`、`regenerate_report_section`、`get_generation_status`、`get_template_schema`、`export_report_docx`、`get_report_result`；工具层复用现有 service，不直连 repository/File/MinIO/Qdrant/provider，输出和操作日志均为安全摘要。 |
+| Document MCP tool adapter | `internal/service/mcp_tools.go` | Document README / requirements；QA `reportArtifact` 契约见 Gateway OpenAPI `QAReportArtifact` | MCP tool service tests | 提供 `generate_report_outline`、`regenerate_report_outline`、`generate_report_text`、`regenerate_report_text`、`regenerate_report_section`、`get_generation_status`、`get_template_schema`、`export_report_docx`、`get_report_result`；工具层复用现有 service，不直连 repository/File/MinIO/Qdrant/provider，输出和操作日志均为安全摘要。QA 只能消费这些安全摘要并映射为 `reportArtifact`，不得透传 MCP 原始 JSON。 |
 | AI Gateway profile/chat clients | `internal/platform/aigateway/profile_client.go`、`internal/platform/aigateway/chat_client.go`、`cmd/server/main.go` | AI Gateway internal API | client/config tests | Document 只校验并引用 profile，不保存 provider key。`DOCUMENT_AI_GATEWAY_URL` 必须是受控 AI Gateway service base URL，不允许 credentials/query/fragment、意外 path、公网域名、非 loopback IP 或非标准内部端口；本地允许 `localhost`/loopback 和 Compose 服务名 `ai-gateway` 的 `8086` 端口，校验后 client 使用 canonical base URL。 |
 | PostgreSQL repository | `internal/repository`、`migrations/0001_create_report_generation_tables.sql` | 数据模型 | repository tests | runtime 使用 `pgx/v5`。 |
 | File Service client | `internal/platform/fileclient` | File/Document 边界 | fileclient tests | multipart 创建 file，delete cleanup。 |
@@ -74,7 +74,20 @@
 | Service path prefix | Gateway public paths 是 `/api/v1/report-*` | Document service 本地 routes 无 `/internal/v1` 前缀，gateway 默认剥离 `/api/v1` | 这与 gateway proxy 逻辑一致但易误解 | README/implementation 明确 document local path 形态。 |
 | `go-redis` 传递依赖版本 | 技术基线固定直接 Redis client 为 `go-redis/v9@v9.21.0` | Document 通过 `asynq v0.26.0` 间接带入 `go-redis/v9@v9.14.1`；本次版本修复不改非 Docker 代码依赖 | 文档基线和锁定依赖存在出入，后续队列依赖升级时可能被忽略 | 下次升级 asynq 或调整 worker queue 依赖时优先消除该出入；不能消除时继续在本文记录原因。 |
 
-## 6. MVP / mock / memory backend / 占位
+## 6. QA reportArtifact 来源与安全边界
+
+Gateway OpenAPI `QAReportArtifact` 定义 QA 聊天中报告生成产物的前端交付结构。Document 服务是报告、job、report file 和 content endpoint 的业务来源；QA 只通过批准的 Document 工具或 gateway 公开报告接口取得安全摘要并映射给前端。
+
+Document 侧输出给 QA/MCP 调用方时必须满足：
+
+- job 进行中只返回任务 id、任务类型、状态、进度和用户可见摘要。
+- report file 只有在 `succeeded` 且当前用户可读时，才允许 QA 形成 `/api/v1/report-files/{reportFileId}/content` 下载路径。
+- 失败场景返回稳定错误码和用户可见摘要；不得返回 provider 原始错误、prompt、完整章节正文、File internal ID、`file_ref`、bucket、object key、内部 URL 或临时文件路径。
+- `reportFileId` 是公开报告文件资源 id；底层 File Service id 和对象存储路径不属于 QA 前端契约。
+
+当前状态：Document 服务内工具适配层已存在；远程 MCP server 包装和 QA Host 真实注册仍是后续实现/联调任务。
+
+## 7. MVP / mock / memory backend / 占位
 
 | 项目 | 当前用途 | 退出条件 | 关联任务 |
 | --- | --- | --- | --- |
@@ -83,7 +96,7 @@
 | fake repositories in tests | service/http 单元测试 | 保留测试用 | 无 |
 | env-gated repository integration tests | 无 DB 环境跳过 | CI 提供 `DOCUMENT_TEST_DATABASE_URL` | testing required checks 分阶段升级任务 |
 
-## 7. 运行与配置
+## 8. 运行与配置
 
 | 项目 | 当前状态 | 缺口 |
 | --- | --- | --- |
@@ -93,7 +106,7 @@
 | Redis / queue | asynq client/worker 已接入 report job enqueue/status lifecycle 和 AI 生成 executor | 需要 Redis + AI Gateway smoke。 |
 | Object storage / vector store / AI provider | 模板/材料和基础 report file DOCX 通过 File Service；AI 生成通过 AI Gateway；按请求可调用 Knowledge 检索 | Knowledge/File/AI Gateway 跨服务 smoke 和富 DOCX export 未实现。 |
 
-## 8. 测试与验证
+## 9. 测试与验证
 
 | 验证项 | 命令或步骤 | 当前结果 | 缺口 |
 | --- | --- | --- | --- |
@@ -105,7 +118,7 @@
 | 集成测试 | `DOCUMENT_TEST_DATABASE_URL=... go test ./internal/repository/... -count=1` | skip（本次无 PostgreSQL 环境，env-gated tests 正常跳过） | 需要 PostgreSQL；CI 提供 `DOCUMENT_TEST_DATABASE_URL` 时自动运行。 |
 | 跨服务 smoke | AI Gateway / Knowledge / File Service / Redis through worker | not run | 需要 gateway/auth/file/document/ai-gateway/knowledge 联调环境。 |
 
-## 9. 建议任务
+## 10. 建议任务
 
 | 任务 | 类型 | 优先级 | 依据 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -115,7 +128,7 @@
 | 补 report files/content 跨服务 smoke | 测试 / runbook | P1 | 基础 DOCX 导出已在服务内闭环 | 用 PostgreSQL、Redis、File Service 和 document worker 验证 `POST /report-files` 到 content endpoint 的完整链路。 |
 | 回写富 DOCX 预留配置状态 | 回写文档 | P1 | Pandoc/LibreOffice env 当前要求但未使用 | 防部署误判。 |
 
-## 10. 最近检查记录
+## 11. 最近检查记录
 
 | 日期 | 检查人/工具 | 代码基准 | 结论 |
 | --- | --- | --- | --- |

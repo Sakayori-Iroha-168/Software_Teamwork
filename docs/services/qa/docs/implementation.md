@@ -68,11 +68,27 @@
 | 模型调用边界 | 文档要求业务服务通过 AI Gateway 调模型 | `services/qa/internal/config/config.go` 默认 `AI_GATEWAY_URL=http://localhost:8086/internal/v1/chat/completions`，token header 默认 `X-Service-Token`，不再要求 `DEEPSEEK_API_KEY` fallback | 与架构方向一致；仍需部署联调 token hash 和 caller header | 补 QA -> AI Gateway smoke。 |
 | Knowledge retrieval dependency | QA 文档将检索作为 RAG 主路径 | Knowledge 已实现 `knowledge-queries`，QA 仍缺完整 RAG/citation 跨服务 smoke | 单服务测试通过不等于用户问答闭环已验收 | 补 #304 端到端 sample、#95 retrieval tests 和 #93/#325 citation snapshot/detail/batch query。 |
 | Gateway active QA paths | Gateway 25 个 QA operations active | QA 内部 routes 全注册 | route 层对齐，但业务结果依赖外部服务 | 增加跨服务 contract smoke。 |
-| MCP 原始信息不得暴露 | 文档要求只返回脱敏摘要 | 代码有 tool-call summary 和 local tool safety tests | 当前方向一致 | 持续补审计和字段级契约测试。 |
+| MCP 原始信息不得暴露 | 文档要求只返回脱敏摘要；QA 报告生成工具产物按 Gateway OpenAPI `QAReportArtifact` 暴露在 `tool.completed`/`tool.failed` 的 `payload.result.reportArtifact` 和 tool-call `resultSummary.reportArtifact` | 代码有 tool-call summary 和 local tool safety tests；Document 报告生成工具注册与 artifact 映射仍由 B-016 补实现 | 当前方向一致；实现时必须从 Document 工具结果映射安全摘要，不透传 MCP 原始 JSON | 持续补审计和字段级契约测试；B-016 需覆盖 job pending、export succeeded/failed、forbidden 和 dependency error。 |
 | Agent Run 状态 | README 描述 Agent Run、termination 和 maxIterations | develop 已包含 ResponseRun、终止原因、模型调用摘要、function-calling adapter 和基础测试 | 容易把 Agent Loop 可用误读为完整 RAG/citation 已完成 | 本文将 Agent Loop 和真实 RAG/citation smoke 分开记录。 |
 | `sqlc` 生成器版本 | 技术基线固定 `sqlc` CLI 推荐版本为 `v1.31.1` | `services/qa/internal/repository/sqlc/*.go` 头部仍记录 `sqlc v1.29.0`；本次版本修复不改非 Docker 生成代码 | 代码生成器版本与文档基线出入，后续 SQL 变更时容易继续沿用旧生成器 | 下次修改 QA SQL 或 repository 生成代码时，使用 `go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate` 重新生成并提交。 |
 
-## 6. MVP / mock / memory backend / 占位
+## 6. QA 报告生成工具产物契约
+
+`reportArtifact` 是 QA 面向前端的报告生成产物摘要，权威 schema 在 Gateway OpenAPI `QAReportArtifact`。QA 后端在后续注册 Document 报告生成工具时，应把 Document MCP tool result 映射为该结构，并只写入以下公开位置：
+
+- SSE `tool.completed` / `tool.failed` 事件的 `payload.result.reportArtifact`。
+- `agent_tool_calls.result_summary.reportArtifact`，供 `GET /api/v1/response-runs/{responseRunId}/tool-calls` 回放。
+
+映射规则：
+
+- 创建或查询 job 时返回 `jobId`、`jobType`、`jobStatus` 和进度类 `preview`；job 未完成时不得返回 `downloadPath`。
+- 导出成功或 `get_report_result` 能确认文件就绪时，才返回 `reportFileId`、`filename`、`format`、`fileStatus=succeeded`、`fileSize` 和 `/api/v1/report-files/{reportFileId}/content` 形式的 `downloadPath`。
+- 无权限、依赖错误、导出失败只返回安全 `preview` 与状态字段，不返回 File internal ID、object key、bucket、内部 URL、prompt、provider 原始错误、MCP 原始参数或完整结果。
+- `preview` 只保留标题、章节标题、短摘要、进度和用户可见状态，不放完整报告正文。
+
+当前状态：契约已冻结；QA 端 Document 工具注册、fake Document MCP client 测试和映射实现由 B-016 完成。
+
+## 7. MVP / mock / memory backend / 占位
 
 | 项目 | 当前用途 | 退出条件 | 关联任务 |
 | --- | --- | --- | --- |
@@ -80,7 +96,7 @@
 | AI Gateway default endpoint | 未显式配置时使用本地 AI Gateway chat completions | 环境差异需要部署文档明确覆盖 | QA -> AI Gateway smoke / profile seed 任务 |
 | repository integration tests gated by env | 避免无 DB 环境失败 | CI 提供 `QA_TEST_DATABASE_URL` | testing required checks 分阶段升级任务 |
 
-## 7. 运行与配置
+## 8. 运行与配置
 
 | 项目 | 当前状态 | 缺口 |
 | --- | --- | --- |
@@ -90,7 +106,7 @@
 | Redis / queue | 当前交互式主路径不使用队列 | 后续离线任务再接 asynq。 |
 | Object storage / vector store / AI provider | 通过 Knowledge/AI Gateway/MCP 间接访问 | 需补 QA -> AI Gateway/provider smoke。 |
 
-## 8. 测试与验证
+## 9. 测试与验证
 
 | 验证项 | 命令或步骤 | 当前结果 | 缺口 |
 | --- | --- | --- | --- |
@@ -101,7 +117,7 @@
 | QA -> AI Gateway smoke | `QA_AI_GATEWAY_SMOKE=1 go test ./internal/platform/modelclient -run '^TestAIGatewaySmoke$' -count=1 -v` | env-gated | 需要运行中的 AI Gateway、有效 service token、显式 chat profile 和受控或真实 provider；默认 CI skip。 |
 | 完整手工 smoke | Gateway -> QA session -> message stream | not run | 需要 Auth/Gateway/Redis/Knowledge/Model。 |
 
-## 9. 建议任务
+## 10. 建议任务
 
 | 任务 | 类型 | 优先级 | 依据 | 说明 |
 | --- | --- | --- | --- | --- |
@@ -110,7 +126,7 @@
 | 补 citation snapshot/detail/batch query | 新任务 | P0 | #93 / #325 | 不把现有 tool-call/resource 摘要误写成完整 citation API。 |
 | 补完整 QA + Knowledge + Gateway E2E smoke | 新任务 | P0 | 单服务 fake-backed 测试不能替代跨服务验收 | 覆盖 Auth/Gateway/Knowledge/AI Gateway provider fixture 和 QA SSE replay。 |
 
-## 10. 最近检查记录
+## 11. 最近检查记录
 
 | 日期 | 检查人/工具 | 代码基准 | 结论 |
 | --- | --- | --- | --- |

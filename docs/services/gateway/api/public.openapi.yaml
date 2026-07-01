@@ -1849,7 +1849,7 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: Server-Sent Events with event types `message.created`, `agent.iteration.started`, `reasoning.step`, `tool.started`, `tool.completed`, `tool.failed`, `answer.delta`, `citation.delta`, `answer.completed`, `error`, and optional `heartbeat`.
+                description: Server-Sent Events with event types `message.created`, `agent.iteration.started`, `reasoning.step`, `tool.started`, `tool.completed`, `tool.failed`, `answer.delta`, `citation.delta`, `answer.completed`, `error`, and optional `heartbeat`. For `tool.completed` and `tool.failed`, Document report-generation tools may include `payload.result.reportArtifact` using the `QAReportArtifact` schema.
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -2098,7 +2098,7 @@ paths:
       summary: List QA response run tool calls
       operationId: listQAResponseRunToolCalls
       x-owner-service: qa
-      description: Returns sanitized tool-call summaries only. Raw MCP schemas, full arguments, raw tool results, prompts, internal URLs, object keys, and provider errors are not part of the public contract.
+      description: Returns sanitized tool-call summaries only. Raw MCP schemas, full arguments, raw tool results, prompts, internal URLs, object keys, and provider errors are not part of the public contract. Document report-generation tools may include a `reportArtifact` object under `resultSummary` using the `QAReportArtifact` schema.
       responses:
         '200':
           description: QA tool call summaries.
@@ -5148,7 +5148,9 @@ components:
         argumentsSummary:
           $ref: '#/components/schemas/JsonObject'
         resultSummary:
-          $ref: '#/components/schemas/JsonObject'
+          allOf:
+          - $ref: '#/components/schemas/JsonObject'
+          description: Sanitized tool result summary. For Document report-generation tools, may contain `reportArtifact` with schema `QAReportArtifact`.
         status:
           type: string
           enum:
@@ -5166,6 +5168,106 @@ components:
           type: string
           format: date-time
           nullable: true
+    QAReportArtifactPreview:
+      type: object
+      description: Safe user-visible preview for a QA-triggered report generation artifact. It must not contain full report body text, prompts, raw MCP arguments/results, provider errors, vector payloads, internal URLs, File internal IDs, buckets, or object keys.
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          description: Short preview title shown to the user.
+        summary:
+          type: string
+          description: Short user-visible summary, not full section content.
+        outlineTitles:
+          type: array
+          description: Report or section headings safe for preview cards.
+          items:
+            type: string
+        sectionTitles:
+          type: array
+          description: Generated or planned section titles safe for preview cards.
+          items:
+            type: string
+        progressPercent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        statusText:
+          type: string
+          description: User-visible status such as `generating outline` or `DOCX export failed`.
+    QAReportArtifact:
+      type: object
+      description: Safe artifact summary returned by QA when Document report-generation tools create, update, export, or inspect a report. The object is allowed only inside sanitized QA tool results, never as raw MCP output.
+      additionalProperties: false
+      required:
+      - artifactType
+      properties:
+        artifactType:
+          type: string
+          enum:
+          - report_generation
+        reportId:
+          type: string
+          description: Document-owned public report business id, when a report exists and the caller can read it.
+        reportName:
+          type: string
+          description: User-visible report title.
+        reportType:
+          type: string
+          description: Report type code such as `summer_peak_inspection`.
+        jobId:
+          type: string
+          description: Document-owned report job id for async generation/export tracking.
+        jobType:
+          $ref: '#/components/schemas/ReportJobType'
+        jobStatus:
+          type: string
+          enum:
+          - accepted
+          - pending
+          - running
+          - succeeded
+          - failed
+          - canceled
+          description: QA-facing normalized job status. `accepted` may be used immediately after an async job is created before Document reports `pending`.
+        reportStatus:
+          type: string
+          description: Report lifecycle status such as `outline_generated`, `generated`, or `failed`.
+        reportFileId:
+          type: string
+          description: Public report file id. Present only when Document can expose generated file metadata to the caller.
+        filename:
+          type: string
+        format:
+          type: string
+          enum:
+          - docx
+        fileStatus:
+          type: string
+          enum:
+          - pending
+          - running
+          - succeeded
+          - failed
+          - canceled
+          description: Export file status. The download button is allowed only when this is `succeeded` and `downloadPath` is present.
+        fileSize:
+          type: integer
+          format: int64
+          minimum: 0
+        preview:
+          $ref: '#/components/schemas/QAReportArtifactPreview'
+        downloadPath:
+          type: string
+          pattern: '^/api/v1/report-files/[^/]+/content$'
+          example: /api/v1/report-files/rf_123/content
+          description: Gateway public content path. Must be present only when `fileStatus` is `succeeded` and the caller has read permission for the report file.
+        detailPath:
+          type: string
+          pattern: '^/api/v1/reports/[^/]+$'
+          example: /api/v1/reports/rpt_123
+          description: Optional Gateway report detail path or frontend deep-link target based on the public report id.
     QAAgentToolCallListResponse:
       type: object
       required:
@@ -5206,7 +5308,9 @@ components:
         eventType:
           $ref: '#/components/schemas/QASseEventType'
         payload:
-          $ref: '#/components/schemas/JsonObject'
+          allOf:
+          - $ref: '#/components/schemas/JsonObject'
+          description: Event payload. `tool.completed` and `tool.failed` events may include `result.reportArtifact` with schema `QAReportArtifact`.
         createdAt:
           type: string
           format: date-time
