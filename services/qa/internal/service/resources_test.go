@@ -119,16 +119,11 @@ type knowledgeRetrieverStub struct {
 	input   RetrievalTestInput
 	results []RetrievalTestResult
 	err     error
-	stats   KnowledgeStats
 }
 
 func (r *knowledgeRetrieverStub) Retrieve(_ context.Context, _ string, input RetrievalTestInput) ([]RetrievalTestResult, error) {
 	r.input = input
 	return r.results, r.err
-}
-
-func (r *knowledgeRetrieverStub) GetStats(_ context.Context, _ string) (KnowledgeStats, error) {
-	return r.stats, nil
 }
 
 type llmTesterStub struct{}
@@ -478,9 +473,7 @@ func TestGetMetricsOverview(t *testing.T) {
 			TotalQuestionCount: 100,
 		},
 	}
-	retriever := &knowledgeRetrieverStub{
-		stats: KnowledgeStats{KnowledgeBaseCount: 3, DocumentCount: 10},
-	}
+	retriever := &knowledgeRetrieverStub{}
 	resources, err := NewResourceService(repository, retriever, llmTesterStub{}, RuntimeLLMConfig{}, runCancellerStub{})
 	if err != nil {
 		t.Fatal(err)
@@ -492,9 +485,6 @@ func TestGetMetricsOverview(t *testing.T) {
 	}
 	if result.TotalQACount != 100 || result.TodayQACount != 10 || result.ConversationCount != 50 {
 		t.Fatalf("metrics overview=%+v", result)
-	}
-	if result.KnowledgeBaseCount != 3 || result.DocumentCount != 10 {
-		t.Fatalf("expected knowledge stats in overview: %+v", result)
 	}
 }
 

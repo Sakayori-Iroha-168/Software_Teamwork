@@ -253,6 +253,10 @@ func (s *Server) handleMetricsOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	if days > 366 {
+		writeError(w, r, service.ValidationError(map[string]string{"days": "must not exceed 366"}))
+		return
+	}
 	value, err := s.resources.GetMetricsOverview(r.Context(), userID, days)
 	if err != nil {
 		writeError(w, r, err)
@@ -269,6 +273,10 @@ func (s *Server) handleMetricsTrend(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	if days > 366 {
+		writeError(w, r, service.ValidationError(map[string]string{"days": "must not exceed 366"}))
+		return
+	}
 	value, err := s.resources.GetMetricsTrend(r.Context(), days)
 	if err != nil {
 		writeError(w, r, err)
@@ -283,6 +291,10 @@ func (s *Server) handleTopQueries(w http.ResponseWriter, r *http.Request) {
 	days, err := positiveQuery(r, "days", 7, false)
 	if err != nil {
 		writeError(w, r, err)
+		return
+	}
+	if days > 366 {
+		writeError(w, r, service.ValidationError(map[string]string{"days": "must not exceed 366"}))
 		return
 	}
 	limit, err := positiveQuery(r, "limit", 10, false)
@@ -308,6 +320,10 @@ func (s *Server) handleIntentDistribution(w http.ResponseWriter, r *http.Request
 	days, err := positiveQuery(r, "days", 7, false)
 	if err != nil {
 		writeError(w, r, err)
+		return
+	}
+	if days > 366 {
+		writeError(w, r, service.ValidationError(map[string]string{"days": "must not exceed 366"}))
 		return
 	}
 	value, err := s.resources.GetIntentDistribution(r.Context(), days)

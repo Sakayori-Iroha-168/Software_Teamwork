@@ -127,35 +127,7 @@ func (c *Client) Retrieve(ctx context.Context, userID string, input service.Retr
 	return results, nil
 }
 
-func (c *Client) GetStats(ctx context.Context, userID string) (service.KnowledgeStats, error) {
-	endpoint := c.baseURL + "/internal/v1/stats"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return service.KnowledgeStats{}, fmt.Errorf("create knowledge stats request: %w", err)
-	}
-	c.setTrustedHeaders(ctx, req, userID)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return service.KnowledgeStats{}, fmt.Errorf("call knowledge stats: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return service.KnowledgeStats{}, service.NewError(service.CodeDependency, "knowledge stats failed", fmt.Errorf("knowledge service returned HTTP %d", resp.StatusCode))
-	}
-	var decoded struct {
-		Data struct {
-			KnowledgeBaseCount int `json:"knowledgeBaseCount"`
-			DocumentCount      int `json:"documentCount"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&decoded); err != nil {
-		return service.KnowledgeStats{}, fmt.Errorf("decode knowledge stats: %w", err)
-	}
-	return service.KnowledgeStats{
-		KnowledgeBaseCount: decoded.Data.KnowledgeBaseCount,
-		DocumentCount:      decoded.Data.DocumentCount,
-	}, nil
-}
+
 
 func (c *Client) CheckCitationSources(ctx context.Context, userID string, documentIDs []string) (map[string]bool, error) {
 	availability := make(map[string]bool, len(documentIDs))

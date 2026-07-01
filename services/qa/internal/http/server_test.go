@@ -715,6 +715,70 @@ func TestMetricsOverviewReturnsSuccessWithPermission(t *testing.T) {
 	}
 }
 
+func TestMetricsOverviewDaysExceedsLimit(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/overview?days=9999", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-User-Permissions", "qa:settings:read")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"days":"must not exceed 366"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestMetricsTrendDaysExceedsLimit(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/trend?days=9999", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-User-Permissions", "qa:settings:read")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"days":"must not exceed 366"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestTopQueriesDaysExceedsLimit(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/top-queries?days=9999", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-User-Permissions", "qa:settings:read")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"days":"must not exceed 366"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestIntentDistributionDaysExceedsLimit(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/intent-distribution?days=9999", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-User-Permissions", "qa:settings:read")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status 400, got %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"days":"must not exceed 366"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
 func newTestServer(t *testing.T, qa fakeQAService) *Server {
 	t.Helper()
 	return newTestServerWithResources(t, qa, fakeResourceService{})
