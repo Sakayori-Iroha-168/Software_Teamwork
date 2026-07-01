@@ -44,10 +44,17 @@ type ResourceService interface {
 	TestLLMConnection(context.Context, string, service.LLMProfileTestInput) (service.LLMProfileTestResult, error)
 	CreateRetrievalTestRun(context.Context, string, service.RetrievalTestInput) (service.RetrievalTestRun, error)
 	GetRetrievalTestRun(context.Context, string, string) (service.RetrievalTestRun, error)
-	GetMetricsOverview(context.Context, string, int) (service.MetricsOverview, error)
+	GetMetricsOverview(context.Context, int) (service.MetricsOverview, error)
 	GetMetricsTrend(context.Context, int) (service.MetricsTrend, error)
 	GetTopQueries(context.Context, int, int) ([]service.TopQuery, error)
 	GetIntentDistribution(context.Context, int) ([]service.IntentDistribution, error)
+}
+
+type AttachmentService interface {
+	Upload(context.Context, string, string, service.UploadAttachmentInput) (service.SessionAttachment, error)
+	List(context.Context, string, string) ([]service.SessionAttachment, error)
+	Get(context.Context, string, string, string) (service.SessionAttachment, error)
+	Delete(context.Context, string, string, string) error
 }
 
 type SettingsService interface {
@@ -62,25 +69,28 @@ type SettingsService interface {
 }
 
 type Config struct {
-	MaxRequestBytes int64
-	Logger          *slog.Logger
-	Ready           func(context.Context) error
-	AdminUserIDs    []string
-	SettingsOpen    bool
-	ServiceToken    string
+	MaxRequestBytes    int64
+	Logger             *slog.Logger
+	Ready              func(context.Context) error
+	AdminUserIDs       []string
+	SettingsOpen       bool
+	ServiceToken       string
+	AttachmentMaxBytes int64
 }
 
 type Server struct {
-	qa              QAService
-	settings        SettingsService
-	resources       ResourceService
-	maxRequestBytes int64
-	logger          *slog.Logger
-	ready           func(context.Context) error
-	adminUserIDs    map[string]struct{}
-	settingsOpen    bool
-	serviceToken    string
-	mux             *http.ServeMux
+	qa                 QAService
+	attachments        AttachmentService
+	settings           SettingsService
+	resources          ResourceService
+	maxRequestBytes    int64
+	logger             *slog.Logger
+	ready              func(context.Context) error
+	adminUserIDs       map[string]struct{}
+	settingsOpen       bool
+	serviceToken       string
+	attachmentMaxBytes int64
+	mux                *http.ServeMux
 }
 
 func NewServer(qa QAService, settings SettingsService, resources ResourceService, cfg Config) (*Server, error) {
@@ -93,6 +103,9 @@ func NewServer(qa QAService, settings SettingsService, resources ResourceService
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.AttachmentMaxBytes <= 0 {
+		cfg.AttachmentMaxBytes = cfg.MaxRequestBytes
+	}
 	admins := make(map[string]struct{}, len(cfg.AdminUserIDs))
 	for _, id := range cfg.AdminUserIDs {
 		admins[id] = struct{}{}
@@ -100,10 +113,15 @@ func NewServer(qa QAService, settings SettingsService, resources ResourceService
 	s := &Server{
 		qa: qa, settings: settings, resources: resources, maxRequestBytes: cfg.MaxRequestBytes,
 		logger: cfg.Logger, ready: cfg.Ready, adminUserIDs: admins,
-		settingsOpen: cfg.SettingsOpen, serviceToken: cfg.ServiceToken, mux: http.NewServeMux(),
+		settingsOpen: cfg.SettingsOpen, serviceToken: cfg.ServiceToken,
+		attachmentMaxBytes: cfg.AttachmentMaxBytes, mux: http.NewServeMux(),
 	}
 	s.routes()
 	return s, nil
+}
+
+func (s *Server) SetAttachmentService(attachments AttachmentService) {
+	s.attachments = attachments
 }
 
 func (s *Server) routes() {
@@ -116,8 +134,97 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("DELETE /internal/v1/qa-sessions/{sessionId}", s.handleDeleteConversation)
 	s.mux.HandleFunc("GET /internal/v1/qa-sessions/{sessionId}/messages", s.handleListMessages)
 	s.mux.HandleFunc("POST /internal/v1/qa-sessions/{sessionId}/messages", s.handleAsk)
+	s.mux.HandleFunc("POST /internal/v1/qa-sessions/{sessionId}/attachments", s.handleUploadAttachment)
+	s.mux.HandleFunc("GET /internal/v1/qa-sessions/{sessionId}/attachments", s.handleListAttachments)
+	s.mux.HandleFunc("GET /internal/v1/qa-sessions/{sessionId}/attachments/{attachmentId}", s.handleGetAttachment)
+	s.mux.HandleFunc("DELETE /internal/v1/qa-sessions/{sessionId}/attachments/{attachmentId}", s.handleDeleteAttachment)
 	s.registerResourceRoutes()
 	s.mux.HandleFunc("/", s.handleNotFound)
+}
+
+func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) {
+	if s.attachments == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "session attachment service is unavailable", nil))
+		return
+	}
+	userID, ok := userIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.attachmentMaxBytes+(1<<20))
+	defer r.Body.Close()
+	if err := r.ParseMultipartForm(s.attachmentMaxBytes + (1 << 20)); err != nil {
+		writeError(w, r, service.ValidationError(map[string]string{"file": "multipart file is required"}))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, r, service.ValidationError(map[string]string{"file": "is required"}))
+		return
+	}
+	defer file.Close()
+	contentType := header.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = r.Header.Get("Content-Type")
+	}
+	item, err := s.attachments.Upload(r.Context(), userID, r.PathValue("sessionId"), service.UploadAttachmentInput{
+		Filename: header.Filename, ContentType: contentType, SizeBytes: header.Size, Body: file,
+	})
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeData(w, r, http.StatusCreated, item)
+}
+
+func (s *Server) handleListAttachments(w http.ResponseWriter, r *http.Request) {
+	if s.attachments == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "session attachment service is unavailable", nil))
+		return
+	}
+	userID, ok := userIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	items, err := s.attachments.List(r.Context(), userID, r.PathValue("sessionId"))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeData(w, r, http.StatusOK, items)
+}
+
+func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
+	if s.attachments == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "session attachment service is unavailable", nil))
+		return
+	}
+	userID, ok := userIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	item, err := s.attachments.Get(r.Context(), userID, r.PathValue("sessionId"), r.PathValue("attachmentId"))
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeData(w, r, http.StatusOK, item)
+}
+
+func (s *Server) handleDeleteAttachment(w http.ResponseWriter, r *http.Request) {
+	if s.attachments == nil {
+		writeError(w, r, service.NewError(service.CodeDependency, "session attachment service is unavailable", nil))
+		return
+	}
+	userID, ok := userIDFromRequest(w, r)
+	if !ok {
+		return
+	}
+	if err := s.attachments.Delete(r.Context(), userID, r.PathValue("sessionId"), r.PathValue("attachmentId")); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

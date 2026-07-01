@@ -14,7 +14,9 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/config"
 	httpapi "github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/http"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/connectiontest"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/fileclient"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/knowledgeclient"
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/parserclient"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/secrets"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/repository"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
@@ -60,21 +62,38 @@ func main() {
 		}
 	}
 	tester := connectiontest.Tester{}
+	fileClient, err := fileclient.New(cfg.FileServiceURL, cfg.ServiceToken, cfg.SessionAttachmentProcessTimeout)
+	if err != nil {
+		logger.Error("file client initialization failed", "service", "qa", "error", err)
+		os.Exit(1)
+	}
+	parserClient, err := parserclient.New(cfg.ParserServiceURL, cfg.ServiceToken, cfg.SessionAttachmentProcessTimeout)
+	if err != nil {
+		logger.Error("parser client initialization failed", "service", "qa", "error", err)
+		os.Exit(1)
+	}
+	attachmentService, err := service.NewAttachmentService(repo, fileClient, parserClient, service.AttachmentConfig{
+		TTL:                 cfg.SessionAttachmentTTL,
+		MaxBytes:            cfg.SessionAttachmentMaxBytes,
+		MaxPerSession:       cfg.SessionAttachmentMaxPerSession,
+		ProcessTimeout:      cfg.SessionAttachmentProcessTimeout,
+		AutoProcessUploaded: true,
+	})
+	if err != nil {
+		logger.Error("attachment service initialization failed", "service", "qa", "error", err)
+		os.Exit(1)
+	}
 	settingsService, err := service.NewConfigService(repo, cipher, bootstrap, tester, tester)
 	if err != nil {
 		logger.Error("settings service initialization failed", "service", "qa", "error", err)
 		os.Exit(1)
 	}
-	retriever, err := knowledgeclient.New(cfg.KnowledgeURL, cfg.ServiceToken, cfg.ModelTimeout)
-	if err != nil {
-		logger.Error("knowledge client initialization failed", "service", "qa", "error", err)
-		os.Exit(1)
-	}
-	manager, err := app.NewManager(ctx, settingsService, repo, retriever, app.ManagerConfig{
+	manager, err := app.NewManager(ctx, settingsService, repo, app.ManagerConfig{
 		WorkDir: cfg.WorkDir, MaxFileBytes: cfg.MaxFileBytes,
 		MaxToolResultBytes: cfg.MaxToolResultBytes, EnableCommandTool: cfg.EnableCommandTool,
 		CommandTimeout: cfg.CommandTimeout, MaxIterations: cfg.MaxIterations,
 		DefaultToolTimeout: cfg.MCPToolTimeout,
+		AttachmentSearcher: attachmentService,
 	})
 	if err != nil {
 		logger.Error("agent runtime initialization failed", "service", "qa", "error", err)
@@ -91,7 +110,13 @@ func main() {
 		logger.Error("QA service initialization failed", "service", "qa", "error", err)
 		os.Exit(1)
 	}
+	retriever, err := knowledgeclient.New(cfg.KnowledgeURL, cfg.ServiceToken, cfg.ModelTimeout)
+	if err != nil {
+		logger.Error("knowledge client initialization failed", "service", "qa", "error", err)
+		os.Exit(1)
+	}
 	qaService.SetCitationSourceChecker(retriever)
+	qaService.SetAttachmentCleaner(attachmentService)
 	resourceService, err := service.NewResourceService(repo, retriever, tester, bootstrap.LLM, qaService)
 	if err != nil {
 		logger.Error("resource service initialization failed", "service", "qa", "error", err)
@@ -100,12 +125,13 @@ func main() {
 	handler, err := httpapi.NewServer(qaService, settingsService, resourceService, httpapi.Config{
 		MaxRequestBytes: cfg.MaxRequestBytes, Logger: logger, Ready: repo.Ping,
 		AdminUserIDs: cfg.AdminUserIDs, SettingsOpen: cfg.SettingsOpen,
-		ServiceToken: cfg.ServiceToken,
+		ServiceToken: cfg.ServiceToken, AttachmentMaxBytes: cfg.SessionAttachmentMaxBytes,
 	})
 	if err != nil {
 		logger.Error("HTTP service initialization failed", "service", "qa", "error", err)
 		os.Exit(1)
 	}
+	handler.SetAttachmentService(attachmentService)
 
 	server := &http.Server{
 		Addr:              cfg.HTTPAddr,

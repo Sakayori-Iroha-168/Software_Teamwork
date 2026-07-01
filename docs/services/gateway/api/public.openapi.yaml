@@ -49,8 +49,8 @@ tags:
   description: QA-owned chat sessions.
 - name: qa-messages
   description: QA-owned messages, answer generation, SSE streams, and event replay.
-- name: qa-session-attachments
-  description: QA-owned per-session temporary attachments, their parse status, and message association.
+- name: qa-attachments
+  description: QA-owned session-scoped attachments for chat messages.
 - name: qa-agent-runs
   description: QA-owned response runs and sanitized tool-call summaries.
 - name: qa-citations
@@ -1849,7 +1849,7 @@ paths:
             text/event-stream:
               schema:
                 type: string
-                description: Server-Sent Events with event types `message.created`, `agent.iteration.started`, `reasoning.step`, `tool.started`, `tool.completed`, `tool.failed`, `answer.delta`, `citation.delta`, `answer.completed`, `error`, and optional `heartbeat`. For `tool.completed` and `tool.failed`, Document report-generation tools may include `payload.result.reportArtifact` using the `QAReportArtifact` schema.
+                description: Server-Sent Events with event types `message.created`, `agent.iteration.started`, `reasoning.step`, `tool.started`, `tool.completed`, `tool.failed`, `answer.delta`, `citation.delta`, `answer.completed`, `error`, and optional `heartbeat`.
         '400':
           $ref: '#/components/responses/Error'
         '403':
@@ -1863,155 +1863,92 @@ paths:
   /api/v1/qa-sessions/{sessionId}/attachments:
     parameters:
     - $ref: '#/components/parameters/SessionId'
+    post:
+      tags:
+      - qa-attachments
+      summary: Upload QA session attachment
+      operationId: uploadQASessionAttachment
+      x-owner-service: qa
+      description: Uploads a PDF or image for the current QA session. Public responses expose only QA attachment metadata and never File service internal IDs, buckets, object keys, or internal URLs.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateQASessionAttachmentRequest'
+      responses:
+        '201':
+          description: QA session attachment created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QASessionAttachmentResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
+        '404':
+          $ref: '#/components/responses/Error'
+        '413':
+          $ref: '#/components/responses/Error'
+        '502':
+          $ref: '#/components/responses/Error'
     get:
       tags:
-      - qa-session-attachments
+      - qa-attachments
       summary: List QA session attachments
       operationId: listQASessionAttachments
       x-owner-service: qa
-      description: |
-        Lists attachments owned by the current user's QA session. QA owns
-        attachment metadata and parse status and may call file service
-        internally for the raw object; the response never exposes `file_ref`,
-        MinIO object keys, buckets, or internal URLs. Sessions not owned by the
-        current user return 404 rather than 403 so attachment existence for
-        other users is not disclosed.
-      parameters:
-      - $ref: '#/components/parameters/Page'
-      - name: pageSize
-        in: query
-        schema:
-          type: integer
-          minimum: 1
-          maximum: 100
-          default: 20
-      - name: status
-        in: query
-        schema:
-          $ref: '#/components/schemas/SessionAttachmentStatus'
       responses:
         '200':
           description: QA session attachments.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionAttachmentListResponse'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
+                $ref: '#/components/schemas/QASessionAttachmentListResponse'
         '403':
           $ref: '#/components/responses/Error'
         '404':
-          $ref: '#/components/responses/Error'
-    post:
-      tags:
-      - qa-session-attachments
-      summary: Upload a QA session attachment
-      operationId: uploadQASessionAttachment
-      x-owner-service: qa
-      description: |
-        Uploads a temporary attachment to a QA session owned by the current
-        user. QA stores attachment metadata and parse status and calls file
-        service internally to persist the raw bytes; parsing is delegated to
-        parser internally. The attachment begins in `uploaded` status and is
-        purged by TTL cleanup. Sessions not owned by the current user return
-        404 so other users' sessions are not disclosed.
-
-        **File limits (authoritative, enforced by Gateway before forwarding):**
-        - Single file maximum: 20 MB (20 971 520 bytes). Larger payloads are
-          rejected with 413 before any storage or parser call is made.
-        - Per-session attachment count: maximum 10 active (non-purged)
-          attachments. Exceeding this limit returns 409.
-        - Per-session total size quota: 100 MB across all active attachments.
-          Exceeding this limit returns 409.
-
-        **Accepted MIME types** (declared in `Content-Type` of the `file`
-        part): `application/pdf`, `image/png`, `image/jpeg`, `text/plain`,
-        `application/vnd.openxmlformats-officedocument.wordprocessingml.document`.
-        Other types are rejected with 415. Clients should set the part
-        `Content-Type` header explicitly; Gateway rejects requests where the
-        part content type does not match the allowlist.
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/UploadSessionAttachmentRequest'
-            encoding:
-              file:
-                contentType: application/pdf, image/png, image/jpeg, text/plain, application/vnd.openxmlformats-officedocument.wordprocessingml.document
-      responses:
-        '201':
-          description: QA session attachment accepted for processing.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SessionAttachmentResponse'
-        '400':
-          $ref: '#/components/responses/Error'
-        '401':
-          $ref: '#/components/responses/Error'
-        '403':
-          $ref: '#/components/responses/Error'
-        '404':
-          $ref: '#/components/responses/Error'
-        '409':
-          $ref: '#/components/responses/Error'
-        '413':
-          $ref: '#/components/responses/Error'
-        '415':
           $ref: '#/components/responses/Error'
   /api/v1/qa-sessions/{sessionId}/attachments/{attachmentId}:
     parameters:
     - $ref: '#/components/parameters/SessionId'
-    - $ref: '#/components/parameters/AttachmentId'
+    - name: attachmentId
+      in: path
+      required: true
+      schema:
+        type: string
     get:
       tags:
-      - qa-session-attachments
+      - qa-attachments
       summary: Get QA session attachment
       operationId: getQASessionAttachment
       x-owner-service: qa
-      description: |
-        Returns a single attachment owned by the current user's QA session.
-        The response exposes only public attachment metadata and parse status;
-        it never includes `file_ref`, MinIO object keys, buckets, or internal
-        URLs. Attachments in a session not owned by the current user, and
-        deleted or purged attachments, return 404 so their existence is not
-        disclosed.
       responses:
         '200':
           description: QA session attachment.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionAttachmentResponse'
-        '401':
-          $ref: '#/components/responses/Error'
+                $ref: '#/components/schemas/QASessionAttachmentResponse'
         '403':
           $ref: '#/components/responses/Error'
         '404':
           $ref: '#/components/responses/Error'
     delete:
       tags:
-      - qa-session-attachments
+      - qa-attachments
       summary: Delete QA session attachment
       operationId: deleteQASessionAttachment
       x-owner-service: qa
-      description: |
-        Deletes an attachment owned by the current user's QA session. QA
-        coordinates cleanup of temporary parse chunks and the underlying file
-        reference through its attachment lifecycle. Attachments in a session
-        not owned by the current user, and already deleted or purged
-        attachments, return 404.
       responses:
         '204':
           description: QA session attachment deleted.
-        '401':
-          $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
         '404':
+          $ref: '#/components/responses/Error'
+        '502':
           $ref: '#/components/responses/Error'
   /api/v1/qa-sessions/{sessionId}/events:
     parameters:
@@ -2098,7 +2035,7 @@ paths:
       summary: List QA response run tool calls
       operationId: listQAResponseRunToolCalls
       x-owner-service: qa
-      description: Returns sanitized tool-call summaries only. Raw MCP schemas, full arguments, raw tool results, prompts, internal URLs, object keys, and provider errors are not part of the public contract. Document report-generation tools may include a `reportArtifact` object under `resultSummary` using the `QAReportArtifact` schema.
+      description: Returns sanitized tool-call summaries only. Raw MCP schemas, full arguments, raw tool results, prompts, internal URLs, object keys, and provider errors are not part of the public contract.
       responses:
         '200':
           description: QA tool call summaries.
@@ -2504,12 +2441,6 @@ components:
         type: string
     SessionId:
       name: sessionId
-      in: path
-      required: true
-      schema:
-        type: string
-    AttachmentId:
-      name: attachmentId
       in: path
       required: true
       schema:
@@ -4724,6 +4655,98 @@ components:
           $ref: '#/components/schemas/PageMeta'
         requestId:
           type: string
+    QASessionAttachmentStatus:
+      type: string
+      enum:
+      - uploaded
+      - parsing
+      - ready
+      - failed
+      - deleting
+      - deleted
+    QASessionAttachment:
+      type: object
+      required:
+      - id
+      - sessionId
+      - filename
+      - contentType
+      - sizeBytes
+      - status
+      - pageCount
+      - chunkCount
+      - expiresAt
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+        sessionId:
+          type: string
+        filename:
+          type: string
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
+          minimum: 0
+        status:
+          $ref: '#/components/schemas/QASessionAttachmentStatus'
+        errorCode:
+          type: string
+        errorSummary:
+          type: string
+          description: Sanitized user-displayable failure summary.
+        pageCount:
+          type: integer
+          minimum: 0
+        chunkCount:
+          type: integer
+          minimum: 0
+        expiresAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateQASessionAttachmentRequest:
+      type: object
+      required:
+      - file
+      properties:
+        file:
+          type: string
+          format: binary
+    QASessionAttachmentResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          $ref: '#/components/schemas/QASessionAttachment'
+        requestId:
+          type: string
+    QASessionAttachmentListResponse:
+      type: object
+      required:
+      - data
+      - requestId
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/QASessionAttachment'
+        requestId:
+          type: string
     QAMessageRole:
       type: string
       enum:
@@ -4782,16 +4805,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/QACitation'
-        attachmentIds:
-          type: array
-          items:
-            type: string
-          description: |
-            IDs of session attachments linked to this message at creation time.
-            IDs are retained in message history even after TTL purge. Once an
-            attachment is purged, GET /attachments/{attachmentId} returns 404;
-            the ID is a historical reference only — clients must not assume the
-            attachment remains retrievable.
         createdAt:
           type: string
           format: date-time
@@ -4856,6 +4869,12 @@ components:
             type: string
         retrieval:
           $ref: '#/components/schemas/QARetrievalOptions'
+        attachmentIds:
+          type: array
+          description: Ready session attachment IDs to bind to this user message. QA validates ownership, session membership, deletion state, and ready status before running the Agent.
+          maxItems: 20
+          items:
+            type: string
         params:
           allOf:
           - $ref: '#/components/schemas/QARetrievalOptions'
@@ -4863,14 +4882,6 @@ components:
           description: Backward-compatible alias for `retrieval`; new clients should use `retrieval`.
         agent:
           $ref: '#/components/schemas/QAAgentOptions'
-        attachmentIds:
-          type: array
-          items:
-            type: string
-          description: |
-            Optional QA session attachment IDs to associate with this message.
-            Each ID must belong to the same session and must be in `ready`
-            status; attachments still parsing, failed, or purged are rejected.
     QARetrievalOptions:
       type: object
       properties:
@@ -4915,105 +4926,6 @@ components:
           type: integer
           minimum: 1
           maximum: 10
-    SessionAttachmentStatus:
-      type: string
-      description: |
-        Lifecycle status of a QA session attachment. `uploaded` after the raw
-        object is stored, `parsing` while parser runs, `ready` when parsed
-        content is available for retrieval and message association, `failed`
-        when parsing fails, and `purged` as the terminal state after TTL
-        cleanup removes temporary content.
-      enum:
-      - uploaded
-      - parsing
-      - ready
-      - failed
-      - purged
-    SessionAttachmentSummary:
-      type: object
-      required:
-      - id
-      - sessionId
-      - filename
-      - contentType
-      - sizeBytes
-      - status
-      - createdAt
-      properties:
-        id:
-          type: string
-        sessionId:
-          type: string
-          description: QA session that owns this attachment.
-        filename:
-          type: string
-          description: Original client-supplied file name.
-        contentType:
-          type: string
-          description: Declared MIME type of the uploaded file.
-        sizeBytes:
-          type: integer
-          minimum: 0
-          maximum: 20971520
-          description: File size in bytes. Always present after upload is accepted.
-        status:
-          $ref: '#/components/schemas/SessionAttachmentStatus'
-        errorCode:
-          type: string
-          nullable: true
-        errorMessage:
-          type: string
-          nullable: true
-          description: Sanitized parse failure summary. Must not include object keys, buckets, internal paths, MinIO errors, or stack traces.
-        createdAt:
-          type: string
-          format: date-time
-        expiresAt:
-          type: string
-          format: date-time
-          nullable: true
-          description: TTL expiry after which the attachment and its temporary chunks are purged.
-    UploadSessionAttachmentRequest:
-      type: object
-      required:
-      - file
-      properties:
-        file:
-          type: string
-          format: binary
-          maxLength: 20971520
-          description: |
-            Attachment binary. Maximum size: 20 MB (20 971 520 bytes); larger
-            payloads are rejected with 413. The `Content-Type` of this multipart
-            part must be one of: `application/pdf`, `image/png`, `image/jpeg`,
-            `text/plain`,
-            `application/vnd.openxmlformats-officedocument.wordprocessingml.document`.
-            Other content types are rejected with 415.
-    SessionAttachmentResponse:
-      type: object
-      required:
-      - data
-      - requestId
-      properties:
-        data:
-          $ref: '#/components/schemas/SessionAttachmentSummary'
-        requestId:
-          type: string
-    SessionAttachmentListResponse:
-      type: object
-      required:
-      - data
-      - page
-      - requestId
-      properties:
-        data:
-          type: array
-          items:
-            $ref: '#/components/schemas/SessionAttachmentSummary'
-        page:
-          $ref: '#/components/schemas/PageInfo'
-        requestId:
-          type: string
     QAAnswerResponse:
       type: object
       required:
@@ -5148,9 +5060,7 @@ components:
         argumentsSummary:
           $ref: '#/components/schemas/JsonObject'
         resultSummary:
-          allOf:
-          - $ref: '#/components/schemas/JsonObject'
-          description: Sanitized tool result summary. For Document report-generation tools, may contain `reportArtifact` with schema `QAReportArtifact`.
+          $ref: '#/components/schemas/JsonObject'
         status:
           type: string
           enum:
@@ -5168,106 +5078,6 @@ components:
           type: string
           format: date-time
           nullable: true
-    QAReportArtifactPreview:
-      type: object
-      description: Safe user-visible preview for a QA-triggered report generation artifact. It must not contain full report body text, prompts, raw MCP arguments/results, provider errors, vector payloads, internal URLs, File internal IDs, buckets, or object keys.
-      additionalProperties: false
-      properties:
-        title:
-          type: string
-          description: Short preview title shown to the user.
-        summary:
-          type: string
-          description: Short user-visible summary, not full section content.
-        outlineTitles:
-          type: array
-          description: Report or section headings safe for preview cards.
-          items:
-            type: string
-        sectionTitles:
-          type: array
-          description: Generated or planned section titles safe for preview cards.
-          items:
-            type: string
-        progressPercent:
-          type: integer
-          minimum: 0
-          maximum: 100
-        statusText:
-          type: string
-          description: User-visible status such as `generating outline` or `DOCX export failed`.
-    QAReportArtifact:
-      type: object
-      description: Safe artifact summary returned by QA when Document report-generation tools create, update, export, or inspect a report. The object is allowed only inside sanitized QA tool results, never as raw MCP output.
-      additionalProperties: false
-      required:
-      - artifactType
-      properties:
-        artifactType:
-          type: string
-          enum:
-          - report_generation
-        reportId:
-          type: string
-          description: Document-owned public report business id, when a report exists and the caller can read it.
-        reportName:
-          type: string
-          description: User-visible report title.
-        reportType:
-          type: string
-          description: Report type code such as `summer_peak_inspection`.
-        jobId:
-          type: string
-          description: Document-owned report job id for async generation/export tracking.
-        jobType:
-          $ref: '#/components/schemas/ReportJobType'
-        jobStatus:
-          type: string
-          enum:
-          - accepted
-          - pending
-          - running
-          - succeeded
-          - failed
-          - canceled
-          description: QA-facing normalized job status. `accepted` may be used immediately after an async job is created before Document reports `pending`.
-        reportStatus:
-          type: string
-          description: Report lifecycle status such as `outline_generated`, `generated`, or `failed`.
-        reportFileId:
-          type: string
-          description: Public report file id. Present only when Document can expose generated file metadata to the caller.
-        filename:
-          type: string
-        format:
-          type: string
-          enum:
-          - docx
-        fileStatus:
-          type: string
-          enum:
-          - pending
-          - running
-          - succeeded
-          - failed
-          - canceled
-          description: Export file status. The download button is allowed only when this is `succeeded` and `downloadPath` is present.
-        fileSize:
-          type: integer
-          format: int64
-          minimum: 0
-        preview:
-          $ref: '#/components/schemas/QAReportArtifactPreview'
-        downloadPath:
-          type: string
-          pattern: '^/api/v1/report-files/[^/]+/content$'
-          example: /api/v1/report-files/rf_123/content
-          description: Gateway public content path. Must be present only when `fileStatus` is `succeeded` and the caller has read permission for the report file.
-        detailPath:
-          type: string
-          pattern: '^/api/v1/reports/[^/]+$'
-          example: /api/v1/reports/rpt_123
-          description: Optional Gateway report detail path or frontend deep-link target based on the public report id.
     QAAgentToolCallListResponse:
       type: object
       required:
@@ -5308,9 +5118,7 @@ components:
         eventType:
           $ref: '#/components/schemas/QASseEventType'
         payload:
-          allOf:
-          - $ref: '#/components/schemas/JsonObject'
-          description: Event payload. `tool.completed` and `tool.failed` events may include `result.reportArtifact` with schema `QAReportArtifact`.
+          $ref: '#/components/schemas/JsonObject'
         createdAt:
           type: string
           format: date-time
@@ -5355,6 +5163,15 @@ components:
           type: string
         chunkId:
           type: string
+        attachmentId:
+          type: string
+        attachmentChunkId:
+          type: string
+        attachmentFilename:
+          type: string
+        attachmentChunkPreview:
+          type: string
+          description: Display-safe attachment chunk preview. Full OCR text and Parser payloads are not returned in citations.
         sectionPath:
           type: string
         text:

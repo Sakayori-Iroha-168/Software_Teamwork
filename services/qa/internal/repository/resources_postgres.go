@@ -57,9 +57,9 @@ func streamEventSeqInt32(value int) (int32, error) {
 	return int32(value), nil
 }
 
-const citationSelect = `SELECT ci.id::text,ci.message_id::text,COALESCE(ci.response_run_id::text,''),ci.citation_no,COALESCE(ci.external_doc_id,''),ci.doc_name,COALESCE(ci.external_kb_id,''),COALESCE(ci.external_chunk_id,''),COALESCE(ci.section_path,''),COALESCE(ci.quote_text,''),COALESCE(ci.content_preview,ci.quote_text,''),COALESCE(ci.context,''),ci.page_number,ci.score,ci.rerank_score,COALESCE(ci.chunk_type,''),ci.is_source_available,COALESCE(ci.source_unavailable_reason,''),ci.metadata FROM citations ci JOIN messages m ON m.id=ci.message_id JOIN conversations c ON c.id=m.conversation_id`
+const citationSelect = `SELECT ci.id::text,ci.message_id::text,COALESCE(ci.response_run_id::text,''),ci.citation_no,COALESCE(ci.external_doc_id,''),ci.doc_name,COALESCE(ci.external_kb_id,''),COALESCE(ci.external_chunk_id,''),COALESCE(ci.attachment_id::text,''),COALESCE(ci.attachment_chunk_id::text,''),COALESCE(ci.attachment_filename,''),COALESCE(ci.attachment_chunk_preview,''),COALESCE(ci.section_path,''),COALESCE(ci.quote_text,''),COALESCE(ci.content_preview,ci.quote_text,''),COALESCE(ci.context,''),ci.page_number,ci.score,ci.rerank_score,COALESCE(ci.chunk_type,''),ci.is_source_available,COALESCE(ci.source_unavailable_reason,''),ci.metadata FROM citations ci JOIN messages m ON m.id=ci.message_id JOIN conversations c ON c.id=m.conversation_id`
 
-const messageCitationLegacySelect = `SELECT ci.id::text,ci.message_id::text,'' AS response_run_id,ci.citation_no,COALESCE(ci.external_doc_id,''),ci.doc_name,COALESCE(ci.external_kb_id,''),COALESCE(ci.external_chunk_id,''),COALESCE(ci.section_path,''),COALESCE(ci.quote_text,''),COALESCE(ci.quote_text,''),COALESCE(ci.context,''),ci.page_number,ci.score,ci.rerank_score,COALESCE(ci.chunk_type,''),COALESCE(ci.external_doc_id,'') <> '' AS is_source_available,CASE WHEN COALESCE(ci.external_doc_id,'') = '' THEN 'source_deleted_or_forbidden' ELSE '' END AS source_unavailable_reason,ci.metadata FROM citations ci JOIN messages m ON m.id=ci.message_id JOIN conversations c ON c.id=m.conversation_id`
+const messageCitationLegacySelect = `SELECT ci.id::text,ci.message_id::text,'' AS response_run_id,ci.citation_no,COALESCE(ci.external_doc_id,''),ci.doc_name,COALESCE(ci.external_kb_id,''),COALESCE(ci.external_chunk_id,''),'' AS attachment_id,'' AS attachment_chunk_id,'' AS attachment_filename,'' AS attachment_chunk_preview,COALESCE(ci.section_path,''),COALESCE(ci.quote_text,''),COALESCE(ci.quote_text,''),COALESCE(ci.context,''),ci.page_number,ci.score,ci.rerank_score,COALESCE(ci.chunk_type,''),COALESCE(ci.external_doc_id,'') <> '' AS is_source_available,CASE WHEN COALESCE(ci.external_doc_id,'') = '' THEN 'source_deleted_or_forbidden' ELSE '' END AS source_unavailable_reason,ci.metadata FROM citations ci JOIN messages m ON m.id=ci.message_id JOIN conversations c ON c.id=m.conversation_id`
 
 func (r *Postgres) messageCitationSelect(ctx context.Context) string {
 	if r.hasCitationSnapshotColumns(ctx) {
@@ -83,8 +83,8 @@ SELECT count(*)
 FROM information_schema.columns
 WHERE table_schema = current_schema()
 	AND table_name = 'citations'
-	AND column_name IN ('response_run_id', 'content_preview', 'is_source_available', 'source_unavailable_reason')`).Scan(&count)
-	ready := err == nil && count == 4
+	AND column_name IN ('response_run_id', 'content_preview', 'is_source_available', 'source_unavailable_reason', 'attachment_id', 'attachment_chunk_id', 'attachment_filename', 'attachment_chunk_preview')`).Scan(&count)
+	ready := err == nil && count == 8
 
 	if ready {
 		r.citationSnapshotColumnsMu.Lock()
@@ -139,7 +139,7 @@ func scanCitation(row rowScanner) (service.Citation, error) {
 	var page sql.NullInt32
 	var score, rerank sql.NullFloat64
 	var metadata []byte
-	err := row.Scan(&item.ID, &item.MessageID, &item.ResponseRunID, &item.CitationNo, &item.DocumentID, &item.DocumentName, &item.KnowledgeBaseID, &item.ChunkID, &item.SectionPath, &item.Text, &item.ContentPreview, &item.Context, &page, &score, &rerank, &item.ChunkType, &item.IsSourceAvailable, &item.SourceUnavailableReason, &metadata)
+	err := row.Scan(&item.ID, &item.MessageID, &item.ResponseRunID, &item.CitationNo, &item.DocumentID, &item.DocumentName, &item.KnowledgeBaseID, &item.ChunkID, &item.AttachmentID, &item.AttachmentChunkID, &item.AttachmentFilename, &item.AttachmentChunkPreview, &item.SectionPath, &item.Text, &item.ContentPreview, &item.Context, &page, &score, &rerank, &item.ChunkType, &item.IsSourceAvailable, &item.SourceUnavailableReason, &metadata)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return service.Citation{}, service.NewError(service.CodeNotFound, "citation not found", err)
 	}
@@ -166,7 +166,7 @@ func scanCitation(row rowScanner) (service.Citation, error) {
 }
 
 func (r *Postgres) ListToolCalls(ctx context.Context, userID, runID string) ([]service.AgentToolCall, error) {
-	rows, err := r.pool.Query(ctx, `SELECT tc.id::text,tc.response_run_id::text,COALESCE(tc.model_invocation_id::text,''),tc.iteration_no,tc.tool_call_id,tc.tool_name,COALESCE(tc.mcp_server_name,''),tc.arguments_summary,tc.result_summary,tc.status,COALESCE(tc.latency_ms,0),COALESCE(tc.error_code,''),COALESCE(tc.error_message,''),tc.started_at,tc.finished_at FROM agent_tool_calls tc JOIN response_runs rr ON rr.id=tc.response_run_id JOIN conversations c ON c.id=rr.conversation_id WHERE tc.response_run_id::text=$1 AND c.external_user_id=$2 AND c.deleted_at IS NULL ORDER BY tc.started_at,tc.id`, runID, userID)
+	rows, err := r.pool.Query(ctx, `SELECT tc.id::text,tc.response_run_id::text,COALESCE(tc.model_invocation_id::text,''),tc.iteration_no,tc.tool_call_id,tc.tool_name,tc.arguments_summary,tc.result_summary,tc.status,COALESCE(tc.latency_ms,0),tc.started_at,tc.finished_at FROM agent_tool_calls tc JOIN response_runs rr ON rr.id=tc.response_run_id JOIN conversations c ON c.id=rr.conversation_id WHERE tc.response_run_id::text=$1 AND c.external_user_id=$2 AND c.deleted_at IS NULL ORDER BY tc.started_at,tc.id`, runID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("list tool calls: %w", err)
 	}
@@ -175,7 +175,7 @@ func (r *Postgres) ListToolCalls(ctx context.Context, userID, runID string) ([]s
 	for rows.Next() {
 		var item service.AgentToolCall
 		var args, result []byte
-		if err := rows.Scan(&item.ID, &item.ResponseRunID, &item.ModelInvocationID, &item.IterationNo, &item.ToolCallID, &item.ToolName, &item.MCPServerName, &args, &result, &item.Status, &item.LatencyMS, &item.ErrorCode, &item.ErrorMessage, &item.StartedAt, &item.FinishedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.ResponseRunID, &item.ModelInvocationID, &item.IterationNo, &item.ToolCallID, &item.ToolName, &args, &result, &item.Status, &item.LatencyMS, &item.StartedAt, &item.FinishedAt); err != nil {
 			return nil, fmt.Errorf("scan tool call: %w", err)
 		}
 		_ = json.Unmarshal(args, &item.ArgumentsSummary)
@@ -287,7 +287,37 @@ func (r *Postgres) CreateQAConfigVersionResource(ctx context.Context, userID str
 	if retrieval.RerankTopN == 0 {
 		retrieval.RerankTopN = input.RerankTopN
 	}
-	agent := agentConfigFromCreateInput(input)
+	agent := input.Agent
+	if agent.MaxIterations == 0 {
+		agent.MaxIterations = input.MaxIterations
+	}
+	if agent.MaxIterations == 0 {
+		agent.MaxIterations = 5
+	}
+	if agent.ToolTimeoutSeconds == 0 {
+		agent.ToolTimeoutSeconds = input.ToolTimeoutSeconds
+	}
+	if agent.ToolTimeoutSeconds == 0 {
+		agent.ToolTimeoutSeconds = 10
+	}
+	if agent.ModelTimeoutSeconds == 0 {
+		agent.ModelTimeoutSeconds = input.ModelTimeoutSeconds
+	}
+	if agent.ModelTimeoutSeconds == 0 {
+		agent.ModelTimeoutSeconds = 60
+	}
+	if agent.OverallTimeoutSeconds == 0 {
+		agent.OverallTimeoutSeconds = input.OverallTimeoutSeconds
+	}
+	if agent.OverallTimeoutSeconds == 0 {
+		agent.OverallTimeoutSeconds = 120
+	}
+	if len(agent.EnabledToolNames) == 0 {
+		agent.EnabledToolNames = input.EnabledToolNames
+	}
+	if agent.EnabledToolNames == nil {
+		agent.EnabledToolNames = []string{}
+	}
 	activate := input.Activate == nil || *input.Activate
 	kbs := input.KnowledgeBases
 	if len(kbs) == 0 {
@@ -323,30 +353,6 @@ func (r *Postgres) CreateQAConfigVersionResource(ctx context.Context, userID str
 		return service.QAConfigVersion{}, err
 	}
 	return r.getQAConfigVersion(ctx, id, false)
-}
-
-func agentConfigFromCreateInput(input service.CreateQAConfigVersionInput) service.AgentConfig {
-	agent := input.Agent
-	if agent.MaxIterations == 0 {
-		agent.MaxIterations = input.MaxIterations
-	}
-	if agent.ToolTimeoutSeconds == 0 {
-		agent.ToolTimeoutSeconds = input.ToolTimeoutSeconds
-	}
-	if agent.ModelTimeoutSeconds == 0 {
-		agent.ModelTimeoutSeconds = input.ModelTimeoutSeconds
-	}
-	if agent.OverallTimeoutSeconds == 0 {
-		agent.OverallTimeoutSeconds = input.OverallTimeoutSeconds
-	}
-	if agent.EnabledToolNames == nil {
-		if input.EnabledToolNames != nil {
-			agent.EnabledToolNames = input.EnabledToolNames
-		} else {
-			agent.EnabledToolNames = service.DefaultAgentConfig().EnabledToolNames
-		}
-	}
-	return service.NormalizeAgentConfig(agent)
 }
 
 func (r *Postgres) GetActiveLLMConfigVersion(ctx context.Context) (service.LLMConfigVersion, error) {
@@ -556,7 +562,7 @@ func retrievalResultWithAliases(item service.RetrievalTestResult) service.Retrie
 	return item
 }
 
-func (r *Postgres) GetMetricsOverview(ctx context.Context, _ string, days int) (service.MetricsOverview, error) {
+func (r *Postgres) GetMetricsOverview(ctx context.Context, days int) (service.MetricsOverview, error) {
 	if days <= 0 {
 		days = 1
 	}

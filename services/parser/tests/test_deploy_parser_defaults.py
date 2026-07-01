@@ -59,6 +59,16 @@ def test_parser_openapi_documents_readiness_contract():
     assert "reason" not in data_schema["required"]
 
 
+def test_parser_openapi_allows_qa_caller_in_both_copies():
+    repo_root = Path(__file__).resolve().parents[3]
+
+    for relative_path in PARSER_OPENAPI_FILES:
+        openapi = yaml.safe_load(_read_repo_file(repo_root, relative_path))
+        caller = openapi["components"]["parameters"]["CallerServiceHeader"]
+
+        assert caller["schema"]["enum"] == ["knowledge", "qa"]
+
+
 def _load_health_response_schema(repo_root: Path, relative_path: str) -> dict[str, object]:
     openapi = yaml.safe_load(_read_repo_file(repo_root, relative_path))
     assert isinstance(openapi, dict)

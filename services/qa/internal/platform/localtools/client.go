@@ -16,30 +16,38 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
 )
 
 const (
-	ToolReadFile  = "read_file"
-	ToolWriteFile = "write_file"
-	ToolEditFile  = "edit_file"
-	ToolBash      = "bash"
+	ToolReadFile                 = "read_file"
+	ToolWriteFile                = "write_file"
+	ToolEditFile                 = "edit_file"
+	ToolBash                     = "bash"
+	ToolSearchSessionAttachments = "search_session_attachments"
 )
 
+type AttachmentSearcher interface {
+	Search(context.Context, string, string, []string, string, int) ([]service.AttachmentChunk, error)
+}
+
 type Config struct {
-	WorkDir           string
-	MaxFileBytes      int
-	MaxOutputBytes    int
-	EnableCommandTool bool
-	CommandTimeout    time.Duration
+	WorkDir            string
+	MaxFileBytes       int
+	MaxOutputBytes     int
+	EnableCommandTool  bool
+	CommandTimeout     time.Duration
+	AttachmentSearcher AttachmentSearcher
 }
 
 type Client struct {
-	root              string
-	maxFileBytes      int
-	maxOutputBytes    int
-	enableCommandTool bool
-	commandTimeout    time.Duration
+	root               string
+	maxFileBytes       int
+	maxOutputBytes     int
+	enableCommandTool  bool
+	commandTimeout     time.Duration
+	attachmentSearcher AttachmentSearcher
 }
 
 func New(cfg Config) (*Client, error) {
@@ -62,11 +70,12 @@ func New(cfg Config) (*Client, error) {
 		return nil, errors.New("tool workspace must be an existing directory")
 	}
 	return &Client{
-		root:              root,
-		maxFileBytes:      cfg.MaxFileBytes,
-		maxOutputBytes:    cfg.MaxOutputBytes,
-		enableCommandTool: cfg.EnableCommandTool,
-		commandTimeout:    cfg.CommandTimeout,
+		root:               root,
+		maxFileBytes:       cfg.MaxFileBytes,
+		maxOutputBytes:     cfg.MaxOutputBytes,
+		enableCommandTool:  cfg.EnableCommandTool,
+		commandTimeout:     cfg.CommandTimeout,
+		attachmentSearcher: cfg.AttachmentSearcher,
 	}, nil
 }
 
@@ -109,6 +118,17 @@ func (c *Client) ListTools(context.Context) ([]agent.ToolDefinition, error) {
 				"timeout_seconds": map[string]any{"type": "integer", "minimum": 1},
 			},
 			"required":             []string{"command"},
+			"additionalProperties": false,
+		}))
+	}
+	if c.attachmentSearcher != nil {
+		tools = append(tools, functionTool(ToolSearchSessionAttachments, "Search text chunks from the session attachments explicitly bound to the current user message.", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string", "description": "Keyword or phrase to search for."},
+				"limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 20},
+			},
+			"required":             []string{"query"},
 			"additionalProperties": false,
 		}))
 	}
@@ -168,9 +188,55 @@ func (c *Client) CallTool(ctx context.Context, name string, arguments json.RawMe
 			return failure("invalid_arguments", err.Error()), nil
 		}
 		return c.runCommand(ctx, input.Command, input.TimeoutSeconds)
+	case ToolSearchSessionAttachments:
+		if c.attachmentSearcher == nil {
+			return failure("tool_disabled", "session attachment search is disabled"), nil
+		}
+		var input struct {
+			Query string `json:"query"`
+			Limit int    `json:"limit"`
+		}
+		if err := decodeArguments(arguments, &input); err != nil {
+			return failure("invalid_arguments", err.Error()), nil
+		}
+		return c.searchSessionAttachments(ctx, input.Query, input.Limit)
 	default:
 		return agent.ToolResult{}, fmt.Errorf("local tool %q is not registered", name)
 	}
+}
+
+func (c *Client) searchSessionAttachments(ctx context.Context, query string, limit int) (agent.ToolResult, error) {
+	scope, ok := service.AttachmentScopeFromContext(ctx)
+	if !ok || strings.TrimSpace(scope.UserID) == "" || strings.TrimSpace(scope.SessionID) == "" || len(scope.AttachmentIDs) == 0 {
+		return failure("attachment_scope_missing", "no message-bound session attachments are available"), nil
+	}
+	items, err := c.attachmentSearcher.Search(ctx, scope.UserID, scope.SessionID, scope.AttachmentIDs, query, limit)
+	if err != nil {
+		return failure("search_failed", "session attachments could not be searched"), nil
+	}
+	type result struct {
+		AttachmentID      string `json:"attachmentId"`
+		AttachmentChunkID string `json:"attachmentChunkId"`
+		ChunkID           string `json:"chunkId"`
+		Filename          string `json:"filename,omitempty"`
+		PageNumber        *int   `json:"pageNumber,omitempty"`
+		SectionPath       string `json:"sectionPath,omitempty"`
+		Preview           string `json:"preview"`
+	}
+	out := make([]result, 0, len(items))
+	for _, item := range items {
+		out = append(out, result{
+			AttachmentID:      item.AttachmentID,
+			AttachmentChunkID: item.ID,
+			ChunkID:           item.ID,
+			Filename:          item.Filename,
+			PageNumber:        item.PageNumber,
+			SectionPath:       item.SectionPath,
+			Preview:           item.Preview,
+		})
+	}
+	payload, _ := json.Marshal(out)
+	return agent.ToolResult{Content: string(payload)}, nil
 }
 
 func decodeArguments(raw json.RawMessage, target any) error {
@@ -374,6 +440,9 @@ func (c *Client) runCommand(ctx context.Context, command string, requestedSecond
 	}
 	commandCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if result, ok := c.runBuiltinCommand(commandCtx, spec); ok {
+		return result, nil
+	}
 	process := exec.CommandContext(commandCtx, spec.Executable, spec.Args...)
 	process.Dir = c.root
 	output := &limitedBuffer{limit: c.maxOutputBytes}
@@ -391,6 +460,34 @@ func (c *Client) runCommand(ctx context.Context, command string, requestedSecond
 		return agent.ToolResult{Content: text + "\n[command failed]", IsError: true}, nil
 	}
 	return agent.ToolResult{Content: text}, nil
+}
+
+func (c *Client) runBuiltinCommand(ctx context.Context, spec commandSpec) (agent.ToolResult, bool) {
+	switch spec.Executable {
+	case "echo":
+		return agent.ToolResult{Content: strings.Join(spec.Args, " ")}, true
+	case "pwd":
+		return agent.ToolResult{Content: c.root}, true
+	case "sleep":
+		duration, err := time.ParseDuration(spec.Args[0])
+		if err != nil {
+			seconds, parseErr := time.ParseDuration(spec.Args[0] + "s")
+			if parseErr != nil {
+				return failure("invalid_arguments", "sleep duration is invalid"), true
+			}
+			duration = seconds
+		}
+		timer := time.NewTimer(duration)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return failure("command_timeout", "command exceeded its timeout"), true
+		case <-timer.C:
+			return agent.ToolResult{Content: "(no output)"}, true
+		}
+	default:
+		return agent.ToolResult{}, false
+	}
 }
 
 type commandSpec struct {

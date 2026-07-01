@@ -23,11 +23,12 @@ type Runtime struct {
 
 func New(ctx context.Context, cfg config.Config, observer agent.Observer) (*Runtime, error) {
 	local, err := localtools.New(localtools.Config{
-		WorkDir:           cfg.WorkDir,
-		MaxFileBytes:      cfg.MaxFileBytes,
-		MaxOutputBytes:    cfg.MaxToolResultBytes,
-		EnableCommandTool: cfg.EnableCommandTool,
-		CommandTimeout:    cfg.CommandTimeout,
+		WorkDir:            cfg.WorkDir,
+		MaxFileBytes:       cfg.MaxFileBytes,
+		MaxOutputBytes:     cfg.MaxToolResultBytes,
+		EnableCommandTool:  cfg.EnableCommandTool,
+		CommandTimeout:     cfg.CommandTimeout,
+		AttachmentSearcher: nil,
 	})
 	if err != nil {
 		return nil, err

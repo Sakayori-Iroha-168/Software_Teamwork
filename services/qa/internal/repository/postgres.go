@@ -212,6 +212,11 @@ func (r *Postgres) AppendMessages(ctx context.Context, userID, conversationID st
 			assistantMessageID, intent = message.ID, message.Intent
 		}
 	}
+	if userMessageID != "" && len(start.AttachmentIDs) > 0 {
+		if err := r.bindMessageAttachments(ctx, tx, userID, conversationID, userMessageID, start.AttachmentIDs); err != nil {
+			return service.ResponseRun{}, err
+		}
+	}
 	lastAt := messages[len(messages)-1].CreatedAt
 	if err := q.TouchConversationActivity(ctx, sqlc.TouchConversationActivityParams{
 		UpdatedAt: lastAt, LastMessageAt: lastAt, ID: conversationID,
@@ -336,7 +341,7 @@ func (r *Postgres) FinalizeResponseRun(ctx context.Context, userID string, final
 	if err := replaceReasoningSteps(ctx, q, final.RunID, final.ReasoningSteps); err != nil {
 		return service.ResponseRun{}, err
 	}
-	if err := replaceStreamEvents(ctx, tx, q, final.RunID, final.StreamEvents); err != nil {
+	if err := replaceStreamEvents(ctx, q, final.RunID, final.StreamEvents); err != nil {
 		return service.ResponseRun{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -372,6 +377,9 @@ func (r *Postgres) SaveReasoningSteps(ctx context.Context, userID, assistantMess
 }
 
 func (r *Postgres) SaveStreamEvents(ctx context.Context, userID, runID string, events []service.StreamEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin save stream events: %w", err)
@@ -383,7 +391,7 @@ func (r *Postgres) SaveStreamEvents(ctx context.Context, userID, runID string, e
 	} else if err != nil {
 		return fmt.Errorf("authorize stream events: %w", err)
 	}
-	if err := replaceStreamEvents(ctx, tx, q, runID, events); err != nil {
+	if err := replaceStreamEvents(ctx, q, runID, events); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -407,15 +415,15 @@ func replaceReasoningSteps(ctx context.Context, q *sqlc.Queries, runID string, s
 	return nil
 }
 
-func replaceStreamEvents(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, runID string, events []service.StreamEvent) error {
+func replaceStreamEvents(ctx context.Context, q *sqlc.Queries, runID string, events []service.StreamEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
 	if err := q.DeleteStreamEventsByRun(ctx, runID); err != nil {
 		return fmt.Errorf("replace stream events: %w", err)
 	}
 	if err := q.DeleteToolCallsByRun(ctx, runID); err != nil {
 		return fmt.Errorf("replace tool call summaries: %w", err)
-	}
-	if len(events) == 0 {
-		return nil
 	}
 	for _, event := range events {
 		payload, err := json.Marshal(event.Payload)
@@ -437,17 +445,9 @@ func replaceStreamEvents(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, runID 
 		if event.EventType == "tool.started" || event.EventType == "tool.completed" || event.EventType == "tool.failed" {
 			toolCallID, _ := event.Payload["toolCallId"].(string)
 			toolName, _ := event.Payload["tool"].(string)
-			argumentsSummary, _ := event.Payload["arguments"].(map[string]any)
-			resultSummary, _ := event.Payload["result"].(map[string]any)
 			if toolCallID == "" {
 				continue
 			}
-			mcpServerName, _ := event.Payload["mcpServerName"].(string)
-			if mcpServerName == "" {
-				mcpServerName = toolSourceName(toolName)
-			}
-			modelInvocationID, _ := event.Payload["modelInvocationId"].(string)
-			errorCode, errorMessage := toolCallErrorSummary(event.EventType, resultSummary)
 			status := "running"
 			if event.EventType == "tool.completed" {
 				status = "completed"
@@ -455,71 +455,15 @@ func replaceStreamEvents(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, runID 
 			if event.EventType == "tool.failed" {
 				status = "failed"
 			}
-			argsJSON, _ := json.Marshal(argumentsSummary)
-			resultJSON, _ := json.Marshal(resultSummary)
-			if err := upsertAgentToolCall(ctx, tx, runID, modelInvocationID, int32(iteration), toolCallID, toolName, mcpServerName, status, argsJSON, resultJSON, errorCode, errorMessage, event.CreatedAt); err != nil {
+			if err := q.UpsertAgentToolCall(ctx, sqlc.UpsertAgentToolCallParams{
+				ResponseRunID: runID, IterationNo: int32(iteration), ToolCallID: toolCallID,
+				ToolName: toolName, Status: status, StartedAt: event.CreatedAt,
+			}); err != nil {
 				return fmt.Errorf("save tool call summary: %w", err)
 			}
 		}
 	}
 	return nil
-}
-
-func toolSourceName(toolName string) string {
-	switch toolName {
-	case "search_knowledge", "get_citation_source":
-		return "qa_builtin"
-	}
-	if before, _, ok := strings.Cut(toolName, "__"); ok {
-		return before
-	}
-	if before, _, ok := strings.Cut(toolName, "."); ok {
-		return before
-	}
-	return ""
-}
-
-func toolCallErrorSummary(eventType string, result map[string]any) (string, string) {
-	if eventType != "tool.failed" {
-		return "", ""
-	}
-	code, _ := result["error"].(string)
-	message, _ := result["message"].(string)
-	if code == "" {
-		code, message = errorSummaryFromRawResult(result)
-	}
-	if code == "" {
-		code = "tool_execution_failed"
-	}
-	if message == "" {
-		message = "tool execution failed"
-	}
-	return code, truncateStringRunes(message, 512)
-}
-
-func errorSummaryFromRawResult(result map[string]any) (string, string) {
-	raw, _ := result["raw"].(string)
-	if raw == "" {
-		return "", ""
-	}
-	var payload struct {
-		Error struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
-		return "", ""
-	}
-	return strings.TrimSpace(payload.Error.Code), strings.TrimSpace(payload.Error.Message)
-}
-
-func truncateStringRunes(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 func (r *Postgres) replaceCitations(ctx context.Context, tx pgx.Tx, runID, messageID string, citations []service.Citation, useSnapshot bool) error {
@@ -548,18 +492,21 @@ func (r *Postgres) replaceCitations(ctx context.Context, tx pgx.Tx, runID, messa
 	INSERT INTO citations (
 	    id, message_id, response_run_id, citation_no,
 	    external_kb_id, external_doc_id, external_chunk_id, doc_name,
+	    attachment_id, attachment_chunk_id, attachment_filename, attachment_chunk_preview,
 	    section_path, quote_text, content_preview, context, page_number,
 	    score, rerank_score, chunk_type, is_source_available,
 	    source_unavailable_reason, metadata
 	) VALUES (
 	    COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, NULLIF($3, '')::uuid, $4,
 	    NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''), $8,
-	    NULLIF($9, ''), NULLIF($10, ''), NULLIF($11, ''), NULLIF($12, ''), $13,
-	    $14, $15, NULLIF($16, ''), $17,
-	    NULLIF($18, ''), $19
+	    NULLIF($9, '')::uuid, NULLIF($10, '')::uuid, NULLIF($11, ''), NULLIF($12, ''),
+	    NULLIF($13, ''), NULLIF($14, ''), NULLIF($15, ''), NULLIF($16, ''), $17,
+	    $18, $19, NULLIF($20, ''), $21,
+	    NULLIF($22, ''), $23
 	)`,
 				item.ID, item.MessageID, item.ResponseRunID, item.CitationNo,
 				item.KnowledgeBaseID, item.DocumentID, item.ChunkID, item.DocumentName,
+				item.AttachmentID, item.AttachmentChunkID, item.AttachmentFilename, item.AttachmentChunkPreview,
 				item.SectionPath, item.Text, item.ContentPreview, item.Context, nullableInt(item.PageNumber),
 				nullableFloat(item.Score), nullableFloat(item.RerankScore), item.ChunkType, item.IsSourceAvailable,
 				sourceUnavailableReason, metadata)
@@ -612,72 +559,6 @@ func nullableFloat(value *float64) any {
 	return *value
 }
 
-func upsertAgentToolCall(ctx context.Context, tx pgx.Tx, runID, modelInvocationID string, iteration int32, toolCallID, toolName, mcpServerName, status string, argumentsSummary, resultSummary []byte, errorCode, errorMessage string, startedAt time.Time) error {
-	_, err := tx.Exec(ctx, `
-		INSERT INTO agent_tool_calls (
-			response_run_id,
-			model_invocation_id,
-			iteration_no,
-			tool_call_id,
-			tool_name,
-			mcp_server_name,
-			status,
-			arguments_summary,
-			result_summary,
-			error_code,
-			error_message,
-			started_at,
-			finished_at
-		) VALUES (
-			$1::uuid,
-			NULLIF($2, '')::uuid,
-			GREATEST($3, 1),
-			$4,
-			$5,
-			NULLIF($6, ''),
-			$7,
-			$8::jsonb,
-			$9::jsonb,
-			NULLIF($10, ''),
-			NULLIF($11, ''),
-			$12::timestamptz,
-			CASE
-				WHEN $7 = 'running' THEN NULL
-				ELSE $12::timestamptz
-			END
-		)
-		ON CONFLICT (response_run_id, tool_call_id) DO UPDATE SET
-			model_invocation_id = COALESCE(EXCLUDED.model_invocation_id, agent_tool_calls.model_invocation_id),
-			mcp_server_name = COALESCE(EXCLUDED.mcp_server_name, agent_tool_calls.mcp_server_name),
-			status = EXCLUDED.status,
-			arguments_summary = EXCLUDED.arguments_summary,
-			result_summary = EXCLUDED.result_summary,
-			error_code = EXCLUDED.error_code,
-			error_message = EXCLUDED.error_message,
-			finished_at = CASE
-				WHEN EXCLUDED.status = 'running' THEN agent_tool_calls.finished_at
-				ELSE EXCLUDED.finished_at
-			END,
-			latency_ms = CASE
-				WHEN EXCLUDED.status = 'running' THEN agent_tool_calls.latency_ms
-				ELSE EXTRACT(EPOCH FROM (EXCLUDED.finished_at - agent_tool_calls.started_at)) * 1000
-			END`,
-		runID,
-		modelInvocationID,
-		iteration,
-		toolCallID,
-		toolName,
-		mcpServerName,
-		status,
-		argumentsSummary,
-		resultSummary,
-		errorCode,
-		errorMessage,
-		startedAt,
-	)
-	return err
-}
-
 func (r *Postgres) SaveModelInvocation(ctx context.Context, userID string, invocation service.ModelInvocation) (string, error) {
 	if _, err := r.queries.AuthorizeResponseRunForUser(ctx, invocation.ResponseRunID, userID); errors.Is(err, pgx.ErrNoRows) {
 		return "", service.NewError(service.CodeNotFound, "response run not found", err)
@@ -724,70 +605,6 @@ func (r *Postgres) GetResponseRun(ctx context.Context, userID, runID string) (se
 		return service.ResponseRun{}, fmt.Errorf("get response run: %w", err)
 	}
 	return responseRunFromRow(row), nil
-}
-
-func (r *Postgres) SaveCitations(ctx context.Context, userID, messageID string, citations []service.Citation) error {
-	if len(citations) == 0 {
-		return nil
-	}
-	tx, err := r.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin save citations: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	var authorized bool
-	err = tx.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM messages m
-			JOIN conversations c ON c.id = m.conversation_id
-			WHERE m.id::text = $1
-				AND c.external_user_id = $2
-				AND c.deleted_at IS NULL
-		)`, messageID, userID).Scan(&authorized)
-	if err != nil {
-		return fmt.Errorf("authorize message access: %w", err)
-	}
-	if !authorized {
-		return service.NewError(service.CodeNotFound, "message not found", nil)
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM citations WHERE message_id = $1::uuid`, messageID); err != nil {
-		return fmt.Errorf("delete existing citations: %w", err)
-	}
-	for _, citation := range citations {
-		metadata, _ := json.Marshal(citation.Metadata)
-		if metadata == nil {
-			metadata = []byte("{}")
-		}
-		var pageNum *int32
-		if citation.PageNumber != nil {
-			pn := int32(*citation.PageNumber)
-			pageNum = &pn
-		}
-		var score *float64
-		if citation.Score != nil {
-			score = citation.Score
-		}
-		var rerankScore *float64
-		if citation.RerankScore != nil {
-			rerankScore = citation.RerankScore
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO citations(id,message_id,citation_no,char_start,char_end,external_kb_id,external_doc_id,external_chunk_id,doc_name,section_path,quote_text,context,page_number,score,rerank_score,chunk_type,metadata) VALUES($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
-			citation.ID, messageID, citation.CitationNo,
-			nil, nil,
-			citation.KnowledgeBaseID, citation.DocumentID, citation.ChunkID,
-			citation.DocumentName, citation.SectionPath, citation.Text,
-			citation.Context, pageNum, score,
-			rerankScore, citation.ChunkType, metadata,
-		)
-		if err != nil {
-			return fmt.Errorf("insert citation: %w", err)
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit citations: %w", err)
-	}
-	return nil
 }
 
 func (r *Postgres) CancelResponseRun(ctx context.Context, userID, runID string) (service.ResponseRun, error) {

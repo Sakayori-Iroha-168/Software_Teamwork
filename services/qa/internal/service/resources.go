@@ -41,6 +41,10 @@ type Citation struct {
 	DocName                 string          `json:"docName,omitempty"`
 	KnowledgeBaseID         string          `json:"knowledgeBaseId,omitempty"`
 	ChunkID                 string          `json:"chunkId,omitempty"`
+	AttachmentID            string          `json:"attachmentId,omitempty"`
+	AttachmentChunkID       string          `json:"attachmentChunkId,omitempty"`
+	AttachmentFilename      string          `json:"attachmentFilename,omitempty"`
+	AttachmentChunkPreview  string          `json:"attachmentChunkPreview,omitempty"`
 	SectionPath             string          `json:"sectionPath,omitempty"`
 	Text                    string          `json:"text,omitempty"`
 	ContentPreview          string          `json:"contentPreview,omitempty"`
@@ -74,6 +78,10 @@ func NormalizeCitation(item Citation) Citation {
 	item.DocName = item.DocumentName
 	item.KnowledgeBaseID = strings.TrimSpace(item.KnowledgeBaseID)
 	item.ChunkID = strings.TrimSpace(item.ChunkID)
+	item.AttachmentID = strings.TrimSpace(item.AttachmentID)
+	item.AttachmentChunkID = strings.TrimSpace(item.AttachmentChunkID)
+	item.AttachmentFilename = strings.TrimSpace(item.AttachmentFilename)
+	item.AttachmentChunkPreview = strings.TrimSpace(item.AttachmentChunkPreview)
 	item.SectionPath = strings.TrimSpace(item.SectionPath)
 	item.Text = strings.TrimSpace(item.Text)
 	item.ContentPreview = strings.TrimSpace(firstNonBlank(item.ContentPreview, item.Text))
@@ -81,6 +89,26 @@ func NormalizeCitation(item Citation) Citation {
 	item.ChunkType = strings.TrimSpace(item.ChunkType)
 	item.SourceUnavailableReason = strings.TrimSpace(item.SourceUnavailableReason)
 	item.Metadata = SanitizeCitationMetadata(item.Metadata)
+	if item.AttachmentID != "" {
+		item.DocumentID = ""
+		item.DocID = ""
+		item.KnowledgeBaseID = ""
+		item.ChunkID = ""
+		item.IsSourceAvailable = false
+		if item.DocumentName == "" {
+			item.DocumentName = item.AttachmentFilename
+			item.DocName = item.DocumentName
+		}
+		if item.ContentPreview == "" {
+			item.ContentPreview = item.AttachmentChunkPreview
+		}
+		if item.Text == "" {
+			item.Text = item.AttachmentChunkPreview
+		}
+		if item.SourceUnavailableReason == "" {
+			item.SourceUnavailableReason = "session_attachment_snapshot"
+		}
+	}
 	if item.Content == "" {
 		item.Content = item.ContentPreview
 	}
@@ -181,13 +209,10 @@ type AgentToolCall struct {
 	IterationNo       int            `json:"iterationNo,omitempty"`
 	ToolCallID        string         `json:"toolCallId"`
 	ToolName          string         `json:"toolName"`
-	MCPServerName     string         `json:"mcpServerName,omitempty"`
 	ArgumentsSummary  map[string]any `json:"argumentsSummary,omitempty"`
 	ResultSummary     map[string]any `json:"resultSummary,omitempty"`
 	Status            string         `json:"status"`
 	LatencyMS         int64          `json:"latencyMs,omitempty"`
-	ErrorCode         string         `json:"errorCode,omitempty"`
-	ErrorMessage      string         `json:"errorMessage,omitempty"`
 	StartedAt         time.Time      `json:"startedAt"`
 	FinishedAt        *time.Time     `json:"finishedAt,omitempty"`
 }
@@ -205,40 +230,6 @@ type AgentConfig struct {
 	ModelTimeoutSeconds   int      `json:"modelTimeoutSeconds"`
 	OverallTimeoutSeconds int      `json:"overallTimeoutSeconds"`
 	EnabledToolNames      []string `json:"enabledToolNames"`
-}
-
-func DefaultAgentConfig() AgentConfig {
-	return AgentConfig{
-		MaxIterations:         5,
-		ToolTimeoutSeconds:    10,
-		ModelTimeoutSeconds:   60,
-		OverallTimeoutSeconds: 120,
-		EnabledToolNames:      []string{"search_knowledge"},
-	}
-}
-
-func NormalizeAgentConfig(config AgentConfig) AgentConfig {
-	defaults := DefaultAgentConfig()
-	if config.MaxIterations == 0 {
-		config.MaxIterations = defaults.MaxIterations
-	}
-	if config.ToolTimeoutSeconds == 0 {
-		config.ToolTimeoutSeconds = defaults.ToolTimeoutSeconds
-	}
-	if config.ModelTimeoutSeconds == 0 {
-		config.ModelTimeoutSeconds = defaults.ModelTimeoutSeconds
-	}
-	if config.OverallTimeoutSeconds == 0 {
-		config.OverallTimeoutSeconds = defaults.OverallTimeoutSeconds
-	}
-	if config.EnabledToolNames == nil {
-		config.EnabledToolNames = []string{}
-	} else {
-		enabledToolNames := make([]string, len(config.EnabledToolNames))
-		copy(enabledToolNames, config.EnabledToolNames)
-		config.EnabledToolNames = enabledToolNames
-	}
-	return config
 }
 
 type QAConfigVersion struct {
@@ -361,8 +352,6 @@ type MetricsOverview struct {
 	ConversationCount  int   `json:"conversationCount"`
 	AvgLatencyMS       int64 `json:"avgLatencyMs"`
 	ActiveUsersToday   int   `json:"activeUsersToday"`
-	KnowledgeBaseCount int   `json:"knowledgeBaseCount"`
-	DocumentCount      int   `json:"documentCount"`
 }
 
 type MetricsTrendPoint struct {
@@ -402,7 +391,7 @@ type ResourceRepository interface {
 	SaveLLMConnectionTest(context.Context, string, LLMProfileTestResult) (LLMProfileTestResult, error)
 	SaveRetrievalTestRun(context.Context, string, RetrievalTestInput, []RetrievalTestResult, time.Duration, error) (RetrievalTestRun, error)
 	GetRetrievalTestRun(context.Context, string, string) (RetrievalTestRun, error)
-	GetMetricsOverview(context.Context, string, int) (MetricsOverview, error)
+	GetMetricsOverview(context.Context, int) (MetricsOverview, error)
 	GetMetricsTrend(context.Context, int) (MetricsTrend, error)
 	GetTopQueries(context.Context, int, int) ([]TopQuery, error)
 	GetIntentDistribution(context.Context, int) ([]IntentDistribution, error)
@@ -416,17 +405,12 @@ type CitationSourceChecker interface {
 	CheckCitationSources(context.Context, string, []string) (map[string]bool, error)
 }
 
-type KnowledgeStatsProvider interface {
-	GetStats(context.Context, string) (kbCount int, docCount int, err error)
-}
-
 type ActiveRunCanceller interface{ CancelActiveRun(string) }
 
 type ResourceService struct {
-	repository     ResourceRepository
-	retriever      KnowledgeRetriever
-	sourceChecker  CitationSourceChecker
-	knowledgeStats KnowledgeStatsProvider
+	repository    ResourceRepository
+	retriever     KnowledgeRetriever
+	sourceChecker CitationSourceChecker
 	llmTester     LLMConnectionTester
 	bootstrap     RuntimeLLMConfig
 	canceller     ActiveRunCanceller
@@ -438,8 +422,7 @@ func NewResourceService(repository ResourceRepository, retriever KnowledgeRetrie
 		return nil, errors.New("resource repository, retriever, LLM tester and run canceller are required")
 	}
 	sourceChecker, _ := retriever.(CitationSourceChecker)
-	statsProvider, _ := retriever.(KnowledgeStatsProvider)
-	return &ResourceService{repository: repository, retriever: retriever, sourceChecker: sourceChecker, knowledgeStats: statsProvider, llmTester: tester, bootstrap: bootstrap, canceller: canceller, now: time.Now}, nil
+	return &ResourceService{repository: repository, retriever: retriever, sourceChecker: sourceChecker, llmTester: tester, bootstrap: bootstrap, canceller: canceller, now: time.Now}, nil
 }
 
 func (s *ResourceService) GetResponseRun(ctx context.Context, userID, id string) (ResponseRun, error) {
@@ -573,27 +556,6 @@ func (s *ResourceService) CreateQAConfigVersion(ctx context.Context, userID stri
 	for name, value := range map[string]int{"agent.maxIterations": max(input.Agent.MaxIterations, input.MaxIterations), "agent.toolTimeoutSeconds": max(input.Agent.ToolTimeoutSeconds, input.ToolTimeoutSeconds), "agent.modelTimeoutSeconds": max(input.Agent.ModelTimeoutSeconds, input.ModelTimeoutSeconds), "agent.overallTimeoutSeconds": max(input.Agent.OverallTimeoutSeconds, input.OverallTimeoutSeconds)} {
 		if value < 0 {
 			fields[name] = "must be positive"
-		}
-		if name == "agent.maxIterations" && value > 10 {
-			fields[name] = "must not exceed 10"
-		}
-	}
-	enabledToolNames := input.Agent.EnabledToolNames
-	if enabledToolNames == nil {
-		enabledToolNames = input.EnabledToolNames
-	}
-	if len(enabledToolNames) > 0 {
-		seen := make(map[string]struct{}, len(enabledToolNames))
-		for _, name := range enabledToolNames {
-			trimmed := strings.TrimSpace(name)
-			if trimmed == "" {
-				continue
-			}
-			if _, exists := seen[trimmed]; exists {
-				fields["agent.enabledToolNames"] = "must not contain duplicate tool names"
-				break
-			}
-			seen[trimmed] = struct{}{}
 		}
 	}
 	if len(input.KnowledgeBases) > 50 || len(input.DefaultKnowledgeBaseIDs) > 50 {
@@ -741,22 +703,8 @@ func validateRetrievalSettings(value RetrievalSettings) error {
 func (s *ResourceService) GetRetrievalTestRun(ctx context.Context, userID, id string) (RetrievalTestRun, error) {
 	return s.repository.GetRetrievalTestRun(ctx, userID, id)
 }
-func (s *ResourceService) GetMetricsOverview(ctx context.Context, userID string, days int) (MetricsOverview, error) {
-	overview, err := s.repository.GetMetricsOverview(ctx, userID, days)
-	if err != nil {
-		return MetricsOverview{}, err
-	}
-	// Enrich with knowledge service counts when available.
-	// Calls are best-effort: a failure leaves the count at zero
-	// rather than rejecting the entire overview response.
-	if s.knowledgeStats != nil {
-		kbCount, docCount, statsErr := s.knowledgeStats.GetStats(ctx, userID)
-		if statsErr == nil {
-			overview.KnowledgeBaseCount = kbCount
-			overview.DocumentCount = docCount
-		}
-	}
-	return overview, nil
+func (s *ResourceService) GetMetricsOverview(ctx context.Context, days int) (MetricsOverview, error) {
+	return s.repository.GetMetricsOverview(ctx, days)
 }
 func (s *ResourceService) GetMetricsTrend(ctx context.Context, days int) (MetricsTrend, error) {
 	return s.repository.GetMetricsTrend(ctx, days)

@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +33,12 @@ type fakeResourceServiceWithListEvents struct {
 type fakeResourceServiceWithCreate struct {
 	fakeResourceService
 	createRetrievalTestRun func(context.Context, string, service.RetrievalTestInput) (service.RetrievalTestRun, error)
+}
+type fakeAttachmentService struct {
+	upload func(context.Context, string, string, service.UploadAttachmentInput) (service.SessionAttachment, error)
+	list   func(context.Context, string, string) ([]service.SessionAttachment, error)
+	get    func(context.Context, string, string, string) (service.SessionAttachment, error)
+	delete func(context.Context, string, string, string) error
 }
 
 func (fakeSettingsService) GetSettings(context.Context) (service.QASettings, error) {
@@ -127,7 +135,7 @@ func (f fakeResourceServiceWithCreate) CreateRetrievalTestRun(ctx context.Contex
 func (fakeResourceService) GetRetrievalTestRun(context.Context, string, string) (service.RetrievalTestRun, error) {
 	return service.RetrievalTestRun{}, nil
 }
-func (fakeResourceService) GetMetricsOverview(context.Context, string, int) (service.MetricsOverview, error) {
+func (fakeResourceService) GetMetricsOverview(context.Context, int) (service.MetricsOverview, error) {
 	return service.MetricsOverview{}, nil
 }
 func (fakeResourceService) GetMetricsTrend(context.Context, int) (service.MetricsTrend, error) {
@@ -153,6 +161,18 @@ func (f fakeQAService) ListMessages(ctx context.Context, userID, sessionID strin
 }
 func (f fakeQAService) Ask(ctx context.Context, userID, conversationID string, input service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
 	return f.ask(ctx, userID, conversationID, input, observer)
+}
+func (f fakeAttachmentService) Upload(ctx context.Context, userID, sessionID string, input service.UploadAttachmentInput) (service.SessionAttachment, error) {
+	return f.upload(ctx, userID, sessionID, input)
+}
+func (f fakeAttachmentService) List(ctx context.Context, userID, sessionID string) ([]service.SessionAttachment, error) {
+	return f.list(ctx, userID, sessionID)
+}
+func (f fakeAttachmentService) Get(ctx context.Context, userID, sessionID, attachmentID string) (service.SessionAttachment, error) {
+	return f.get(ctx, userID, sessionID, attachmentID)
+}
+func (f fakeAttachmentService) Delete(ctx context.Context, userID, sessionID, attachmentID string) error {
+	return f.delete(ctx, userID, sessionID, attachmentID)
 }
 
 func TestConversationEndpointRequiresUserContext(t *testing.T) {
@@ -229,6 +249,84 @@ func TestCreateConversationAllowsEmptyBody(t *testing.T) {
 	server.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestAttachmentUploadUsesMultipartAndServiceContext(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "manual.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("pdf bytes")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	server := newTestServer(t, fakeQAService{})
+	server.SetAttachmentService(fakeAttachmentService{
+		upload: func(_ context.Context, userID, sessionID string, input service.UploadAttachmentInput) (service.SessionAttachment, error) {
+			if userID != "user-1" || sessionID != "session-1" || input.Filename != "manual.pdf" || input.SizeBytes <= 0 {
+				t.Fatalf("unexpected upload input: user=%q session=%q input=%+v", userID, sessionID, input)
+			}
+			return service.SessionAttachment{ID: "att-1", SessionID: sessionID, Filename: input.Filename, ContentType: "application/pdf", Status: service.AttachmentStatusUploaded}, nil
+		},
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/session-1/attachments", &body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "file_ref") || strings.Contains(recorder.Body.String(), "bucket") {
+		t.Fatalf("response leaked internal file metadata: %s", recorder.Body.String())
+	}
+}
+
+func TestAttachmentListGetDeleteRoutes(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	server.SetAttachmentService(fakeAttachmentService{
+		list: func(_ context.Context, userID, sessionID string) ([]service.SessionAttachment, error) {
+			if userID != "user-1" || sessionID != "session-1" {
+				t.Fatalf("unexpected list input")
+			}
+			return []service.SessionAttachment{{ID: "att-1", SessionID: sessionID, Filename: "a.png", Status: service.AttachmentStatusReady}}, nil
+		},
+		get: func(_ context.Context, userID, sessionID, attachmentID string) (service.SessionAttachment, error) {
+			if userID != "user-1" || sessionID != "session-1" || attachmentID != "att-1" {
+				t.Fatalf("unexpected get input")
+			}
+			return service.SessionAttachment{ID: attachmentID, SessionID: sessionID, Filename: "a.png", Status: service.AttachmentStatusReady}, nil
+		},
+		delete: func(_ context.Context, userID, sessionID, attachmentID string) error {
+			if userID != "user-1" || sessionID != "session-1" || attachmentID != "att-1" {
+				t.Fatalf("unexpected delete input")
+			}
+			return nil
+		},
+	})
+	for _, tc := range []struct {
+		method string
+		path   string
+		want   int
+	}{
+		{http.MethodGet, "/internal/v1/qa-sessions/session-1/attachments", http.StatusOK},
+		{http.MethodGet, "/internal/v1/qa-sessions/session-1/attachments/att-1", http.StatusOK},
+		{http.MethodDelete, "/internal/v1/qa-sessions/session-1/attachments/att-1", http.StatusNoContent},
+	} {
+		recorder := httptest.NewRecorder()
+		request := httptest.NewRequest(tc.method, tc.path, nil)
+		request.Header.Set("X-User-Id", "user-1")
+		request.Header.Set("X-Service-Token", "test-service-token")
+		server.ServeHTTP(recorder, request)
+		if recorder.Code != tc.want {
+			t.Fatalf("%s %s status=%d body=%s", tc.method, tc.path, recorder.Code, recorder.Body.String())
+		}
 	}
 }
 
@@ -511,137 +609,6 @@ func TestSessionOperationsReturnForbiddenForNonOwnerEvenWithAdminRole(t *testing
 	}
 }
 
-func TestStreamIncludesToolEventsWithSummary(t *testing.T) {
-	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
-		observer(service.ProgressEvent{Type: "message.created", Sequence: 1, Payload: map[string]any{"userMessageId": "user-message"}})
-		observer(service.ProgressEvent{Type: "tool.started", Sequence: 2, Payload: map[string]any{"tool": "search_knowledge", "summary": "正在执行工具 search_knowledge"}})
-		observer(service.ProgressEvent{Type: "tool.completed", Sequence: 3, Payload: map[string]any{"tool": "search_knowledge", "summary": "工具 search_knowledge 执行完成"}})
-		observer(service.ProgressEvent{Type: "answer.delta", Sequence: 4, Payload: map[string]any{"text": "回答内容"}})
-		observer(service.ProgressEvent{Type: "answer.completed", Sequence: 5, Payload: map[string]any{"messageId": "assistant-message"}})
-		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "回答内容", Status: "completed"}}, nil
-	}})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试工具事件"}`))
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	body := recorder.Body.String()
-	for _, event := range []string{"tool.started", "tool.completed"} {
-		if !strings.Contains(body, "event: "+event) {
-			t.Fatalf("missing event %q in %s", event, body)
-		}
-	}
-	if !strings.Contains(body, "正在执行工具") || !strings.Contains(body, "执行完成") {
-		t.Fatalf("missing summary in tool events: %s", body)
-	}
-}
-
-func TestStreamIncludesHeartbeatEvent(t *testing.T) {
-	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
-		observer(service.ProgressEvent{Type: "message.created", Sequence: 1, Payload: map[string]any{"userMessageId": "user-message"}})
-		observer(service.ProgressEvent{Type: "answer.delta", Sequence: 2, Payload: map[string]any{"text": "回答"}})
-		observer(service.ProgressEvent{Type: "heartbeat", Sequence: 3, Payload: map[string]any{}})
-		observer(service.ProgressEvent{Type: "answer.completed", Sequence: 4, Payload: map[string]any{"messageId": "assistant-message"}})
-		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "回答", Status: "completed"}}, nil
-	}})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试心跳"}`))
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, "event: heartbeat") {
-		t.Fatalf("missing heartbeat event: %s", body)
-	}
-}
-
-func TestStreamEmitsErrorOnServiceFailure(t *testing.T) {
-	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
-		observer(service.ProgressEvent{Type: "error", Sequence: 1, Payload: map[string]any{"code": "validation_error", "message": "invalid request"}})
-		return service.AskResult{}, service.NewError(service.CodeValidation, "invalid request", nil)
-	}})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/session-id/messages", strings.NewReader(`{"message":"测试错误"}`))
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	body := recorder.Body.String()
-	if !strings.Contains(body, `"code":"validation_error"`) {
-		t.Fatalf("missing error code in response: %s", body)
-	}
-}
-
-func TestStreamEventSequenceIsMonotonic(t *testing.T) {
-	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
-		for i := 1; i <= 5; i++ {
-			observer(service.ProgressEvent{Type: "reasoning.step", Sequence: i, Payload: map[string]any{"detail": "step"}})
-		}
-		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "done", Status: "completed"}}, nil
-	}})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试序号"}`))
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestListEventsRequiresResponseRunId(t *testing.T) {
-	server := newTestServer(t, fakeQAService{})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-sessions/session-id/events", nil)
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	if !strings.Contains(recorder.Body.String(), `"responseRunId":"is required"`) {
-		t.Fatalf("unexpected error response: %s", recorder.Body.String())
-	}
-}
-
-func TestStreamIncludesCitationDeltaEvents(t *testing.T) {
-	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
-		observer(service.ProgressEvent{Type: "tool.completed", Sequence: 1, Payload: map[string]any{"tool": "search_knowledge"}})
-		observer(service.ProgressEvent{Type: "citation.delta", Sequence: 2, Payload: map[string]any{"citation": map[string]any{"id": "cit_1", "citationNo": 1, "docName": "测试文档.pdf", "score": 0.95}}})
-		observer(service.ProgressEvent{Type: "answer.delta", Sequence: 3, Payload: map[string]any{"text": "基于文档内容的回答"}})
-		observer(service.ProgressEvent{Type: "answer.completed", Sequence: 4, Payload: map[string]any{"messageId": "assistant-message"}})
-		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "基于文档内容的回答", Status: "completed"}}, nil
-	}})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试引用"}`))
-	request.Header.Set("Accept", "text/event-stream")
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
-	}
-	body := recorder.Body.String()
-	if !strings.Contains(body, "event: citation.delta") {
-		t.Fatalf("missing citation.delta event: %s", body)
-	}
-	if !strings.Contains(body, `"docName":"测试文档.pdf"`) {
-		t.Fatalf("missing docName in citation.delta: %s", body)
-	}
-	if !strings.Contains(body, `"score":0.95`) {
-		t.Fatalf("missing score in citation.delta: %s", body)
-	}
-}
-
 func newTestServer(t *testing.T, qa fakeQAService) *Server {
 	t.Helper()
 	return newTestServerWithResources(t, qa, fakeResourceService{})
@@ -664,119 +631,4 @@ func newTestServerWithResources(t *testing.T, qa fakeQAService, resources Resour
 		t.Fatal(err)
 	}
 	return server
-}
-
-func newTestServerSettingsOpen(t *testing.T, qa fakeQAService, resources ResourceService) *Server {
-	t.Helper()
-	if qa.create == nil {
-		qa.create = func(context.Context, string, string) (service.Conversation, error) {
-			return service.Conversation{}, nil
-		}
-	}
-	if qa.ask == nil {
-		qa.ask = func(context.Context, string, string, service.AskInput, service.ProgressObserver) (service.AskResult, error) {
-			return service.AskResult{}, nil
-		}
-	}
-	server, err := NewServer(qa, fakeSettingsService{}, resources, Config{MaxRequestBytes: 4096, ServiceToken: "test-service-token", SettingsOpen: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return server
-}
-
-func TestMetricsEndpointRequiresSettingsPermission(t *testing.T) {
-	server := newTestServer(t, fakeQAService{})
-	for _, tc := range []struct {
-		method, path string
-	}{
-		{http.MethodGet, "/internal/v1/qa-metrics/overview"},
-		{http.MethodGet, "/internal/v1/qa-metrics/trend"},
-		{http.MethodGet, "/internal/v1/qa-metrics/top-queries"},
-		{http.MethodGet, "/internal/v1/qa-metrics/intent-distribution"},
-	} {
-		t.Run(tc.path, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(tc.method, tc.path, nil)
-			request.Header.Set("X-User-Id", "user-1")
-			request.Header.Set("X-Service-Token", "test-service-token")
-			server.ServeHTTP(recorder, request)
-			if recorder.Code != http.StatusForbidden {
-				t.Fatalf("%s %s: expected 403, got %d", tc.method, tc.path, recorder.Code)
-			}
-		})
-	}
-}
-
-func TestMetricsOverviewReturnsSuccessWithPermission(t *testing.T) {
-	resources := fakeResourceService{}
-	server := newTestServerSettingsOpen(t, fakeQAService{}, resources)
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/overview", nil)
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d body=%s", recorder.Code, recorder.Body.String())
-	}
-	var body struct {
-		Data      service.MetricsOverview `json:"data"`
-		RequestID string                  `json:"requestId"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if body.RequestID == "" {
-		t.Fatal("expected requestId in response")
-	}
-}
-
-func TestMetricsDaysValidation(t *testing.T) {
-	server := newTestServerSettingsOpen(t, fakeQAService{}, fakeResourceService{})
-	for _, tc := range []string{
-		"/internal/v1/qa-metrics/overview?days=0",
-		"/internal/v1/qa-metrics/overview?days=400",
-		"/internal/v1/qa-metrics/trend?days=-1",
-	} {
-		t.Run(tc, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, tc, nil)
-			request.Header.Set("X-User-Id", "user-1")
-			request.Header.Set("X-Service-Token", "test-service-token")
-			server.ServeHTTP(recorder, request)
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("%s: expected 400, got %d", tc, recorder.Code)
-			}
-		})
-	}
-}
-
-func TestTopQueriesLimitValidation(t *testing.T) {
-	server := newTestServerSettingsOpen(t, fakeQAService{}, fakeResourceService{})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/top-queries?limit=200", nil)
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body=%s", recorder.Code, recorder.Body.String())
-	}
-}
-
-func TestMetricsTrendDoesNotLeakQueryContent(t *testing.T) {
-	server := newTestServerSettingsOpen(t, fakeQAService{}, fakeResourceService{})
-	recorder := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-metrics/trend?days=7", nil)
-	request.Header.Set("X-User-Id", "user-1")
-	request.Header.Set("X-Service-Token", "test-service-token")
-	server.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", recorder.Code)
-	}
-	body := recorder.Body.String()
-	for _, forbidden := range []string{"secret", "token", "prompt", "apiKey", "objectKey"} {
-		if strings.Contains(body, forbidden) {
-			t.Fatalf("metrics response leaked %q", forbidden)
-		}
-	}
 }

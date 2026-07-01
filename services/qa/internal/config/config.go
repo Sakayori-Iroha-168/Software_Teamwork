@@ -24,15 +24,17 @@ const (
 )
 
 type Config struct {
-	HTTPAddr        string
-	ShutdownTimeout time.Duration
-	MaxRequestBytes int64
-	DatabaseURL     string
-	EncryptionKey   string
-	AdminUserIDs    []string
-	SettingsOpen    bool
-	ServiceToken    string
-	KnowledgeURL    string
+	HTTPAddr         string
+	ShutdownTimeout  time.Duration
+	MaxRequestBytes  int64
+	DatabaseURL      string
+	EncryptionKey    string
+	AdminUserIDs     []string
+	SettingsOpen     bool
+	ServiceToken     string
+	KnowledgeURL     string
+	FileServiceURL   string
+	ParserServiceURL string
 
 	AIGatewayURL         string
 	AIGatewayToken       string
@@ -51,13 +53,17 @@ type Config struct {
 	MCPServerTokenHeader string
 	MCPToolTimeout       time.Duration
 
-	SystemPrompt       string
-	MaxIterations      int
-	MaxToolResultBytes int
-	WorkDir            string
-	MaxFileBytes       int
-	EnableCommandTool  bool
-	CommandTimeout     time.Duration
+	SystemPrompt                    string
+	MaxIterations                   int
+	MaxToolResultBytes              int
+	WorkDir                         string
+	MaxFileBytes                    int
+	EnableCommandTool               bool
+	CommandTimeout                  time.Duration
+	SessionAttachmentTTL            time.Duration
+	SessionAttachmentMaxBytes       int64
+	SessionAttachmentMaxPerSession  int
+	SessionAttachmentProcessTimeout time.Duration
 }
 
 func Load() (Config, error) {
@@ -73,6 +79,8 @@ func Load() (Config, error) {
 		AdminUserIDs:         splitCSV(os.Getenv("QA_ADMIN_USER_IDS")),
 		ServiceToken:         serviceToken,
 		KnowledgeURL:         envOr("KNOWLEDGE_SERVICE_URL", "http://localhost:8083"),
+		FileServiceURL:       envOr("FILE_SERVICE_URL", "http://localhost:8082"),
+		ParserServiceURL:     envOr("PARSER_SERVICE_URL", "http://localhost:8090"),
 		AIGatewayURL:         envOr("AI_GATEWAY_URL", defaultAIGatewayURL),
 		AIGatewayToken:       aiGatewayToken,
 		AIGatewayTokenHeader: envOr("AI_GATEWAY_TOKEN_HEADER", defaultAIGatewayTokenHeader),
@@ -111,19 +119,25 @@ func Load() (Config, error) {
 	if cfg.MaxIterations, err = positiveIntEnv("AGENT_MAX_ITERATIONS", 8); err != nil {
 		return Config{}, err
 	}
-	if cfg.MaxIterations > 10 {
-		return Config{}, errors.New("AGENT_MAX_ITERATIONS must not exceed 10")
-	}
 	if cfg.MaxToolResultBytes, err = positiveIntEnv("MCP_MAX_RESULT_BYTES", 50000); err != nil {
 		return Config{}, err
-	}
-	if cfg.MaxToolResultBytes < 100 {
-		return Config{}, errors.New("MCP_MAX_RESULT_BYTES must be at least 100")
 	}
 	if cfg.MaxFileBytes, err = positiveIntEnv("AGENT_MAX_FILE_BYTES", 1<<20); err != nil {
 		return Config{}, err
 	}
 	if cfg.CommandTimeout, err = durationEnv("AGENT_COMMAND_TIMEOUT", 120*time.Second); err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionAttachmentTTL, err = hoursEnv("QA_SESSION_ATTACHMENT_TTL_HOURS", 24); err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionAttachmentMaxBytes, err = positiveInt64Env("QA_SESSION_ATTACHMENT_MAX_BYTES", 25<<20); err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionAttachmentMaxPerSession, err = positiveIntEnv("QA_SESSION_ATTACHMENT_MAX_PER_SESSION", 10); err != nil {
+		return Config{}, err
+	}
+	if cfg.SessionAttachmentProcessTimeout, err = secondsEnv("QA_SESSION_ATTACHMENT_PROCESS_TIMEOUT_SECONDS", 120); err != nil {
 		return Config{}, err
 	}
 	if cfg.EnableCommandTool, err = boolEnv("AGENT_ENABLE_COMMAND_TOOL", false); err != nil {
@@ -149,6 +163,12 @@ func Load() (Config, error) {
 
 func (c Config) Validate() error {
 	if err := validateHTTPURL("KNOWLEDGE_SERVICE_URL", c.KnowledgeURL); err != nil {
+		return err
+	}
+	if err := validateHTTPURL("FILE_SERVICE_URL", c.FileServiceURL); err != nil {
+		return err
+	}
+	if err := validateHTTPURL("PARSER_SERVICE_URL", c.ParserServiceURL); err != nil {
 		return err
 	}
 	if err := validateHTTPURL("AI_GATEWAY_URL", c.AIGatewayURL); err != nil {
@@ -229,6 +249,30 @@ func durationEnv(name string, fallback time.Duration) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be a positive duration", name)
 	}
 	return parsed, nil
+}
+
+func hoursEnv(name string, fallback int) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return time.Duration(fallback) * time.Hour, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer hour count", name)
+	}
+	return time.Duration(parsed) * time.Hour, nil
+}
+
+func secondsEnv(name string, fallback int) (time.Duration, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return time.Duration(fallback) * time.Second, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer second count", name)
+	}
+	return time.Duration(parsed) * time.Second, nil
 }
 
 func positiveIntEnv(name string, fallback int) (int, error) {

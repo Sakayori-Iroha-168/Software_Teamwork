@@ -52,13 +52,17 @@ func isCitationToolName(name string) bool {
 	switch name {
 	case "search_knowledge", "get_citation_source", "knowledge_query":
 		return true
+	case "search_session_attachments":
+		return true
 	}
 	return strings.HasSuffix(name, "__search_knowledge") ||
 		strings.HasSuffix(name, ".search_knowledge") ||
 		strings.HasSuffix(name, "__get_citation_source") ||
 		strings.HasSuffix(name, ".get_citation_source") ||
 		strings.HasSuffix(name, "__knowledge_query") ||
-		strings.HasSuffix(name, ".knowledge_query")
+		strings.HasSuffix(name, ".knowledge_query") ||
+		strings.HasSuffix(name, "__search_session_attachments") ||
+		strings.HasSuffix(name, ".search_session_attachments")
 }
 
 func collectCitationRecords(value any) []map[string]any {
@@ -87,8 +91,8 @@ func collectCitationRecords(value any) []map[string]any {
 
 func looksLikeCitationRecord(record map[string]any) bool {
 	for _, key := range []string{
-		"documentId", "docId", "externalDocId", "external_doc_id",
-		"document_id", "documentName", "docName", "document_name", "chunkId", "chunk_id", "externalChunkId",
+		"attachmentId", "attachment_id", "documentId", "docId", "externalDocId", "external_doc_id",
+		"documentName", "docName", "chunkId", "externalChunkId",
 		"contentPreview", "content_preview", "quoteText", "quote_text", "text",
 	} {
 		if _, ok := record[key]; ok {
@@ -100,10 +104,14 @@ func looksLikeCitationRecord(record map[string]any) bool {
 
 func citationFromRecord(record map[string]any) (Citation, bool) {
 	citation := Citation{
-		DocumentID:              firstString(record, "documentId", "document_id", "docId", "externalDocId", "external_doc_id"),
+		DocumentID:              firstString(record, "documentId", "docId", "externalDocId", "external_doc_id"),
 		DocumentName:            firstString(record, "documentName", "docName", "document_name", "doc_name", "title", "filename"),
 		KnowledgeBaseID:         firstString(record, "knowledgeBaseId", "knowledge_base_id", "externalKbId", "external_kb_id", "kbId"),
 		ChunkID:                 firstString(record, "chunkId", "chunk_id", "externalChunkId", "external_chunk_id"),
+		AttachmentID:            firstString(record, "attachmentId", "attachment_id"),
+		AttachmentChunkID:       firstString(record, "attachmentChunkId", "attachment_chunk_id", "chunkId", "chunk_id"),
+		AttachmentFilename:      firstString(record, "filename", "attachmentFilename", "attachment_filename"),
+		AttachmentChunkPreview:  firstString(record, "preview", "attachmentChunkPreview", "attachment_chunk_preview"),
 		SectionPath:             firstString(record, "sectionPath", "section_path"),
 		Text:                    firstString(record, "quoteText", "quote_text", "text"),
 		ContentPreview:          firstString(record, "contentPreview", "content_preview", "preview"),
@@ -115,6 +123,18 @@ func citationFromRecord(record map[string]any) (Citation, bool) {
 	citation.Text = truncateRunes(citation.Text, maxCitationSnapshotTextRunes)
 	citation.ContentPreview = truncateRunes(citation.ContentPreview, maxCitationSnapshotTextRunes)
 	citation.Context = truncateRunes(citation.Context, maxCitationSnapshotContextRunes)
+	citation.AttachmentChunkPreview = truncateRunes(citation.AttachmentChunkPreview, maxCitationSnapshotTextRunes)
+	if citation.AttachmentID != "" {
+		citation.DocumentID = ""
+		citation.DocID = ""
+		citation.KnowledgeBaseID = ""
+		citation.ChunkID = ""
+		citation.DocumentName = firstNonBlank(citation.DocumentName, citation.AttachmentFilename)
+		citation.DocName = citation.DocumentName
+		citation.ContentPreview = firstNonBlank(citation.AttachmentChunkPreview, citation.ContentPreview)
+		citation.Text = firstNonBlank(citation.AttachmentChunkPreview, citation.Text)
+		citation.Context = ""
+	}
 	if page, ok := firstInt(record, "pageNumber", "page_number", "page"); ok && page > 0 {
 		citation.PageNumber = &page
 	}
@@ -140,6 +160,8 @@ func citationSnapshotKey(citation Citation) string {
 		citation.KnowledgeBaseID,
 		citation.DocumentID,
 		citation.ChunkID,
+		citation.AttachmentID,
+		citation.AttachmentChunkID,
 		citation.Text,
 		citation.ContentPreview,
 	}, "\x00")

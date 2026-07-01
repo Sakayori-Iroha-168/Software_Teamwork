@@ -31,11 +31,18 @@ These tools are available without an MCP Server:
 | `write_file` | Writes a bounded UTF-8 file under `AGENT_WORKDIR`.                |
 | `edit_file`  | Replaces the first exact text occurrence under `AGENT_WORKDIR`.   |
 | `bash`       | Runs a bounded workspace command only when explicitly enabled.    |
+| `search_session_attachments` | Searches only attachment chunks bound to the current message. |
 
 Paths must be relative and are checked after symlink resolution so file tools
 cannot intentionally leave the configured workspace. Set
 `AGENT_ENABLE_COMMAND_TOOL=true` only in a trusted development environment;
 the command tool is disabled by default.
+
+`search_session_attachments` is available only inside QA session message runs
+that have ready `attachmentIds` bound to the user message. The tool reads its
+scope from the request context and never falls back to all session attachments.
+Tool results include only `attachmentId`, `attachmentChunkId`, filename, page
+number, section path, and preview text.
 
 ## Configuration
 
@@ -54,11 +61,56 @@ AI Gateway variables:
 | `AI_GATEWAY_STREAM` | Optional `true` to request AI Gateway `text/event-stream` completions; defaults to non-streaming JSON. |
 | `MODEL_ID` | Chat model name sent in the OpenAI-compatible request; defaults to `deepseek-chat`. |
 
+Session attachment variables:
+
+| Variable | Description |
+| --- | --- |
+| `FILE_SERVICE_URL` | File service base URL for raw object upload/read/delete; defaults to `http://localhost:8082`. |
+| `PARSER_SERVICE_URL` | Parser service base URL for `/internal/v1/parsed-documents`; defaults to `http://localhost:8090`. |
+| `QA_SESSION_ATTACHMENT_TTL_HOURS` | Attachment TTL in hours; defaults to `24`. |
+| `QA_SESSION_ATTACHMENT_MAX_BYTES` | Maximum uploaded PDF/image bytes; defaults to `26214400` (25 MiB). |
+| `QA_SESSION_ATTACHMENT_MAX_PER_SESSION` | Maximum live attachments per QA session; defaults to `10`. |
+| `QA_SESSION_ATTACHMENT_PROCESS_TIMEOUT_SECONDS` | File read and Parser processing timeout; defaults to `120`. |
+
 QA does not store provider API keys or provider base URLs. Runtime provider
 credentials belong to AI Gateway model profiles, and QA only sends `profile_id`,
-model name, timeout, and generation parameters. `AI_GATEWAY_URL` is limited to
-the AI Gateway chat completions path on `localhost`, loopback, or `ai-gateway`
-using the standard internal port `8086`.
+model name, timeout, and generation parameters.
+
+## Session attachments
+
+QA session attachments are temporary, session-scoped PDF/image inputs. They are
+not written to Knowledge knowledge bases and are not indexed in Qdrant. QA stores
+only attachment metadata, a service-internal File reference, temporary parsed
+chunks, message bindings, and citation display snapshots.
+
+Lifecycle:
+
+1. `POST /api/v1/qa-sessions/{sessionId}/attachments` uploads a PDF/image
+   through Gateway to QA. QA checks the session owner, uploads raw bytes to File,
+   stores `status=uploaded`, and starts the processing task.
+2. The processor moves the attachment to `parsing`, reads bytes from File, calls
+   Parser `/internal/v1/parsed-documents`, stores temporary chunks, then marks
+   the attachment `ready`. Parser may use local or cloud PP-StructureV3; QA only
+   depends on the internal Parser contract.
+3. `POST /api/v1/qa-sessions/{sessionId}/messages` may include
+   `attachmentIds`. QA validates every id belongs to the same session and user,
+   is not deleted, and is `ready`, then records `message_attachments`.
+4. During that message run, the Agent can call `search_session_attachments`.
+   The search scope is exactly the current session plus the message-bound
+   attachment ids.
+5. Explicit attachment delete, session delete, and TTL cleanup soft-delete
+   attachment metadata, remove chunks, and request File deletion. Cleanup is
+   idempotent.
+
+Security boundary:
+
+- Public responses never expose File internal IDs as a public contract, buckets,
+  object keys, internal URLs, service tokens, Parser JSONL, or full OCR text.
+- Attachment citations store only `attachmentId`, `attachmentChunkId`, filename,
+  page number, and chunk preview snapshots. They do not store raw Parser payloads
+  or full chunk bodies.
+- Ordinary tests use fake File and Parser clients; they do not call real OCR,
+  real MinIO, or Parser Cloud.
 
 ## QA -> AI Gateway smoke
 
