@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -15,6 +16,16 @@ const (
 	AttachmentStatusReady    = "ready"
 	AttachmentStatusFailed   = "failed"
 )
+
+const maxSessionAttachmentBytes = int64(100 << 20)
+
+var allowedAttachmentContentTypes = map[string]struct{}{
+	"application/pdf": {},
+	"image/png":       {},
+	"image/jpeg":      {},
+	"text/plain":      {},
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": {},
+}
 
 type SessionAttachment struct {
 	ID           string     `json:"id"`
@@ -157,6 +168,10 @@ func (s *AttachmentService) Upload(ctx context.Context, userID, sessionID string
 	if input.SizeBytes <= 0 || input.SizeBytes > s.maxBytes {
 		return AttachmentUploadResult{}, ValidationError(map[string]string{"sizeBytes": "exceeds attachment size limit"})
 	}
+	contentType, err := normalizeAttachmentContentType(input.ContentType)
+	if err != nil {
+		return AttachmentUploadResult{}, err
+	}
 	if _, err := s.repository.GetConversation(ctx, userID, sessionID); err != nil {
 		return AttachmentUploadResult{}, err
 	}
@@ -167,12 +182,19 @@ func (s *AttachmentService) Upload(ctx context.Context, userID, sessionID string
 	if page.Total >= s.maxPerSession {
 		return AttachmentUploadResult{}, NewError(CodeConflict, "session attachment limit reached", nil)
 	}
-	fileRef, err := s.fileClient.Upload(ctx, filename, strings.TrimSpace(input.ContentType), input.SizeBytes, input.Body)
+	var currentBytes int64
+	for _, attachment := range page.Items {
+		currentBytes += attachment.SizeBytes
+	}
+	if currentBytes+input.SizeBytes > maxSessionAttachmentBytes {
+		return AttachmentUploadResult{}, NewError(CodeConflict, "session attachment size quota exceeded", nil)
+	}
+	fileRef, err := s.fileClient.Upload(ctx, filename, contentType, input.SizeBytes, input.Body)
 	if err != nil {
 		return AttachmentUploadResult{}, NewError(CodeDependency, "file upload failed", err)
 	}
 	now := s.now().UTC()
-	attachment := SessionAttachment{ID: newID("att"), SessionID: sessionID, OwnerUserID: userID, FileRef: fileRef, Filename: filename, ContentType: strings.TrimSpace(input.ContentType), SizeBytes: input.SizeBytes, Status: AttachmentStatusUploaded, ExpiresAt: now.Add(s.ttl), CreatedAt: now, UpdatedAt: now}
+	attachment := SessionAttachment{ID: newID("att"), SessionID: sessionID, OwnerUserID: userID, FileRef: fileRef, Filename: filename, ContentType: contentType, SizeBytes: input.SizeBytes, Status: AttachmentStatusUploaded, ExpiresAt: now.Add(s.ttl), CreatedAt: now, UpdatedAt: now}
 	created, err := s.repository.CreateAttachment(ctx, attachment)
 	if err != nil {
 		return AttachmentUploadResult{}, err
@@ -273,6 +295,23 @@ func sanitizeAttachmentName(value string) string {
 	}
 	return value
 }
+
+func normalizeAttachmentContentType(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", NewError(CodeUnsupportedMedia, "attachment content type is not supported", nil)
+	}
+	mediaType, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return "", NewError(CodeUnsupportedMedia, "attachment content type is not supported", err)
+	}
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	if _, ok := allowedAttachmentContentTypes[mediaType]; !ok {
+		return "", NewError(CodeUnsupportedMedia, "attachment content type is not supported", nil)
+	}
+	return mediaType, nil
+}
+
 func previewText(value string, max int) string {
 	value = strings.Join(strings.Fields(value), " ")
 	if max <= 0 || len([]rune(value)) <= max {

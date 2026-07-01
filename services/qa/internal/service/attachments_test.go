@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -52,6 +53,7 @@ func (s *attachmentRepoStub) SoftDeleteAttachment(_ context.Context, _, sessionI
 		if item.ID == attachmentID && item.SessionID == sessionID {
 			item.DeletedAt = &now
 			s.attachments[i] = item
+			s.chunks = removeAttachmentChunks(s.chunks, attachmentID)
 			return nil
 		}
 	}
@@ -163,6 +165,16 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
+func removeAttachmentChunks(chunks []SessionAttachmentChunk, attachmentID string) []SessionAttachmentChunk {
+	out := chunks[:0]
+	for _, chunk := range chunks {
+		if chunk.AttachmentID != attachmentID {
+			out = append(out, chunk)
+		}
+	}
+	return out
+}
+
 type testFileClient struct {
 	data map[string][]byte
 	next int
@@ -223,6 +235,68 @@ func TestAttachmentServiceUploadAndProcess(t *testing.T) {
 	}
 	if ready.Status != AttachmentStatusReady || ready.ChunkCount == 0 {
 		t.Fatalf("ready attachment = %+v", ready)
+	}
+}
+
+func TestAttachmentServiceUploadRejectsUnsupportedContentType(t *testing.T) {
+	repo := &attachmentRepoStub{conversation: Conversation{ID: "sess-1"}}
+	svc, err := NewAttachmentService(repo, &testFileClient{data: map[string][]byte{}}, testParserClient{}, AttachmentServiceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Upload(context.Background(), "user-1", "sess-1", CreateAttachmentInput{
+		Filename: "notes.bin", ContentType: "application/octet-stream", SizeBytes: 4,
+		Body: bytes.NewReader([]byte("test")),
+	})
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Code != CodeUnsupportedMedia {
+		t.Fatalf("Upload() error = %v, want unsupported media", err)
+	}
+}
+
+func TestAttachmentServiceUploadRejectsSessionSizeQuota(t *testing.T) {
+	repo := &attachmentRepoStub{
+		conversation: Conversation{ID: "sess-1"},
+		attachments: []SessionAttachment{{
+			ID: "att-existing", SessionID: "sess-1", SizeBytes: maxSessionAttachmentBytes - 1,
+		}},
+	}
+	svc, err := NewAttachmentService(repo, &testFileClient{data: map[string][]byte{}}, testParserClient{}, AttachmentServiceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = svc.Upload(context.Background(), "user-1", "sess-1", CreateAttachmentInput{
+		Filename: "notes.txt", ContentType: "text/plain", SizeBytes: 2,
+		Body: bytes.NewReader([]byte("ok")),
+	})
+	var appErr *AppError
+	if !errors.As(err, &appErr) || appErr.Code != CodeConflict {
+		t.Fatalf("Upload() error = %v, want conflict", err)
+	}
+}
+
+func TestAttachmentServiceDeleteClearsTemporaryChunks(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &attachmentRepoStub{
+		conversation: Conversation{ID: "sess-1"},
+		attachments: []SessionAttachment{{
+			ID: "att-1", SessionID: "sess-1", FileRef: "file-1", Status: AttachmentStatusReady, ExpiresAt: now.Add(time.Hour),
+		}},
+		chunks: []SessionAttachmentChunk{{ID: "chunk-1", AttachmentID: "att-1", SessionID: "sess-1"}},
+	}
+	files := &testFileClient{data: map[string][]byte{"file-1": []byte("data")}}
+	svc, err := NewAttachmentService(repo, files, testParserClient{}, AttachmentServiceConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Delete(context.Background(), "user-1", "sess-1", "att-1"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if len(repo.chunks) != 0 {
+		t.Fatalf("chunks after delete = %+v, want none", repo.chunks)
+	}
+	if _, ok := files.data["file-1"]; ok {
+		t.Fatal("file object was not deleted")
 	}
 }
 

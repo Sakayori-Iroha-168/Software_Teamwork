@@ -528,6 +528,8 @@ func statusForCode(code service.Code) int {
 		return http.StatusNotFound
 	case service.CodeConflict:
 		return http.StatusConflict
+	case service.CodeUnsupportedMedia:
+		return http.StatusUnsupportedMediaType
 	case service.CodeUnsupportedIntent:
 		return http.StatusUnprocessableEntity
 	case service.CodeDependency:

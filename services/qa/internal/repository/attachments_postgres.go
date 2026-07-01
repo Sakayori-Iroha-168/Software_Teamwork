@@ -65,14 +65,22 @@ func (r *Postgres) GetAttachment(ctx context.Context, userID, sessionID, attachm
 }
 
 func (r *Postgres) SoftDeleteAttachment(ctx context.Context, userID, sessionID, attachmentID string, now time.Time) error {
-	tag, err := r.pool.Exec(ctx, `UPDATE session_attachments SET deleted_at=$4, updated_at=$4 WHERE id::text=$1 AND conversation_id::text=$2 AND external_user_id=$3 AND deleted_at IS NULL`, attachmentID, sessionID, userID, now)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE session_attachments SET deleted_at=$4, updated_at=$4 WHERE id::text=$1 AND conversation_id::text=$2 AND external_user_id=$3 AND deleted_at IS NULL`, attachmentID, sessionID, userID, now)
 	if err != nil {
 		return fmt.Errorf("delete attachment: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
 		return service.NewError(service.CodeNotFound, "attachment not found", nil)
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `DELETE FROM session_attachment_chunks WHERE attachment_id::text=$1`, attachmentID); err != nil {
+		return fmt.Errorf("delete attachment chunks: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 func (r *Postgres) MarkAttachmentParsing(ctx context.Context, userID, sessionID, attachmentID string, now time.Time) error {
 	_, err := r.pool.Exec(ctx, `UPDATE session_attachments SET status='parsing', error_summary='', updated_at=$4 WHERE id::text=$1 AND conversation_id::text=$2 AND external_user_id=$3 AND deleted_at IS NULL`, attachmentID, sessionID, userID, now)
@@ -89,6 +97,14 @@ func (r *Postgres) ReplaceAttachmentChunks(ctx context.Context, userID, sessionI
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var lockedID string
+	err = tx.QueryRow(ctx, `SELECT id::text FROM session_attachments WHERE id::text=$1 AND conversation_id::text=$2 AND external_user_id=$3 AND deleted_at IS NULL FOR UPDATE`, attachmentID, sessionID, userID).Scan(&lockedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return service.NewError(service.CodeNotFound, "attachment not found", err)
+	}
+	if err != nil {
+		return fmt.Errorf("lock attachment: %w", err)
+	}
 	if _, err := tx.Exec(ctx, `DELETE FROM session_attachment_chunks WHERE attachment_id::text=$1`, attachmentID); err != nil {
 		return err
 	}
@@ -97,8 +113,12 @@ func (r *Postgres) ReplaceAttachmentChunks(ctx context.Context, userID, sessionI
 			return err
 		}
 	}
-	if _, err := tx.Exec(ctx, `UPDATE session_attachments SET status='ready', error_summary='', page_count=$4, chunk_count=$5, updated_at=$6 WHERE id::text=$1 AND conversation_id::text=$2 AND external_user_id=$3`, attachmentID, sessionID, userID, pageCount, len(chunks), now); err != nil {
+	tag, err := tx.Exec(ctx, `UPDATE session_attachments SET status='ready', error_summary='', page_count=$4, chunk_count=$5, updated_at=$6 WHERE id::text=$1 AND conversation_id::text=$2 AND external_user_id=$3 AND deleted_at IS NULL`, attachmentID, sessionID, userID, pageCount, len(chunks), now)
+	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return service.NewError(service.CodeNotFound, "attachment not found", nil)
 	}
 	return tx.Commit(ctx)
 }
@@ -175,16 +195,28 @@ func (r *Postgres) CleanupExpiredAttachments(ctx context.Context, now time.Time,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []service.SessionAttachment
+	ids := make([]string, 0)
 	for rows.Next() {
 		a, err := scanAttachment(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, a)
+		ids = append(ids, a.ID)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if len(ids) > 0 {
+		if _, err := r.pool.Exec(ctx, `DELETE FROM session_attachment_chunks WHERE attachment_id::text = ANY($1)`, ids); err != nil {
+			return nil, fmt.Errorf("delete expired attachment chunks: %w", err)
+		}
+	}
+	return out, nil
 }
 
 func scanAttachment(row attachmentScanner) (service.SessionAttachment, error) {

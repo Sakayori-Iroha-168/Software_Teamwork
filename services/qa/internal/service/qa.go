@@ -27,6 +27,7 @@ const (
 	CodeConflict          Code = "conflict"
 	CodeDependency        Code = "dependency_error"
 	CodeInternal          Code = "internal_error"
+	CodeUnsupportedMedia  Code = "unsupported_media_type"
 	CodeUnsupportedIntent Code = "unsupported_intent"
 )
 
