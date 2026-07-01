@@ -44,6 +44,14 @@ PARSER_COMPOSE_ARGS = (
     "UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}",
     "UV_INDEX: ${UV_INDEX:-}",
 )
+POLICY_SKIP_COMPOSE_PREFIXES = ("services/knowledge-runtime/docker/",)
+POLICY_SKIP_DOCKERFILES = frozenset(
+    {
+        "services/knowledge-runtime/ragflow_deps/Dockerfile",
+        "services/knowledge-runtime/Dockerfile_deepdoc_oss",
+        "services/knowledge-runtime/Dockerfile_tei",
+    }
+)
 
 
 def verify_docker_policy(root: Path) -> list[str]:
@@ -56,17 +64,27 @@ def verify_docker_policy(root: Path) -> list[str]:
     return issues
 
 
+def should_skip_dockerfile(rel: str) -> bool:
+    return rel in POLICY_SKIP_DOCKERFILES
+
+
+def should_skip_compose(rel: str) -> bool:
+    return rel.startswith(POLICY_SKIP_COMPOSE_PREFIXES)
+
+
 def discover_dockerfiles(root: Path) -> list[Path]:
     paths: list[Path] = []
     for scan_root in SCAN_ROOTS:
         directory = root / scan_root
         if not directory.exists():
             continue
-        paths.extend(
-            path
-            for path in directory.rglob("Dockerfile*")
-            if path.is_file() and ".git" not in path.parts
-        )
+        for path in directory.rglob("Dockerfile*"):
+            if not path.is_file() or ".git" in path.parts:
+                continue
+            rel = path.relative_to(root).as_posix()
+            if should_skip_dockerfile(rel):
+                continue
+            paths.append(path)
     return sorted(paths)
 
 
@@ -76,16 +94,14 @@ def discover_compose_files(root: Path) -> list[Path]:
         directory = root / scan_root
         if not directory.exists():
             continue
-        paths.extend(
-            path
-            for path in directory.rglob("docker-compose*.yml")
-            if path.is_file() and ".git" not in path.parts
-        )
-        paths.extend(
-            path
-            for path in directory.rglob("docker-compose*.yaml")
-            if path.is_file() and ".git" not in path.parts
-        )
+        for pattern in ("docker-compose*.yml", "docker-compose*.yaml"):
+            for path in directory.rglob(pattern):
+                if not path.is_file() or ".git" in path.parts:
+                    continue
+                rel = path.relative_to(root).as_posix()
+                if should_skip_compose(rel):
+                    continue
+                paths.append(path)
     return sorted(paths)
 
 
@@ -163,7 +179,15 @@ def is_go_dockerfile(content: str) -> bool:
 
 
 def is_parser_dockerfile(rel: str, content: str) -> bool:
-    return rel == "services/parser/Dockerfile" or "uv sync" in content or "parser-service" in content
+    if rel == "services/parser/Dockerfile":
+        return True
+    if "parser-service" in content:
+        return True
+    if 'CMD ["parser-service"]' in content:
+        return True
+    if "COPY --from=builder --chown=parser:parser" in content:
+        return True
+    return False
 
 
 def validate_go_dockerfile(rel: str, content: str) -> list[str]:

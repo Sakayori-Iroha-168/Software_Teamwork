@@ -161,6 +161,26 @@ class DockerPolicyTests(unittest.TestCase):
         self.assertIssueContains(issues, "GOSUMDB=off")
         self.assertIssueContains(issues, "Go build args must default")
 
+    def test_ragflow_uv_sync_does_not_trigger_parser_policy(self) -> None:
+        dockerfile = textwrap.dedent(
+            """
+            ARG IMAGE_REGISTRY_PREFIX=
+            FROM ${IMAGE_REGISTRY_PREFIX}ubuntu:24.04 AS base
+            RUN uv sync --python 3.13 --frozen
+            CMD ["./entrypoint.sh"]
+            """
+        )
+
+        issues = self.verify(
+            files={
+                "services/knowledge-runtime/Dockerfile": dockerfile,
+                "services/knowledge-runtime/.dockerignore": ".git\n",
+            }
+        )
+
+        parser_issues = [issue for issue in issues if "Parser Docker build policy" in issue]
+        self.assertEqual([], parser_issues)
+
     def test_parser_recursive_chown_regression_is_reported(self) -> None:
         dockerfile = VALID_PARSER_DOCKERFILE.replace(
             "COPY --from=builder --chown=parser:parser /app /app",
