@@ -108,7 +108,7 @@ func assertReportTypesList(t *testing.T, ctx context.Context, client *http.Clien
 
 func assertSeedReportRead(t *testing.T, ctx context.Context, client *http.Client, cfg documentSmokeConfig, session smokeSession, requestID string) {
 	t.Helper()
-	const seedReportID = "22222222-2222-4222-8337-000000000301"
+	const seedReportID = "22222222-2222-4222-8222-222222222301"
 	req := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/reports/"+seedReportID, session.AccessToken, requestID+"_r", nil)
 	resp, err := client.Do(req)
 	if err != nil {
@@ -140,7 +140,7 @@ func assertSeedReportRead(t *testing.T, ctx context.Context, client *http.Client
 
 func assertSeedReportOutlineRead(t *testing.T, ctx context.Context, client *http.Client, cfg documentSmokeConfig, session smokeSession, requestID string) {
 	t.Helper()
-	const seedReportID = "22222222-2222-4222-8337-000000000301"
+	const seedReportID = "22222222-2222-4222-8222-222222222301"
 	req := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/reports/"+seedReportID+"/outlines", session.AccessToken, requestID+"_o", nil)
 	resp, err := client.Do(req)
 	if err != nil {

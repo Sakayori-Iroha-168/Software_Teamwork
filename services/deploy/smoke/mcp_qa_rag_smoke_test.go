@@ -125,7 +125,7 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 		"message": "根据规程，锅炉巡检时油温正常范围是多少？",
 		"mode":    "knowledge_qa",
 	})
-	sendReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/33333333-3333-4333-8333-000000000301/messages", bytes.NewReader(msgBody))
+	sendReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/33333333-3333-4333-8333-333333333301/messages", bytes.NewReader(msgBody))
 	sendReq.Header.Set("Authorization", "Bearer "+session.AccessToken)
 	sendReq.Header.Set("Content-Type", "application/json")
 	sendReq.Header.Set("Accept", "text/event-stream")
@@ -170,7 +170,7 @@ func assertQAResponseEnvelope(t *testing.T, ctx context.Context, client *http.Cl
 		"message": "你好",
 		"mode":    "general_chat",
 	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/33333333-3333-4333-8333-000000000301/messages", bytes.NewReader(msgBody))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/33333333-3333-4333-8333-333333333301/messages", bytes.NewReader(msgBody))
 	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-Id", requestID+"_plain")
@@ -208,7 +208,7 @@ func assertQANoSensitiveLeaks(t *testing.T, ctx context.Context, client *http.Cl
 		"message": "search for grid inspection procedure",
 		"mode":    "general_chat",
 	})
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/33333333-3333-4333-8333-000000000301/messages", bytes.NewReader(msgBody))
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/33333333-3333-4333-8333-333333333301/messages", bytes.NewReader(msgBody))
 	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-Id", requestID+"_noleak")

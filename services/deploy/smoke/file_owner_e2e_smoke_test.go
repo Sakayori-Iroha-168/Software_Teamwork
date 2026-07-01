@@ -308,7 +308,7 @@ func assertDocumentReportReadViaGateway(t *testing.T, ctx context.Context, clien
 	assertResponseEnvelope(t, resp, requestID)
 
 	// Read a known seed report through Gateway
-	reportReq := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/reports/22222222-2222-4222-8337-000000000301", session.AccessToken, requestID+"_report", nil)
+	reportReq := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/reports/22222222-2222-4222-8222-222222222301", session.AccessToken, requestID+"_report", nil)
 	reportResp, err := client.Do(reportReq)
 	if err != nil {
 		t.Fatalf("get report: %v", err)

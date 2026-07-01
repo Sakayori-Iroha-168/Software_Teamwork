@@ -28,7 +28,7 @@ export DOCUMENT_SERVICE_BASE_URL="${DOCUMENT_SERVICE_BASE_URL:-http://localhost:
 
 # ---- credentials from seed data ----
 export LOCAL_ADMIN_USERNAME="${LOCAL_ADMIN_USERNAME:-admin}"
-export LOCAL_ADMIN_PASSWORD="${LOCAL_ADMIN_PASSWORD:-admin123}"
+export LOCAL_ADMIN_PASSWORD="${LOCAL_ADMIN_PASSWORD:-LocalDemoAdmin#12345}"
 
 # ---- simple arg parsing ----
 SMOKE="${1:-all}"
