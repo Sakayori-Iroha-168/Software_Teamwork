@@ -38,3 +38,19 @@ func TestAttachmentToolClientReturnsCitationReadyResults(t *testing.T) {
 		t.Fatalf("result = %s", result.Content)
 	}
 }
+
+func TestAttachmentToolClientRejectsUnboundAttachments(t *testing.T) {
+	client, err := NewAttachmentToolClient(AttachmentToolConfig{Searcher: attachmentSearcherStub{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := contextutil.WithUserID(context.Background(), "user-1")
+	ctx = contextutil.WithSessionID(ctx, "sess-1")
+	result, err := client.CallTool(ctx, ToolSearchSessionAttachments, json.RawMessage(`{"query":"pressure"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || !strings.Contains(result.Content, "no_bound_attachments") {
+		t.Fatalf("CallTool() = %+v, want no_bound_attachments error", result)
+	}
+}

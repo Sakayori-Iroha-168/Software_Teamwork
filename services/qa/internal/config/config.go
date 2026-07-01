@@ -63,6 +63,10 @@ type Config struct {
 	AttachmentMaxBytes       int64
 	AttachmentMaxPerSession  int
 	AttachmentProcessTimeout time.Duration
+	FileServiceURL           string
+	ParserServiceBaseURL     string
+	ParserServiceToken       string
+	ParserServiceTimeout     time.Duration
 }
 
 func Load() (Config, error) {
@@ -147,6 +151,15 @@ func Load() (Config, error) {
 	if cfg.AttachmentProcessTimeout, err = secondsDurationEnv("QA_SESSION_ATTACHMENT_PROCESS_TIMEOUT_SECONDS", 60*time.Second); err != nil {
 		return Config{}, err
 	}
+	cfg.FileServiceURL = envOr("FILE_SERVICE_BASE_URL", "http://localhost:8082")
+	cfg.ParserServiceBaseURL = envOr("PARSER_SERVICE_BASE_URL", "http://localhost:8087")
+	cfg.ParserServiceToken = strings.TrimSpace(os.Getenv("PARSER_SERVICE_TOKEN"))
+	if cfg.ParserServiceToken == "" {
+		cfg.ParserServiceToken = serviceToken
+	}
+	if cfg.ParserServiceTimeout, err = durationEnv("PARSER_SERVICE_TIMEOUT", cfg.AttachmentProcessTimeout); err != nil {
+		return Config{}, err
+	}
 	if cfg.SettingsOpen, err = boolEnv("QA_SETTINGS_OPEN", false); err != nil {
 		return Config{}, err
 	}
@@ -167,6 +180,12 @@ func Load() (Config, error) {
 
 func (c Config) Validate() error {
 	if err := validateHTTPURL("KNOWLEDGE_SERVICE_URL", c.KnowledgeURL); err != nil {
+		return err
+	}
+	if err := validateHTTPURL("FILE_SERVICE_BASE_URL", c.FileServiceURL); err != nil {
+		return err
+	}
+	if err := validateHTTPURL("PARSER_SERVICE_BASE_URL", c.ParserServiceBaseURL); err != nil {
 		return err
 	}
 	if err := validateHTTPURL("AI_GATEWAY_URL", c.AIGatewayURL); err != nil {

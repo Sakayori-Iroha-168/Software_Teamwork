@@ -11,6 +11,8 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 )
 
+const multipartUploadEnvelopeBytes = int64(1 << 20)
+
 type AttachmentService interface {
 	Upload(ctx context.Context, userID, sessionID string, input service.CreateAttachmentInput) (service.AttachmentUploadResult, error)
 	List(ctx context.Context, userID string, sessionID string, options service.AttachmentListOptions) (service.Page[service.SessionAttachment], error)
@@ -28,12 +30,13 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		writeError(w, r, service.NewError(service.CodeInternal, "attachments are unavailable", nil))
 		return
 	}
-	maxBytes := s.attachmentMaxBytes
-	if maxBytes <= 0 {
-		maxBytes = 20 << 20
+	maxFileBytes := s.attachmentMaxBytes
+	if maxFileBytes <= 0 {
+		maxFileBytes = 20 << 20
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-	if err := r.ParseMultipartForm(maxBytes); err != nil {
+	requestBodyLimit := maxFileBytes + multipartUploadEnvelopeBytes
+	r.Body = http.MaxBytesReader(w, r.Body, requestBodyLimit)
+	if err := r.ParseMultipartForm(requestBodyLimit); err != nil {
 		writeError(w, r, service.ValidationError(map[string]string{"file": "multipart form is invalid"}))
 		return
 	}
@@ -47,6 +50,10 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	size, err := io.Copy(&body, file)
 	if err != nil {
 		writeError(w, r, service.ValidationError(map[string]string{"file": "could not be read"}))
+		return
+	}
+	if size > maxFileBytes {
+		writeError(w, r, service.ValidationError(map[string]string{"file": "exceeds maximum upload size"}))
 		return
 	}
 	contentType := strings.TrimSpace(header.Header.Get("Content-Type"))

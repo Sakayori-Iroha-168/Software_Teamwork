@@ -117,20 +117,21 @@ func (c *AttachmentToolClient) searchSessionAttachments(ctx context.Context, arg
 			limit = 20
 		}
 	}
-	targetIDs := input.AttachmentIDs
 	allowed := contextutil.MessageAttachmentIDsFromContext(ctx)
-	if len(allowed) > 0 {
-		allowedSet := make(map[string]struct{}, len(allowed))
-		for _, id := range allowed {
-			allowedSet[id] = struct{}{}
-		}
-		if len(targetIDs) == 0 {
-			targetIDs = allowed
-		} else {
-			for _, id := range targetIDs {
-				if _, ok := allowedSet[id]; !ok {
-					return toolFailure("unauthorized_attachments", "one or more requested attachments are not accessible"), nil
-				}
+	if len(allowed) == 0 {
+		return toolFailure("no_bound_attachments", "no attachments are bound to the current message"), nil
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, id := range allowed {
+		allowedSet[id] = struct{}{}
+	}
+	targetIDs := input.AttachmentIDs
+	if len(targetIDs) == 0 {
+		targetIDs = allowed
+	} else {
+		for _, id := range targetIDs {
+			if _, ok := allowedSet[id]; !ok {
+				return toolFailure("unauthorized_attachments", "one or more requested attachments are not accessible"), nil
 			}
 		}
 	}
