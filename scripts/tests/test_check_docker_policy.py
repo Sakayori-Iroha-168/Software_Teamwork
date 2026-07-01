@@ -97,6 +97,7 @@ VALID_COMPOSE = textwrap.dedent(
 VALID_CHINA_ENV = textwrap.dedent(
     """
     DOCKER_IMAGE_REGISTRY_PREFIX=docker.m.daocloud.io/library/
+    RAGFLOW_DEPS_IMAGE=docker.m.daocloud.io/infiniflow/ragflow_deps:51ce6aab
     POSTGRES_IMAGE=docker.m.daocloud.io/library/postgres:16-alpine
     REDIS_IMAGE=docker.m.daocloud.io/library/redis:7-alpine
     QDRANT_IMAGE=docker.m.daocloud.io/qdrant/qdrant:v1.18.2
@@ -160,6 +161,28 @@ class DockerPolicyTests(unittest.TestCase):
         self.assertIssueContains(issues, "must not use latest")
         self.assertIssueContains(issues, "GOSUMDB=off")
         self.assertIssueContains(issues, "Go build args must default")
+
+    def test_ragflow_uv_sync_does_not_trigger_parser_policy(self) -> None:
+        dockerfile = textwrap.dedent(
+            """
+            ARG IMAGE_REGISTRY_PREFIX=
+            ARG RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps:51ce6aab
+            FROM ${RAGFLOW_DEPS_IMAGE} AS deps
+            FROM ${IMAGE_REGISTRY_PREFIX}ubuntu:24.04 AS base
+            RUN uv sync --python 3.13 --frozen
+            CMD ["./entrypoint.sh"]
+            """
+        )
+
+        issues = self.verify(
+            files={
+                "services/knowledge-runtime/Dockerfile": dockerfile,
+                "services/knowledge-runtime/.dockerignore": ".git\n",
+            }
+        )
+
+        parser_issues = [issue for issue in issues if "Parser Docker build policy" in issue]
+        self.assertEqual([], parser_issues)
 
     def test_parser_recursive_chown_regression_is_reported(self) -> None:
         dockerfile = VALID_PARSER_DOCKERFILE.replace(

@@ -52,6 +52,8 @@ out/
 *.dll
 *.so
 *.dylib
+services/knowledge/adapter
+services/knowledge/server
 
 # Go test binaries and coverage artifacts
 *.test
@@ -124,3 +126,7 @@ reports/rendered_pages/
 *.bak
 *.tmp
 *.orig
+
+# Vendored upstream source snapshots.
+!services/knowledge-runtime/bin/
+!services/knowledge-runtime/bin/.gitkeep

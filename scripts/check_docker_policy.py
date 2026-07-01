@@ -12,6 +12,7 @@ from pathlib import Path
 SCAN_ROOTS = ("deploy", "services")
 EXPECTED_CHINA_ENV = {
     "DOCKER_IMAGE_REGISTRY_PREFIX": "docker.m.daocloud.io/library/",
+    "RAGFLOW_DEPS_IMAGE": "docker.m.daocloud.io/infiniflow/ragflow_deps:51ce6aab",
     "POSTGRES_IMAGE": "docker.m.daocloud.io/library/postgres:16-alpine",
     "REDIS_IMAGE": "docker.m.daocloud.io/library/redis:7-alpine",
     "QDRANT_IMAGE": "docker.m.daocloud.io/qdrant/qdrant:v1.18.2",
@@ -44,6 +45,15 @@ PARSER_COMPOSE_ARGS = (
     "UV_DEFAULT_INDEX: ${UV_DEFAULT_INDEX:-}",
     "UV_INDEX: ${UV_INDEX:-}",
 )
+POLICY_SKIP_COMPOSE_PREFIXES = ("services/knowledge-runtime/docker/",)
+POLICY_SKIP_DOCKERFILES = frozenset(
+    {
+        "services/knowledge-runtime/ragflow_deps/Dockerfile",
+        "services/knowledge-runtime/Dockerfile_deepdoc_oss",
+        "services/knowledge-runtime/Dockerfile_tei",
+    }
+)
+FULL_IMAGE_ARG_FROM_ALLOWLIST = frozenset({"RAGFLOW_DEPS_IMAGE"})
 
 
 def verify_docker_policy(root: Path) -> list[str]:
@@ -56,17 +66,27 @@ def verify_docker_policy(root: Path) -> list[str]:
     return issues
 
 
+def should_skip_dockerfile(rel: str) -> bool:
+    return rel in POLICY_SKIP_DOCKERFILES
+
+
+def should_skip_compose(rel: str) -> bool:
+    return rel.startswith(POLICY_SKIP_COMPOSE_PREFIXES)
+
+
 def discover_dockerfiles(root: Path) -> list[Path]:
     paths: list[Path] = []
     for scan_root in SCAN_ROOTS:
         directory = root / scan_root
         if not directory.exists():
             continue
-        paths.extend(
-            path
-            for path in directory.rglob("Dockerfile*")
-            if path.is_file() and ".git" not in path.parts
-        )
+        for path in directory.rglob("Dockerfile*"):
+            if not path.is_file() or ".git" in path.parts:
+                continue
+            rel = path.relative_to(root).as_posix()
+            if should_skip_dockerfile(rel):
+                continue
+            paths.append(path)
     return sorted(paths)
 
 
@@ -76,22 +96,21 @@ def discover_compose_files(root: Path) -> list[Path]:
         directory = root / scan_root
         if not directory.exists():
             continue
-        paths.extend(
-            path
-            for path in directory.rglob("docker-compose*.yml")
-            if path.is_file() and ".git" not in path.parts
-        )
-        paths.extend(
-            path
-            for path in directory.rglob("docker-compose*.yaml")
-            if path.is_file() and ".git" not in path.parts
-        )
+        for pattern in ("docker-compose*.yml", "docker-compose*.yaml"):
+            for path in directory.rglob(pattern):
+                if not path.is_file() or ".git" in path.parts:
+                    continue
+                rel = path.relative_to(root).as_posix()
+                if should_skip_compose(rel):
+                    continue
+                paths.append(path)
     return sorted(paths)
 
 
 def validate_dockerfile(root: Path, dockerfile: Path) -> list[str]:
     rel = dockerfile.relative_to(root).as_posix()
     content = dockerfile.read_text(encoding="utf-8")
+    arg_defaults = collect_arg_defaults(content)
     issues: list[str] = []
 
     if re.search(r"(?m)^\s*#\s*syntax=", content):
@@ -109,9 +128,15 @@ def validate_dockerfile(root: Path, dockerfile: Path) -> list[str]:
     for line_no, image in from_images:
         if image == "scratch":
             continue
-        if "${IMAGE_REGISTRY_PREFIX}" not in image:
+        full_image_arg = parse_full_image_arg(image)
+        if "${IMAGE_REGISTRY_PREFIX}" not in image and full_image_arg not in FULL_IMAGE_ARG_FROM_ALLOWLIST:
             issues.append(f"{rel}:{line_no}: base image `{image}` must use ${{IMAGE_REGISTRY_PREFIX}}")
         image_without_prefix = image.replace("${IMAGE_REGISTRY_PREFIX}", "")
+        if full_image_arg is not None:
+            default_image = arg_defaults.get(full_image_arg, "")
+            if not default_image:
+                issues.append(f"{rel}:{line_no}: base image `{image}` must have a pinned ARG default")
+            image_without_prefix = default_image
         if uses_latest_tag(image_without_prefix):
             issues.append(f"{rel}:{line_no}: base image `{image}` must not use latest")
         if not has_explicit_tag_or_digest(image_without_prefix):
@@ -128,6 +153,22 @@ def validate_dockerfile(root: Path, dockerfile: Path) -> list[str]:
         issues.append(f"{rel}: Docker build context must have a sibling .dockerignore")
 
     return issues
+
+
+def collect_arg_defaults(content: str) -> dict[str, str]:
+    defaults: dict[str, str] = {}
+    for line in content.splitlines():
+        match = re.match(r"^\s*ARG\s+([A-Z0-9_]+)=(\S+)\s*$", line)
+        if match:
+            defaults[match.group(1)] = match.group(2)
+    return defaults
+
+
+def parse_full_image_arg(image: str) -> str | None:
+    match = re.match(r"^\$\{([A-Z0-9_]+)\}$", image)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def collect_base_from_images(content: str) -> list[tuple[int, str]]:
@@ -163,7 +204,15 @@ def is_go_dockerfile(content: str) -> bool:
 
 
 def is_parser_dockerfile(rel: str, content: str) -> bool:
-    return rel == "services/parser/Dockerfile" or "uv sync" in content or "parser-service" in content
+    if rel == "services/parser/Dockerfile":
+        return True
+    if "parser-service" in content:
+        return True
+    if 'CMD ["parser-service"]' in content:
+        return True
+    if "COPY --from=builder --chown=parser:parser" in content:
+        return True
+    return False
 
 
 def validate_go_dockerfile(rel: str, content: str) -> list[str]:

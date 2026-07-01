@@ -68,7 +68,7 @@ jobs:
               'services/file/Dockerfile',
               'services/gateway/Dockerfile',
               'services/knowledge/Dockerfile',
-              'services/parser/Dockerfile',
+              'services/knowledge-runtime/Dockerfile',
               'services/qa/Dockerfile',
               'services/qa/Dockerfile.host',
               'services/qa/Dockerfile.migrate',
@@ -80,7 +80,7 @@ jobs:
               'services/file/Dockerfile',
               'services/gateway/Dockerfile',
               'services/knowledge/Dockerfile',
-              'services/parser/Dockerfile',
+              'services/knowledge-runtime/Dockerfile',
               'services/qa/Dockerfile',
               'services/qa/Dockerfile.host',
             ]);
@@ -291,6 +291,10 @@ jobs:
           cd services/qa
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/qa-server ./cmd/server
 
+      - name: Pull RAGFlow deps image
+        if: matrix.dockerfile == 'services/knowledge-runtime/Dockerfile'
+        run: docker pull --platform=linux/amd64 infiniflow/ragflow_deps:51ce6aab
+
       - name: Build Dockerfile
         env:
           DOCKER_BUILDKIT: '1'
@@ -298,7 +302,11 @@ jobs:
         run: |
           dockerfile="$DOCKERFILE"
           context="$(dirname "$dockerfile")"
-          docker build --file "$dockerfile" "$context"
+          build_args=()
+          if [ "$dockerfile" = "services/knowledge-runtime/Dockerfile" ]; then
+            build_args+=(--build-arg "RAGFLOW_DEPS_IMAGE=infiniflow/ragflow_deps:51ce6aab")
+          fi
+          docker build "${build_args[@]}" --file "$dockerfile" "$context"
 
   compose-config:
     needs: [detect, policy-check]
@@ -320,6 +328,7 @@ jobs:
           if [ "$compose_file" = "deploy/docker-compose.yml" ]; then
             docker compose -f "$compose_file" --env-file deploy/.env.example config --quiet
             docker compose -f "$compose_file" --env-file deploy/.env.example --profile ai config --quiet
+            docker compose -f "$compose_file" --env-file deploy/.env.example --profile knowledge-v2 config --quiet
           else
             docker compose -f "$compose_file" config --quiet
           fi

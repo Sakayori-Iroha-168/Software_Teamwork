@@ -911,6 +911,77 @@ creates processing_jobs(job_type='delete_cleanup'); later worker handles
 retryable file/vector cleanup
 ```
 
+## Scenario: Knowledge Adapter Runtime Mode
+
+### 1. Scope / Trigger
+
+- Trigger: implementing or changing `KNOWLEDGE_RUNTIME_MODE=adapter`, the
+  contract adapter binary (`cmd/adapter`), or vendor-runtime proxy routes.
+- Applies to `services/knowledge/cmd/adapter/`,
+  `services/knowledge/internal/adapter/`,
+  `services/knowledge/internal/vendorclient/`,
+  `services/knowledge/runtime/entrypoint.sh`, and Gateway routes owned by
+  Knowledge.
+
+### 2. Signatures
+
+Adapter mode exposes the same internal contract routes as legacy Knowledge:
+
+```text
+GET|POST|PATCH|DELETE /internal/v1/knowledge-bases[/**]
+GET|POST|PATCH|DELETE /internal/v1/documents/{documentId}[/**]
+POST /internal/v1/knowledge-queries
+GET|POST|PATCH|DELETE /internal/v1/parser-configs[/**]  # Phase 3b
+```
+
+Vendor runtime mapping (adapter → RAGFlow):
+
+```text
+knowledge-bases -> /api/v1/datasets
+documents upload  -> /api/v1/datasets/{id}/documents?type=local
+documents parse   -> /api/v1/datasets/{id}/documents/parse  # auto after upload when KNOWLEDGE_AUTO_START_INGESTION=true
+documents CRUD    -> /api/v1/documents/{id}
+chunks            -> /api/v1/datasets/{kb}/documents/{doc}/chunks
+content           -> /api/v1/datasets/{kb}/documents/{doc} (binary)
+knowledge-queries -> /api/v1/datasets/search
+```
+
+### 3. Contracts
+
+- Adapter must preserve Gateway-facing JSON envelopes and error codes; do not
+  leak vendor `{code, message}` shapes to callers.
+- Adapter forwards tenant identity with `X-Tenant-Id` and `X-User-Id` set to
+  Gateway `X-User-Id`; RBAC checks stay in adapter using
+  `knowledge:read` / `knowledge:write` and admin permissions.
+- Parser-config routes delegate to legacy goose PostgreSQL tables when
+  `DATABASE_URL` is configured; without it they return `502 dependency_error`.
+- Document `PATCH` with `tags` maps to vendor dataset-document metadata updates;
+  other fields remain validation errors until explicitly supported.
+- After upload, adapter mode queues vendor deepdoc ingestion via
+  `POST /api/v1/datasets/{id}/documents/parse` when
+  `KNOWLEDGE_AUTO_START_INGESTION` is true (default). Adapter mode does not call
+  `services/parser` or `PARSER_SERVICE_BASE_URL`.
+- Object storage for uploaded documents uses vendor MinIO configuration
+  (`software-teamwork-knowledge` bucket); Knowledge adapter does not call File
+  Service for upload in vendor mode.
+- Vector retrieval uses vendor Elasticsearch or Infinity only; Qdrant is not used.
+- Gateway/Auth service owns identity; adapter forwards `X-User-Id` as vendor tenant
+  context. Vendor login/JWT/API-token surfaces remain disabled.
+- Vendor document `run` maps to Gateway status: `RUNNING` → `parsing`, `DONE` →
+  `ready`, `FAIL`/`CANCEL` → `parse_failed`.
+- `GET /documents/{documentId}/content` streams bytes without JSON envelope.
+
+### 4. Validation & Error Matrix
+
+| Condition | Response/error |
+| --- | --- |
+| Missing `X-User-Id` | `401 unauthorized` |
+| Read without `knowledge:read` or write permission | `403 forbidden` |
+| Mutations without `knowledge:write` | `403 forbidden` |
+| Parser-config admin without admin permissions | `403 forbidden` |
+| Parser-config without `DATABASE_URL` in adapter mode | `502 dependency_error` |
+| Vendor runtime unreachable | `502 dependency_error` |
+
 ## Scenario: Missing Downstream API Contracts
 
 ### 1. Scope / Trigger
