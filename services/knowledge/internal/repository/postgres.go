@@ -569,8 +569,8 @@ func (r *PostgresRepository) ListRetryableDeleteCleanupTasks(ctx context.Context
 	      AND j.updated_at < $8
 	    )
 	  )
-	ORDER BY j.updated_at ASC
-	LIMIT $9`,
+		ORDER BY j.updated_at ASC, d.id ASC, j.id ASC
+		LIMIT $9`,
 		service.JobTypeDeleteCleanup,
 		service.JobStatusQueued,
 		service.JobStatusFailed,

@@ -867,7 +867,21 @@ func (r *MemoryRepository) ListRetryableDeleteCleanupTasks(ctx context.Context, 
 		jobs = append(jobs, job)
 	}
 	sort.SliceStable(jobs, func(i, j int) bool {
-		return jobs[i].UpdatedAt.Before(jobs[j].UpdatedAt)
+		if !jobs[i].UpdatedAt.Equal(jobs[j].UpdatedAt) {
+			return jobs[i].UpdatedAt.Before(jobs[j].UpdatedAt)
+		}
+		leftDocumentID := ""
+		if jobs[i].DocumentID != nil {
+			leftDocumentID = strings.TrimSpace(*jobs[i].DocumentID)
+		}
+		rightDocumentID := ""
+		if jobs[j].DocumentID != nil {
+			rightDocumentID = strings.TrimSpace(*jobs[j].DocumentID)
+		}
+		if leftDocumentID != rightDocumentID {
+			return leftDocumentID < rightDocumentID
+		}
+		return jobs[i].ID < jobs[j].ID
 	})
 
 	tasks := make([]service.DocumentDeleteCleanupTask, 0, input.Limit)
