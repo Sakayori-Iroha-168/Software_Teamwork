@@ -290,7 +290,10 @@ func (s *ReportGenerationService) executeContentGeneration(ctx context.Context, 
 			return nil
 		}); err != nil {
 			if appErr, ok := Classify(err); ok && appErr.Code == CodeConflict {
-				return ReportGenerationExecutionResult{}, err
+				completed++
+				_ = s.repo.UpdateReportJobProgress(ctx, payload.JobID, completed, total)
+				_ = s.recordEvent(ctx, report.ID, payload.JobID, "section.skipped", "section generation skipped because current section changed during generation")
+				continue
 			}
 			s.markSectionGenerationFailed(ctx, sectionID, payload.JobID)
 			return ReportGenerationExecutionResult{}, err

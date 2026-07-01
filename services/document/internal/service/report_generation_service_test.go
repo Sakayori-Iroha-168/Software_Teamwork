@@ -700,14 +700,17 @@ func TestReportGenerationServicePreservesConcurrentSectionEditBeforeSuccessfulWr
 	svc := NewReportGenerationService(repo, chat)
 	svc.clock = func() time.Time { return time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC) }
 
-	_, err := svc.ExecuteReportGeneration(context.Background(), ReportGenerationExecutionPayload{
+	result, err := svc.ExecuteReportGeneration(context.Background(), ReportGenerationExecutionPayload{
 		RequestID: "req-content",
 		JobType:   JobTypeSectionRegeneration,
 		JobID:     "job-1",
 		UserID:    "user-1",
 	})
-	if code := errorCode(t, err); code != CodeConflict {
-		t.Fatalf("error code = %q, want %q", code, CodeConflict)
+	if err != nil {
+		t.Fatalf("ExecuteReportGeneration() error = %v", err)
+	}
+	if result.Status != JobStatusSucceeded {
+		t.Fatalf("result status = %q, want succeeded", result.Status)
 	}
 	got := repo.sections["section-1"]
 	if got.Content != "manual edit during generation" || got.Version != 2 || got.ContentSource != ContentSourceManual || !got.ManualEdited {
@@ -721,6 +724,12 @@ func TestReportGenerationServicePreservesConcurrentSectionEditBeforeSuccessfulWr
 	}
 	if len(repo.sectionVersions["section-1"]) != 0 {
 		t.Fatalf("section versions were created from stale generated content: %+v", repo.sectionVersions["section-1"])
+	}
+	if len(repo.progressUpdates) != 1 || repo.progressUpdates[0]["completed"] != 1 || repo.progressUpdates[0]["total"] != 1 {
+		t.Fatalf("progress updates = %+v, want one 1/1 update", repo.progressUpdates)
+	}
+	if !hasReportEvent(repo.events, "section.skipped") {
+		t.Fatalf("expected section.skipped event, got %+v", repo.events)
 	}
 }
 
@@ -764,14 +773,17 @@ func TestReportGenerationServiceDoesNotOverwriteSupersededGenerationJob(t *testi
 	svc := NewReportGenerationService(repo, chat)
 	svc.clock = func() time.Time { return time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC) }
 
-	_, err := svc.ExecuteReportGeneration(context.Background(), ReportGenerationExecutionPayload{
+	result, err := svc.ExecuteReportGeneration(context.Background(), ReportGenerationExecutionPayload{
 		RequestID: "req-content",
 		JobType:   JobTypeSectionRegeneration,
 		JobID:     "job-1",
 		UserID:    "user-1",
 	})
-	if code := errorCode(t, err); code != CodeConflict {
-		t.Fatalf("error code = %q, want %q", code, CodeConflict)
+	if err != nil {
+		t.Fatalf("ExecuteReportGeneration() error = %v", err)
+	}
+	if result.Status != JobStatusSucceeded {
+		t.Fatalf("result status = %q, want succeeded", result.Status)
 	}
 	got := repo.sections["section-1"]
 	if got.LastJobID != "job-2" || got.GenerationStatus != JobStatusRunning || got.Content != "newer job owns this section" {
@@ -780,6 +792,21 @@ func TestReportGenerationServiceDoesNotOverwriteSupersededGenerationJob(t *testi
 	if len(repo.sectionVersions["section-1"]) != 0 {
 		t.Fatalf("section versions were created from superseded job: %+v", repo.sectionVersions["section-1"])
 	}
+	if len(repo.progressUpdates) != 1 || repo.progressUpdates[0]["completed"] != 1 || repo.progressUpdates[0]["total"] != 1 {
+		t.Fatalf("progress updates = %+v, want one 1/1 update", repo.progressUpdates)
+	}
+	if !hasReportEvent(repo.events, "section.skipped") {
+		t.Fatalf("expected section.skipped event, got %+v", repo.events)
+	}
+}
+
+func hasReportEvent(events []ReportEvent, eventType string) bool {
+	for _, event := range events {
+		if event.EventType == eventType {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReportGenerationServiceRetrievesKnowledgeContextForOutline(t *testing.T) {

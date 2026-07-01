@@ -765,9 +765,12 @@ outline generation -> parse AI response outside transaction -> transaction inser
   and lock the target section inside `WithinGenerationTx`. The current section
   must still have `last_job_id` equal to the executing job, `generation_status =
   running`, and the same `version` / `manual_edited` state captured when the job
-  marked the section running. If any of those checks fail, return `409 conflict`
-  and preserve the current section content, tables, version, source, and manual
-  edit state; do not create an AI section-version row from the stale response.
+  marked the section running. If any of those checks fail, the transaction may
+  return an internal `409 conflict`, but the generation service must treat that
+  section as skipped: preserve the current section content, tables, version,
+  source, manual edit state, `last_job_id`, and generation status; update job
+  progress and record a `section.skipped` event; do not create an AI
+  section-version row from the stale response.
 - If generated content persistence fails after the transaction rolls back,
   failure compensation must use a narrow section status update only
   (`generation_status`, `last_job_id`, `updated_at`). It must not write a stale
@@ -776,8 +779,9 @@ outline generation -> parse AI response outside transaction -> transaction inser
   still match the failed generation job before marking `failed`.
 - A generated-section success transaction returning `409 conflict` because the
   section changed or the job was superseded is not a generation persistence
-  failure. Return the conflict without marking the current section/job
-  `failed`; the stale AI response must leave the current section status intact.
+  failure. The executor must continue on a non-error result path so the worker
+  does not call `markFailed`; the stale AI response must leave the current
+  section status intact.
 - Manual edit preservation defaults to true. `preserveUserEdits=false` is the
   public option; `preserveManualEdits=false` remains a backward-compatible
   alias. Only an explicit false value may overwrite manual edits.
@@ -791,7 +795,7 @@ outline generation -> parse AI response outside transaction -> transaction inser
 | Target section belongs to another report | `404 not_found` |
 | Target section has `generation_status = running` | `409 conflict`; do not create a version |
 | Manual update/save write transaction sees a deleted report or running section | `409 conflict`; do not mutate the current section or create a manual version |
-| Successful AI response finds a different `last_job_id`, non-running status, changed version, or changed manual-edit state | `409 conflict`; do not create a version or overwrite current section content |
+| Successful AI response finds a different `last_job_id`, non-running status, changed version, or changed manual-edit state | Skip the stale section on the non-error execution path; update progress and `section.skipped`; do not create a version, overwrite current section content, or mark the section/job/report failed |
 | Version insert succeeds but current-section switch fails | Roll back inserted version and return typed dependency/not-found error |
 | AI generated content update succeeds but version insert fails | Roll back the generated content switch; mark the section failed best-effort with a narrow, current-job-matched status update that preserves concurrent edits |
 | Manual edit changes only metadata | Do not create a new section version |
@@ -824,7 +828,9 @@ outline generation -> parse AI response outside transaction -> transaction inser
 - Generation success-path tests must simulate a concurrent manual edit and a
   superseding generation job after the AI call but before the write transaction;
   both cases must preserve the current section, preserve current generation
-  status, and create no stale AI version.
+  status, create no stale AI version, update progress, record
+  `section.skipped`, and return a non-error execution result so the worker does
+  not mark the job/report failed.
 - Generation rollback tests must simulate a concurrent section edit after the
   failed transaction rolls back and assert failure compensation preserves
   `content`, `tables`, `version`, `content_source`, and `manual_edited`.
