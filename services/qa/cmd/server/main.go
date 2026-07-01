@@ -65,7 +65,12 @@ func main() {
 		logger.Error("settings service initialization failed", "service", "qa", "error", err)
 		os.Exit(1)
 	}
-	manager, err := app.NewManager(ctx, settingsService, repo, app.ManagerConfig{
+	retriever, err := knowledgeclient.New(cfg.KnowledgeURL, cfg.ServiceToken, cfg.ModelTimeout)
+	if err != nil {
+		logger.Error("knowledge client initialization failed", "service", "qa", "error", err)
+		os.Exit(1)
+	}
+	manager, err := app.NewManager(ctx, settingsService, repo, retriever, app.ManagerConfig{
 		WorkDir: cfg.WorkDir, MaxFileBytes: cfg.MaxFileBytes,
 		MaxToolResultBytes: cfg.MaxToolResultBytes, EnableCommandTool: cfg.EnableCommandTool,
 		CommandTimeout: cfg.CommandTimeout, MaxIterations: cfg.MaxIterations,
@@ -84,11 +89,6 @@ func main() {
 	qaService, err := service.NewQAService(repo, manager)
 	if err != nil {
 		logger.Error("QA service initialization failed", "service", "qa", "error", err)
-		os.Exit(1)
-	}
-	retriever, err := knowledgeclient.New(cfg.KnowledgeURL, cfg.ServiceToken, cfg.ModelTimeout)
-	if err != nil {
-		logger.Error("knowledge client initialization failed", "service", "qa", "error", err)
 		os.Exit(1)
 	}
 	resourceService, err := service.NewResourceService(repo, retriever, tester, bootstrap.LLM, qaService)

@@ -33,10 +33,13 @@ func (r *Postgres) GetActiveQAConfig(ctx context.Context) (service.RetrievalSett
 	if err != nil {
 		return service.RetrievalSettings{}, nil, fmt.Errorf("list QA config knowledge bases: %w", err)
 	}
+	if ids == nil {
+		ids = []string{}
+	}
 	return settings, ids, nil
 }
 
-func (r *Postgres) CreateQAConfigVersion(ctx context.Context, userID string, settings service.RetrievalSettings, knowledgeBaseIDs []string) error {
+func (r *Postgres) CreateQAConfigVersion(ctx context.Context, userID string, settings service.RetrievalSettings, knowledgeBaseIDs []string, agent service.AgentConfig) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin QA config update: %w", err)
@@ -53,11 +56,10 @@ func (r *Postgres) CreateQAConfigVersion(ctx context.Context, userID string, set
 	if err := q.DeactivateAllQAConfigs(ctx); err != nil {
 		return fmt.Errorf("deactivate QA config: %w", err)
 	}
-	params, err := insertQAConfigVersionParams(settings, version, userID)
-	if err != nil {
-		return err
-	}
-	configID, err := q.InsertQAConfigVersion(ctx, params)
+	agent = service.NormalizeAgentConfig(agent)
+	tools, _ := json.Marshal(agent.EnabledToolNames)
+	var configID string
+	err = tx.QueryRow(ctx, `INSERT INTO qa_config_versions(version_no,top_k,similarity_threshold,use_rerank,rerank_threshold,rerank_top_n,max_iterations,tool_timeout_seconds,model_timeout_seconds,overall_timeout_seconds,enabled_tool_names,is_active,created_by_user_id) VALUES($1,$2,$3,$4,NULLIF($5,0),NULLIF($6,0),$7,$8,$9,$10,$11,true,$12) RETURNING id::text`, version, settings.TopK, settings.ScoreThreshold, settings.EnableRerank, settings.RerankThreshold, settings.RerankTopN, agent.MaxIterations, agent.ToolTimeoutSeconds, agent.ModelTimeoutSeconds, agent.OverallTimeoutSeconds, tools, userID).Scan(&configID)
 	if err != nil {
 		return fmt.Errorf("insert QA config version: %w", err)
 	}

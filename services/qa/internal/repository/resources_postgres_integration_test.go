@@ -181,7 +181,7 @@ func TestOwnerAuthorizationBoundaries(t *testing.T) {
 	run, err := repo.AppendMessages(ctx, ownerID, conversationID,
 		service.ResponseRunStart{RequestID: "req-authorization", MaxIterations: 5},
 		service.Message{ID: userMessageID, ConversationID: conversationID, Role: "user", Content: "private question", Status: "completed", CreatedAt: now},
-		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Content: "private answer", Status: "generating", CreatedAt: now},
+		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Content: "private answer", Status: "streaming", CreatedAt: now},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -227,6 +227,70 @@ func TestOwnerAuthorizationBoundaries(t *testing.T) {
 	requireServiceCode(t, err, service.CodeNotFound)
 	_, err = repo.GetConversation(ctx, ownerID, integrationUUID(suffix+4))
 	requireServiceCode(t, err, service.CodeNotFound)
+}
+
+func TestFinalizeResponseRunClearsStaleCitationsWhenFinalSetIsEmpty(t *testing.T) {
+	databaseURL := os.Getenv("QA_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("QA_TEST_DATABASE_URL is not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	repo, err := NewPostgres(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+
+	now := time.Now().UTC()
+	suffix := uint64(now.UnixNano()) & 0xffffffffffff
+	conversationID := integrationUUID(suffix)
+	userMessageID := integrationUUID(suffix + 1)
+	assistantMessageID := integrationUUID(suffix + 2)
+	citationID := integrationUUID(suffix + 3)
+	userID := "citation-clear-user"
+	conversation := service.Conversation{
+		ID: conversationID, OwnerUserID: userID, Title: "citation cleanup",
+		Status: "active", CreatedAt: now, UpdatedAt: now,
+	}
+	if _, err = repo.CreateConversation(ctx, conversation); err != nil {
+		t.Fatal(err)
+	}
+	run, err := repo.AppendMessages(ctx, userID, conversationID,
+		service.ResponseRunStart{RequestID: "req-citation-cleanup", MaxIterations: 3},
+		service.Message{ID: userMessageID, ConversationID: conversationID, Role: "user", Content: "question", Status: "completed", CreatedAt: now},
+		service.Message{ID: assistantMessageID, ConversationID: conversationID, Role: "assistant", Status: "streaming", CreatedAt: now},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.pool.Exec(ctx, `INSERT INTO citations(id,message_id,citation_no,doc_name) VALUES($1,$2,1,$3)`, citationID, assistantMessageID, "stale source"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = repo.FinalizeResponseRun(ctx, userID, service.ResponseRunFinalization{
+		RunID: run.ID,
+		AssistantMessage: service.Message{
+			ID:             assistantMessageID,
+			ConversationID: conversationID,
+			Role:           "assistant",
+			Content:        "answer without citations",
+			Status:         "completed",
+			CreatedAt:      now,
+		},
+		Status:            "completed",
+		TerminationReason: "completed",
+		CurrentIteration:  1,
+		CompletedAt:       now.Add(time.Millisecond),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	citations, err := repo.ListMessageCitations(ctx, userID, assistantMessageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(citations) != 0 {
+		t.Fatalf("stale citations were not cleared: %+v", citations)
+	}
 }
 
 func integrationUUID(value uint64) string { return fmt.Sprintf("00000000-0000-4000-8000-%012x", value) }

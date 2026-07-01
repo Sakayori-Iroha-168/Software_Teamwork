@@ -226,6 +226,43 @@ func TestRunnerBoundsToolCallWithTimeout(t *testing.T) {
 	}
 }
 
+func TestRunnerKeepsRawToolDataOutOfProgressEvents(t *testing.T) {
+	model := &fakeModel{responses: []Completion{
+		{Message: Message{Role: RoleAssistant, ToolCalls: []ToolCall{{
+			ID: "call-1", Function: FunctionCall{Name: "add", Arguments: `{"a":1}`},
+		}}}},
+		{Message: Message{Role: RoleAssistant, Content: "done"}},
+	}}
+	tools := &fakeTools{definitions: []ToolDefinition{addToolDefinition()}, result: ToolResult{Content: `{"sum":3}`}}
+	runner := testRunner(t, model, tools, 3)
+
+	var events []Event
+	var observations []ToolObservation
+	_, err := runner.RunWithToolResultCallback(
+		context.Background(),
+		[]Message{{Role: RoleUser, Content: "add"}},
+		func(event Event) { events = append(events, event) },
+		func(event ToolObservation) { observations = append(observations, event) },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("tool observations = %d, want start and completed", len(observations))
+	}
+	completed := observations[len(observations)-1]
+	if completed.Type != EventToolCompleted || string(completed.Arguments) != `{"a":1}` || completed.Result != `{"sum":3}` {
+		t.Fatalf("unexpected internal tool observation: %+v", completed)
+	}
+	for _, event := range events {
+		if event.Type == EventToolStarted || event.Type == EventToolCompleted || event.Type == EventToolFailed {
+			if event.ToolCallID != "call-1" || event.ToolName != "add" {
+				t.Fatalf("unexpected public tool event: %+v", event)
+			}
+		}
+	}
+}
+
 func TestTruncateUTF8(t *testing.T) {
 	got := truncateUTF8("你好世界", 30)
 	if got != "你好世界" {

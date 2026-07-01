@@ -257,33 +257,19 @@ func (r *Postgres) CreateQAConfigVersionResource(ctx context.Context, userID str
 	if agent.MaxIterations == 0 {
 		agent.MaxIterations = input.MaxIterations
 	}
-	if agent.MaxIterations == 0 {
-		agent.MaxIterations = 5
-	}
 	if agent.ToolTimeoutSeconds == 0 {
 		agent.ToolTimeoutSeconds = input.ToolTimeoutSeconds
-	}
-	if agent.ToolTimeoutSeconds == 0 {
-		agent.ToolTimeoutSeconds = 10
 	}
 	if agent.ModelTimeoutSeconds == 0 {
 		agent.ModelTimeoutSeconds = input.ModelTimeoutSeconds
 	}
-	if agent.ModelTimeoutSeconds == 0 {
-		agent.ModelTimeoutSeconds = 60
-	}
 	if agent.OverallTimeoutSeconds == 0 {
 		agent.OverallTimeoutSeconds = input.OverallTimeoutSeconds
-	}
-	if agent.OverallTimeoutSeconds == 0 {
-		agent.OverallTimeoutSeconds = 120
 	}
 	if len(agent.EnabledToolNames) == 0 {
 		agent.EnabledToolNames = input.EnabledToolNames
 	}
-	if agent.EnabledToolNames == nil {
-		agent.EnabledToolNames = []string{}
-	}
+	agent = service.NormalizeAgentConfig(agent)
 	activate := input.Activate == nil || *input.Activate
 	kbs := input.KnowledgeBases
 	if len(kbs) == 0 {

@@ -28,6 +28,8 @@ INSERT INTO agent_tool_calls (
     tool_call_id,
     tool_name,
     status,
+    arguments_summary,
+    result_summary,
     started_at,
     finished_at
 ) VALUES (
@@ -36,6 +38,8 @@ INSERT INTO agent_tool_calls (
     sqlc.arg(tool_call_id),
     sqlc.arg(tool_name),
     sqlc.arg(status),
+    sqlc.arg(arguments_summary),
+    sqlc.arg(result_summary),
     sqlc.arg(started_at),
     CASE
         WHEN sqlc.arg(status) = 'running' THEN NULL
@@ -44,6 +48,8 @@ INSERT INTO agent_tool_calls (
 )
 ON CONFLICT (response_run_id, tool_call_id) DO UPDATE SET
     status = EXCLUDED.status,
+    arguments_summary = EXCLUDED.arguments_summary,
+    result_summary = EXCLUDED.result_summary,
     finished_at = CASE
         WHEN EXCLUDED.status = 'running' THEN agent_tool_calls.finished_at
         ELSE EXCLUDED.finished_at

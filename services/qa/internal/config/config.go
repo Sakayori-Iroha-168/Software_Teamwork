@@ -109,8 +109,14 @@ func Load() (Config, error) {
 	if cfg.MaxIterations, err = positiveIntEnv("AGENT_MAX_ITERATIONS", 8); err != nil {
 		return Config{}, err
 	}
+	if cfg.MaxIterations > 10 {
+		return Config{}, errors.New("AGENT_MAX_ITERATIONS must not exceed 10")
+	}
 	if cfg.MaxToolResultBytes, err = positiveIntEnv("MCP_MAX_RESULT_BYTES", 50000); err != nil {
 		return Config{}, err
+	}
+	if cfg.MaxToolResultBytes < 100 {
+		return Config{}, errors.New("MCP_MAX_RESULT_BYTES must be at least 100")
 	}
 	if cfg.MaxFileBytes, err = positiveIntEnv("AGENT_MAX_FILE_BYTES", 1<<20); err != nil {
 		return Config{}, err

@@ -2,26 +2,22 @@ package service
 
 import (
 	"context"
-	"strings"
+
+	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/contextutil"
 )
 
-type requestIDContextKey struct{}
-type userIDContextKey struct{}
-
 func WithRequestID(ctx context.Context, requestID string) context.Context {
-	return context.WithValue(ctx, requestIDContextKey{}, requestID)
+	return contextutil.WithRequestID(ctx, requestID)
 }
 
 func RequestIDFromContext(ctx context.Context) string {
-	value, _ := ctx.Value(requestIDContextKey{}).(string)
-	return value
+	return contextutil.RequestIDFromContext(ctx)
 }
 
 func WithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userIDContextKey{}, strings.TrimSpace(userID))
+	return contextutil.WithUserID(ctx, userID)
 }
 
 func UserIDFromContext(ctx context.Context) string {
-	value, _ := ctx.Value(userIDContextKey{}).(string)
-	return value
+	return contextutil.UserIDFromContext(ctx)
 }

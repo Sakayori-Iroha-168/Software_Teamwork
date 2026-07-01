@@ -39,6 +39,20 @@ type Event struct {
 
 type Observer func(Event)
 
+// ToolObservation carries raw tool input/output for internal persistence and
+// citation extraction. It must not be logged or exposed directly.
+type ToolObservation struct {
+	Type       EventType
+	Iteration  int
+	ToolCallID string
+	ToolName   string
+	Arguments  json.RawMessage
+	Result     string
+	Err        error
+}
+
+type ToolObserver func(ToolObservation)
+
 type Config struct {
 	MaxIterations      int
 	ToolTimeout        time.Duration
@@ -84,6 +98,18 @@ func (r *Runner) Run(ctx context.Context, input []Message) (Result, error) {
 // RunWithObserver executes one agent run with a request-scoped observer. This
 // keeps concurrent HTTP streams isolated while preserving Run for CLI users.
 func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer Observer) (Result, error) {
+	return r.run(ctx, input, observer, nil)
+}
+
+// RunWithToolResultCallback executes one agent run with an observer and an
+// additional callback for receiving tool results. The callback is intended for
+// internal use only (e.g. citation extraction) and must not expose raw tool
+// results to public interfaces or logs.
+func (r *Runner) RunWithToolResultCallback(ctx context.Context, input []Message, observer Observer, toolObserver ToolObserver) (Result, error) {
+	return r.run(ctx, input, observer, toolObserver)
+}
+
+func (r *Runner) run(ctx context.Context, input []Message, observer Observer, toolObserver ToolObserver) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -133,7 +159,7 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 		}
 
 		for _, call := range assistant.ToolCalls {
-			resultMessage := r.executeTool(ctx, iteration, allowed, call, observer)
+			resultMessage := r.executeTool(ctx, iteration, allowed, call, observer, toolObserver)
 			messages = append(messages, resultMessage)
 		}
 	}
@@ -141,7 +167,7 @@ func (r *Runner) RunWithObserver(ctx context.Context, input []Message, observer 
 	return Result{Messages: messages, Iterations: r.cfg.MaxIterations}, ErrMaxIterations
 }
 
-func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[string]struct{}, call ToolCall, observer Observer) Message {
+func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[string]struct{}, call ToolCall, observer Observer, toolObserver ToolObserver) Message {
 	name := strings.TrimSpace(call.Function.Name)
 	base := Message{Role: RoleTool, ToolCallID: call.ID, Name: name}
 	if call.ID == "" || name == "" {
@@ -166,12 +192,14 @@ func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[str
 		return base
 	}
 
+	emitTool(toolObserver, ToolObservation{Type: EventToolStarted, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Arguments: arguments})
 	emit(observer, Event{Type: EventToolStarted, Iteration: iteration, ToolCallID: call.ID, ToolName: name})
 	toolCtx, cancel := context.WithTimeout(ctx, r.cfg.ToolTimeout)
 	defer cancel()
 	result, err := r.tools.CallTool(toolCtx, name, arguments)
 	if err != nil {
 		base.Content = toolErrorJSON("tool_execution_failed", "tool execution failed")
+		emitTool(toolObserver, ToolObservation{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Arguments: arguments, Result: base.Content, Err: err})
 		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: err})
 		return base
 	}
@@ -179,16 +207,25 @@ func (r *Runner) executeTool(ctx context.Context, iteration int, allowed map[str
 	if result.IsError && strings.TrimSpace(content) == "" {
 		content = toolErrorJSON("tool_execution_failed", "tool reported an error")
 	}
-	base.Content = truncateUTF8(content, r.cfg.MaxToolResultBytes)
+	base.Content = truncateToolResult(content, r.cfg.MaxToolResultBytes)
 	if result.IsError {
-		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: errors.New("tool reported an error")})
+		err := errors.New("tool reported an error")
+		emitTool(toolObserver, ToolObservation{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Arguments: arguments, Result: base.Content, Err: err})
+		emit(observer, Event{Type: EventToolFailed, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Err: err})
 	} else {
+		emitTool(toolObserver, ToolObservation{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name, Arguments: arguments, Result: base.Content})
 		emit(observer, Event{Type: EventToolCompleted, Iteration: iteration, ToolCallID: call.ID, ToolName: name})
 	}
 	return base
 }
 
 func emit(observer Observer, event Event) {
+	if observer != nil {
+		observer(event)
+	}
+}
+
+func emitTool(observer ToolObserver, event ToolObservation) {
 	if observer != nil {
 		observer(event)
 	}
@@ -214,4 +251,131 @@ func truncateUTF8(value string, maxBytes int) string {
 		limit--
 	}
 	return value[:limit] + suffix
+}
+
+func truncateToolResult(content string, maxBytes int) string {
+	if len(content) <= maxBytes {
+		return content
+	}
+
+	if len(content) > 0 && content[0] == '{' {
+		var data map[string]any
+		if err := json.Unmarshal([]byte(content), &data); err == nil {
+			return truncateJSON(data, maxBytes)
+		}
+	}
+
+	return truncateUTF8(content, maxBytes)
+}
+
+func truncateJSON(data map[string]any, maxBytes int) string {
+	suffix := map[string]any{"truncated": true}
+
+	for attempt := 0; attempt < 5; attempt++ {
+		result := make(map[string]any)
+		for k, v := range data {
+			if k == "results" {
+				if results, ok := v.([]any); ok {
+					result[k] = truncateResultsByAttempt(results, attempt)
+				} else {
+					result[k] = v
+				}
+			} else {
+				result[k] = v
+			}
+		}
+		for k, v := range suffix {
+			result[k] = v
+		}
+
+		jsonBytes, err := json.Marshal(result)
+		if err == nil && len(jsonBytes) <= maxBytes {
+			return string(jsonBytes)
+		}
+
+		data = result
+	}
+
+	minimal := map[string]any{
+		"truncated": true,
+	}
+	if hitCount, ok := data["hit_count"]; ok {
+		minimal["hit_count"] = hitCount
+	}
+	jsonBytes, err := json.Marshal(minimal)
+	if err == nil && len(jsonBytes) <= maxBytes {
+		return string(jsonBytes)
+	}
+
+	return `{"error":"tool_result_too_large","truncated":true}`
+}
+
+func truncateResultsByAttempt(results []any, attempt int) []any {
+	if len(results) == 0 {
+		return results
+	}
+
+	switch attempt {
+	case 0:
+		maxResults := len(results) / 2
+		if maxResults < 1 {
+			maxResults = 1
+		}
+		return results[:maxResults]
+	case 1:
+		maxResults := len(results) / 4
+		if maxResults < 1 {
+			maxResults = 1
+		}
+		truncated := make([]any, 0, maxResults)
+		for i := 0; i < maxResults; i++ {
+			truncated = append(truncated, truncateSingleResult(results[i]))
+		}
+		return truncated
+	case 2:
+		return []any{truncateSingleResult(results[0])}
+	case 3:
+		return []any{truncateToMinimalCitation(results[0])}
+	default:
+		return []any{}
+	}
+}
+
+func truncateToMinimalCitation(item any) any {
+	if m, ok := item.(map[string]any); ok {
+		minimal := make(map[string]any)
+		for _, key := range []string{"citation_no", "knowledge_base_id", "document_id", "chunk_id"} {
+			if v, exists := m[key]; exists {
+				minimal[key] = v
+			}
+		}
+		return minimal
+	}
+	return item
+}
+
+func truncateSingleResult(item any) any {
+	if m, ok := item.(map[string]any); ok {
+		truncated := make(map[string]any)
+		for k, v := range m {
+			if str, ok := v.(string); ok {
+				truncated[k] = truncateRunes(str, 256)
+			} else {
+				truncated[k] = v
+			}
+		}
+		return truncated
+	}
+	return item
+}
+
+func truncateRunes(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-3]) + "..."
 }

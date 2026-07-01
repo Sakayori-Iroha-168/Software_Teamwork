@@ -66,6 +66,8 @@ INSERT INTO agent_tool_calls (
     tool_call_id,
     tool_name,
     status,
+    arguments_summary,
+    result_summary,
     started_at,
     finished_at
 ) VALUES (
@@ -75,13 +77,17 @@ INSERT INTO agent_tool_calls (
     $4,
     $5,
     $6,
+    $7,
+    $8,
     CASE
         WHEN $5 = 'running' THEN NULL
-        ELSE $6
+        ELSE $8
     END
 )
 ON CONFLICT (response_run_id, tool_call_id) DO UPDATE SET
     status = EXCLUDED.status,
+    arguments_summary = EXCLUDED.arguments_summary,
+    result_summary = EXCLUDED.result_summary,
     finished_at = CASE
         WHEN EXCLUDED.status = 'running' THEN agent_tool_calls.finished_at
         ELSE EXCLUDED.finished_at
@@ -93,12 +99,14 @@ ON CONFLICT (response_run_id, tool_call_id) DO UPDATE SET
 `
 
 type UpsertAgentToolCallParams struct {
-	ResponseRunID string    `json:"response_run_id"`
-	IterationNo   int32     `json:"iteration_no"`
-	ToolCallID    string    `json:"tool_call_id"`
-	ToolName      string    `json:"tool_name"`
-	Status        string    `json:"status"`
-	StartedAt     time.Time `json:"started_at"`
+	ResponseRunID    string    `json:"response_run_id"`
+	IterationNo      int32     `json:"iteration_no"`
+	ToolCallID       string    `json:"tool_call_id"`
+	ToolName         string    `json:"tool_name"`
+	Status           string    `json:"status"`
+	ArgumentsSummary []byte    `json:"arguments_summary"`
+	ResultSummary    []byte    `json:"result_summary"`
+	StartedAt        time.Time `json:"started_at"`
 }
 
 func (q *Queries) UpsertAgentToolCall(ctx context.Context, arg UpsertAgentToolCallParams) error {
@@ -108,6 +116,8 @@ func (q *Queries) UpsertAgentToolCall(ctx context.Context, arg UpsertAgentToolCa
 		arg.ToolCallID,
 		arg.ToolName,
 		arg.Status,
+		arg.ArgumentsSummary,
+		arg.ResultSummary,
 		arg.StartedAt,
 	)
 	return err

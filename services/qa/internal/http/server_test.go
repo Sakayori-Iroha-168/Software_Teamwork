@@ -482,6 +482,137 @@ func TestSessionOperationsReturnForbiddenForNonOwnerEvenWithAdminRole(t *testing
 	}
 }
 
+func TestStreamIncludesToolEventsWithSummary(t *testing.T) {
+	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
+		observer(service.ProgressEvent{Type: "message.created", Sequence: 1, Payload: map[string]any{"userMessageId": "user-message"}})
+		observer(service.ProgressEvent{Type: "tool.started", Sequence: 2, Payload: map[string]any{"tool": "search_knowledge", "summary": "正在执行工具 search_knowledge"}})
+		observer(service.ProgressEvent{Type: "tool.completed", Sequence: 3, Payload: map[string]any{"tool": "search_knowledge", "summary": "工具 search_knowledge 执行完成"}})
+		observer(service.ProgressEvent{Type: "answer.delta", Sequence: 4, Payload: map[string]any{"text": "回答内容"}})
+		observer(service.ProgressEvent{Type: "answer.completed", Sequence: 5, Payload: map[string]any{"messageId": "assistant-message"}})
+		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "回答内容", Status: "completed"}}, nil
+	}})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试工具事件"}`))
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	for _, event := range []string{"tool.started", "tool.completed"} {
+		if !strings.Contains(body, "event: "+event) {
+			t.Fatalf("missing event %q in %s", event, body)
+		}
+	}
+	if !strings.Contains(body, "正在执行工具") || !strings.Contains(body, "执行完成") {
+		t.Fatalf("missing summary in tool events: %s", body)
+	}
+}
+
+func TestStreamIncludesHeartbeatEvent(t *testing.T) {
+	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
+		observer(service.ProgressEvent{Type: "message.created", Sequence: 1, Payload: map[string]any{"userMessageId": "user-message"}})
+		observer(service.ProgressEvent{Type: "answer.delta", Sequence: 2, Payload: map[string]any{"text": "回答"}})
+		observer(service.ProgressEvent{Type: "heartbeat", Sequence: 3, Payload: map[string]any{}})
+		observer(service.ProgressEvent{Type: "answer.completed", Sequence: 4, Payload: map[string]any{"messageId": "assistant-message"}})
+		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "回答", Status: "completed"}}, nil
+	}})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试心跳"}`))
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "event: heartbeat") {
+		t.Fatalf("missing heartbeat event: %s", body)
+	}
+}
+
+func TestStreamEmitsErrorOnServiceFailure(t *testing.T) {
+	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
+		observer(service.ProgressEvent{Type: "error", Sequence: 1, Payload: map[string]any{"code": "validation_error", "message": "invalid request"}})
+		return service.AskResult{}, service.NewError(service.CodeValidation, "invalid request", nil)
+	}})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/session-id/messages", strings.NewReader(`{"message":"测试错误"}`))
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"code":"validation_error"`) {
+		t.Fatalf("missing error code in response: %s", body)
+	}
+}
+
+func TestStreamEventSequenceIsMonotonic(t *testing.T) {
+	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
+		for i := 1; i <= 5; i++ {
+			observer(service.ProgressEvent{Type: "reasoning.step", Sequence: i, Payload: map[string]any{"detail": "step"}})
+		}
+		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "done", Status: "completed"}}, nil
+	}})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试序号"}`))
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestListEventsRequiresResponseRunId(t *testing.T) {
+	server := newTestServer(t, fakeQAService{})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/internal/v1/qa-sessions/session-id/events", nil)
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"responseRunId":"is required"`) {
+		t.Fatalf("unexpected error response: %s", recorder.Body.String())
+	}
+}
+
+func TestStreamIncludesCitationDeltaEvents(t *testing.T) {
+	server := newTestServer(t, fakeQAService{ask: func(_ context.Context, _, _ string, _ service.AskInput, observer service.ProgressObserver) (service.AskResult, error) {
+		observer(service.ProgressEvent{Type: "tool.completed", Sequence: 1, Payload: map[string]any{"tool": "search_knowledge"}})
+		observer(service.ProgressEvent{Type: "citation.delta", Sequence: 2, Payload: map[string]any{"citation": map[string]any{"id": "cit_1", "citationNo": 1, "docName": "测试文档.pdf", "score": 0.95}}})
+		observer(service.ProgressEvent{Type: "answer.delta", Sequence: 3, Payload: map[string]any{"text": "基于文档内容的回答"}})
+		observer(service.ProgressEvent{Type: "answer.completed", Sequence: 4, Payload: map[string]any{"messageId": "assistant-message"}})
+		return service.AskResult{AssistantMessage: service.Message{ID: "assistant-message", Content: "基于文档内容的回答", Status: "completed"}}, nil
+	}})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/internal/v1/qa-sessions/conversation-id/messages", strings.NewReader(`{"message":"测试引用"}`))
+	request.Header.Set("Accept", "text/event-stream")
+	request.Header.Set("X-User-Id", "user-1")
+	request.Header.Set("X-Service-Token", "test-service-token")
+	server.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "event: citation.delta") {
+		t.Fatalf("missing citation.delta event: %s", body)
+	}
+	if !strings.Contains(body, `"docName":"测试文档.pdf"`) {
+		t.Fatalf("missing docName in citation.delta: %s", body)
+	}
+	if !strings.Contains(body, `"score":0.95`) {
+		t.Fatalf("missing score in citation.delta: %s", body)
+	}
+}
+
 func newTestServer(t *testing.T, qa fakeQAService) *Server {
 	t.Helper()
 	return newTestServerWithResources(t, qa, fakeResourceService{})

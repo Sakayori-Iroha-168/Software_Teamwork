@@ -87,6 +87,38 @@ type AgentConfig struct {
 	EnabledToolNames      []string `json:"enabledToolNames"`
 }
 
+func DefaultAgentConfig() AgentConfig {
+	return AgentConfig{
+		MaxIterations:         5,
+		ToolTimeoutSeconds:    10,
+		ModelTimeoutSeconds:   60,
+		OverallTimeoutSeconds: 120,
+		EnabledToolNames:      []string{"search_knowledge"},
+	}
+}
+
+func NormalizeAgentConfig(config AgentConfig) AgentConfig {
+	defaults := DefaultAgentConfig()
+	if config.MaxIterations == 0 {
+		config.MaxIterations = defaults.MaxIterations
+	}
+	if config.ToolTimeoutSeconds == 0 {
+		config.ToolTimeoutSeconds = defaults.ToolTimeoutSeconds
+	}
+	if config.ModelTimeoutSeconds == 0 {
+		config.ModelTimeoutSeconds = defaults.ModelTimeoutSeconds
+	}
+	if config.OverallTimeoutSeconds == 0 {
+		config.OverallTimeoutSeconds = defaults.OverallTimeoutSeconds
+	}
+	if config.EnabledToolNames == nil {
+		config.EnabledToolNames = []string{}
+	} else {
+		config.EnabledToolNames = append([]string(nil), config.EnabledToolNames...)
+	}
+	return config
+}
+
 type QAConfigVersion struct {
 	ID                      string                `json:"id"`
 	VersionNo               int                   `json:"versionNo"`
@@ -323,6 +355,27 @@ func (s *ResourceService) CreateQAConfigVersion(ctx context.Context, userID stri
 	for name, value := range map[string]int{"agent.maxIterations": max(input.Agent.MaxIterations, input.MaxIterations), "agent.toolTimeoutSeconds": max(input.Agent.ToolTimeoutSeconds, input.ToolTimeoutSeconds), "agent.modelTimeoutSeconds": max(input.Agent.ModelTimeoutSeconds, input.ModelTimeoutSeconds), "agent.overallTimeoutSeconds": max(input.Agent.OverallTimeoutSeconds, input.OverallTimeoutSeconds)} {
 		if value < 0 {
 			fields[name] = "must be positive"
+		}
+		if name == "agent.maxIterations" && value > 10 {
+			fields[name] = "must not exceed 10"
+		}
+	}
+	enabledToolNames := input.Agent.EnabledToolNames
+	if len(enabledToolNames) == 0 {
+		enabledToolNames = input.EnabledToolNames
+	}
+	if len(enabledToolNames) > 0 {
+		seen := make(map[string]struct{}, len(enabledToolNames))
+		for _, name := range enabledToolNames {
+			trimmed := strings.TrimSpace(name)
+			if trimmed == "" {
+				continue
+			}
+			if _, exists := seen[trimmed]; exists {
+				fields["agent.enabledToolNames"] = "must not contain duplicate tool names"
+				break
+			}
+			seen[trimmed] = struct{}{}
 		}
 	}
 	if len(input.KnowledgeBases) > 50 || len(input.DefaultKnowledgeBaseIDs) > 50 {

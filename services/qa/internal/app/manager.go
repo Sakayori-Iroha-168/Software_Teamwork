@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/platform/toolclient"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service"
 	"github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/agent"
+	toolspkg "github.com/Sakayori-Iroha-168/Software_Teamwork/services/qa/internal/service/tools"
 )
 
 type ManagerConfig struct {
@@ -26,31 +28,34 @@ type ManagerConfig struct {
 }
 
 type runtimeState struct {
-	runner             *agent.Runner
-	prompt             string
-	llmModel           string
-	llmProfileID       string
-	qaConfigVersionID  string
-	llmConfigVersionID string
-	maxIterations      int
-	overallTimeout     time.Duration
-	clients            []*mcpclient.Client
+	runner                  *agent.Runner
+	prompt                  string
+	llmModel                string
+	llmProfileID            string
+	qaConfigVersionID       string
+	llmConfigVersionID      string
+	maxIterations           int
+	overallTimeout          time.Duration
+	clients                 []*mcpclient.Client
+	defaultKnowledgeBaseIDs []string
+	retrievalSettings       service.RetrievalSettings
 }
 
 type Manager struct {
-	stateMu  sync.RWMutex
-	reloadMu sync.Mutex
-	state    *runtimeState
-	loader   service.RuntimeConfigLoader
-	status   service.MCPStatusUpdater
-	cfg      ManagerConfig
+	stateMu   sync.RWMutex
+	reloadMu  sync.Mutex
+	state     *runtimeState
+	loader    service.RuntimeConfigLoader
+	status    service.MCPStatusUpdater
+	cfg       ManagerConfig
+	retriever service.KnowledgeRetriever
 }
 
-func NewManager(ctx context.Context, loader service.RuntimeConfigLoader, status service.MCPStatusUpdater, cfg ManagerConfig) (*Manager, error) {
+func NewManager(ctx context.Context, loader service.RuntimeConfigLoader, status service.MCPStatusUpdater, retriever service.KnowledgeRetriever, cfg ManagerConfig) (*Manager, error) {
 	if loader == nil || status == nil {
 		return nil, errors.New("runtime config loader and MCP status updater are required")
 	}
-	manager := &Manager{loader: loader, status: status, cfg: cfg}
+	manager := &Manager{loader: loader, status: status, retriever: retriever, cfg: cfg}
 	if err := manager.Reload(ctx); err != nil {
 		return nil, err
 	}
@@ -70,6 +75,8 @@ func (m *Manager) Acquire() (service.RuntimeSnapshot, func(), error) {
 		LLMModel: m.state.llmModel, LLMProfileID: m.state.llmProfileID,
 		QAConfigVersionID: m.state.qaConfigVersionID, LLMConfigVersionID: m.state.llmConfigVersionID,
 		MaxIterations: m.state.maxIterations, OverallTimeout: m.state.overallTimeout,
+		DefaultKnowledgeBaseIDs: m.state.defaultKnowledgeBaseIDs,
+		RetrievalSettings:       m.state.retrievalSettings,
 	}, m.stateMu.RUnlock, nil
 }
 
@@ -104,6 +111,90 @@ func (m *Manager) Close() error {
 	return closeRuntimeState(state)
 }
 
+type knowledgeRetrieverAdapter struct {
+	retriever service.KnowledgeRetriever
+}
+
+func (a *knowledgeRetrieverAdapter) Retrieve(ctx context.Context, userID string, input toolspkg.RetrievalTestInput) ([]toolspkg.RetrievalTestResult, error) {
+	serviceInput := service.RetrievalTestInput{
+		Question:         input.Question,
+		KnowledgeBaseIDs: input.KnowledgeBaseIDs,
+		Retrieval: service.RetrievalSettings{
+			TopK:            input.Retrieval.TopK,
+			ScoreThreshold:  input.Retrieval.ScoreThreshold,
+			EnableRerank:    input.Retrieval.EnableRerank,
+			RerankThreshold: input.Retrieval.RerankThreshold,
+			RerankTopN:      input.Retrieval.RerankTopN,
+		},
+	}
+	serviceResults, err := a.retriever.Retrieve(ctx, userID, serviceInput)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]toolspkg.RetrievalTestResult, 0, len(serviceResults))
+	for _, r := range serviceResults {
+		results = append(results, toolspkg.RetrievalTestResult{
+			RankNo:          r.RankNo,
+			KnowledgeBaseID: r.KnowledgeBaseID,
+			DocumentID:      r.DocumentID,
+			DocumentName:    r.DocumentName,
+			ChunkID:         r.ChunkID,
+			SectionPath:     r.SectionPath,
+			ContentPreview:  r.ContentPreview,
+			Score:           r.Score,
+			RerankScore:     r.RerankScore,
+			Metadata:        r.Metadata,
+		})
+	}
+	return results, nil
+}
+
+type policyToolClient struct {
+	tools      agent.ToolClient
+	policy     *toolspkg.Policy
+	cachedDefs []agent.ToolDefinition
+	cachedOnce sync.Once
+	cachedErr  error
+}
+
+func (p *policyToolClient) ListTools(ctx context.Context) ([]agent.ToolDefinition, error) {
+	definitions, err := p.getToolDefinitions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return p.policy.FilterTools(definitions), nil
+}
+
+func (p *policyToolClient) getToolDefinitions(ctx context.Context) ([]agent.ToolDefinition, error) {
+	p.cachedOnce.Do(func() {
+		definitions, err := p.tools.ListTools(ctx)
+		if err != nil {
+			p.cachedErr = err
+			return
+		}
+		p.cachedDefs = definitions
+	})
+	return p.cachedDefs, p.cachedErr
+}
+
+func (p *policyToolClient) CallTool(ctx context.Context, name string, arguments json.RawMessage) (agent.ToolResult, error) {
+	definitions, err := p.getToolDefinitions(ctx)
+	if err != nil {
+		return agent.ToolResult{}, err
+	}
+	var toolDef agent.ToolDefinition
+	for _, def := range definitions {
+		if def.Function.Name == name {
+			toolDef = def
+			break
+		}
+	}
+	if err := p.policy.ValidateCall(name, arguments, toolDef); err != nil {
+		return agent.ToolResult{}, err
+	}
+	return p.tools.CallTool(ctx, name, arguments)
+}
+
 func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeConfiguration) (*runtimeState, error) {
 	local, err := localtools.New(localtools.Config{
 		WorkDir: m.cfg.WorkDir, MaxFileBytes: m.cfg.MaxFileBytes,
@@ -124,7 +215,7 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 			m.updateMCPStatus(ctx, server.ID, 0, nil, "connection failed")
 			continue
 		}
-		tools, listErr := client.ListTools(ctx)
+		mcpTools, listErr := client.ListTools(ctx)
 		if listErr != nil {
 			_ = client.Close()
 			m.updateMCPStatus(ctx, server.ID, 0, nil, "tool discovery failed")
@@ -139,17 +230,37 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 		clients = append(clients, client)
 		providers = append(providers, prefixed)
 		now := time.Now().UTC()
-		m.updateMCPStatus(ctx, server.ID, len(tools), &now, "")
+		m.updateMCPStatus(ctx, server.ID, len(mcpTools), &now, "")
 	}
-	tools, err := toolclient.New(providers...)
+	if m.retriever != nil {
+		adapter := &knowledgeRetrieverAdapter{retriever: m.retriever}
+		knowledgeTool, err := toolspkg.NewKnowledgeToolClient(toolspkg.KnowledgeToolConfig{
+			RetrievalClient: adapter,
+			Timeout:         m.cfg.DefaultToolTimeout,
+		})
+		if err != nil {
+			closeClients(clients)
+			return nil, fmt.Errorf("init knowledge tool client: %w", err)
+		}
+		providers = append(providers, knowledgeTool)
+	}
+	toolClient, err := toolclient.New(providers...)
 	if err != nil {
 		closeClients(clients)
 		return nil, err
 	}
-	if _, err := tools.ListTools(ctx); err != nil {
+	if _, err := toolClient.ListTools(ctx); err != nil {
 		closeClients(clients)
 		return nil, fmt.Errorf("validate merged tools: %w", err)
 	}
+	policy, err := toolspkg.NewPolicy(toolspkg.PolicyConfig{
+		EnabledToolNames: runtimeConfig.Agent.EnabledToolNames,
+	})
+	if err != nil {
+		closeClients(clients)
+		return nil, fmt.Errorf("create tool policy: %w", err)
+	}
+	policyClient := &policyToolClient{tools: toolClient, policy: policy}
 	model, err := modelclient.New(modelclient.Config{
 		Endpoint: runtimeConfig.LLM.Endpoint, Token: runtimeConfig.LLM.Token,
 		TokenHeader: runtimeConfig.LLM.TokenHeader, Model: runtimeConfig.LLM.Model,
@@ -171,8 +282,11 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 	if maxIterations <= 0 {
 		maxIterations = m.cfg.MaxIterations
 	}
+	if maxIterations > 10 {
+		maxIterations = 10
+	}
 	overallTimeout := time.Duration(runtimeConfig.Agent.OverallTimeoutSeconds) * time.Second
-	runner, err := agent.NewRunner(model, tools, agent.Config{
+	runner, err := agent.NewRunner(model, policyClient, agent.Config{
 		MaxIterations: maxIterations, ToolTimeout: toolTimeout,
 		MaxToolResultBytes: m.cfg.MaxToolResultBytes,
 	})
@@ -185,6 +299,8 @@ func (m *Manager) buildState(ctx context.Context, runtimeConfig service.RuntimeC
 		llmModel: runtimeConfig.LLM.Model, llmProfileID: runtimeConfig.LLM.ProfileID,
 		qaConfigVersionID: runtimeConfig.QAConfigVersionID, llmConfigVersionID: runtimeConfig.LLMConfigVersionID,
 		maxIterations: maxIterations, overallTimeout: overallTimeout,
+		defaultKnowledgeBaseIDs: runtimeConfig.DefaultKnowledgeBaseIDs,
+		retrievalSettings:       runtimeConfig.RetrievalSettings,
 	}, nil
 }
 

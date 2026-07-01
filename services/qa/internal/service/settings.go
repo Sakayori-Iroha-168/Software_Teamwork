@@ -74,7 +74,11 @@ func (s *ConfigService) UpdateSettings(ctx context.Context, userID, requestID st
 		if err := validateRetrieval(retrieval, knowledgeBaseIDs); err != nil {
 			return QASettings{}, err
 		}
-		if err := s.repository.CreateQAConfigVersion(ctx, userID, retrieval, knowledgeBaseIDs); err != nil {
+		agentConfig, err := s.activeAgentConfig(ctx)
+		if err != nil {
+			return QASettings{}, err
+		}
+		if err := s.repository.CreateQAConfigVersion(ctx, userID, retrieval, knowledgeBaseIDs, agentConfig); err != nil {
 			return QASettings{}, err
 		}
 	}
@@ -110,6 +114,17 @@ func (s *ConfigService) UpdateSettings(ctx context.Context, userID, requestID st
 		return QASettings{}, NewError(CodeDependency, "runtime reload failed", err)
 	}
 	return after, nil
+}
+
+func (s *ConfigService) activeAgentConfig(ctx context.Context) (AgentConfig, error) {
+	currentVersion, err := s.repository.GetActiveQAConfigVersion(ctx)
+	if err == nil {
+		return NormalizeAgentConfig(currentVersion.Agent), nil
+	}
+	if appErr, ok := Classify(err); ok && appErr.Code == CodeNotFound {
+		return DefaultAgentConfig(), nil
+	}
+	return AgentConfig{}, err
 }
 
 func (s *ConfigService) ListMCPServers(ctx context.Context) ([]MCPServer, error) {
@@ -333,6 +348,12 @@ func (s *ConfigService) LoadRuntimeConfiguration(ctx context.Context) (RuntimeCo
 			return RuntimeConfiguration{}, err
 		}
 	}
+	retrievalSettings, defaultKBIDs, err := s.repository.GetActiveQAConfig(ctx)
+	if err != nil {
+		if appErr, ok := Classify(err); !ok || appErr.Code != CodeNotFound {
+			return RuntimeConfiguration{}, err
+		}
+	}
 	llmConfig, err := s.repository.GetActiveLLMConfigVersion(ctx)
 	if err != nil {
 		if appErr, ok := Classify(err); !ok || appErr.Code != CodeNotFound {
@@ -361,9 +382,20 @@ func (s *ConfigService) LoadRuntimeConfiguration(ctx context.Context) (RuntimeCo
 	if len(records) == 0 && s.bootstrap.MCPServer != nil {
 		servers = append(servers, *s.bootstrap.MCPServer)
 	}
+	agentConfig := NormalizeAgentConfig(qaConfig.Agent)
+	if qaConfig.ID == "" {
+		agentConfig = DefaultAgentConfig()
+	}
+	// Use nil to indicate "no QA config" (no KB restriction), empty slice means "config exists but no KBs allowed"
+	var effectiveDefaultKBIDs []string
+	if qaConfig.ID != "" {
+		effectiveDefaultKBIDs = defaultKBIDs
+	}
 	return RuntimeConfiguration{
 		LLM: llm, SystemPrompt: prompt, MCPServers: servers,
-		QAConfigVersionID: qaConfig.ID, LLMConfigVersionID: llmConfig.ID, Agent: qaConfig.Agent,
+		QAConfigVersionID: qaConfig.ID, LLMConfigVersionID: llmConfig.ID, Agent: agentConfig,
+		DefaultKnowledgeBaseIDs: effectiveDefaultKBIDs,
+		RetrievalSettings:       retrievalSettings,
 	}, nil
 }
 
