@@ -166,6 +166,30 @@ func (c *Client) CheckCitationSources(ctx context.Context, userID string, docume
 	return availability, nil
 }
 
+func (c *Client) GetStats(ctx context.Context, userID string) (service.KnowledgeStats, error) {
+	endpoint := c.baseURL + "/internal/v1/stats"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return service.KnowledgeStats{}, fmt.Errorf("create knowledge stats request: %w", err)
+	}
+	c.setTrustedHeaders(ctx, req, userID)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return service.KnowledgeStats{}, fmt.Errorf("call knowledge stats: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return service.KnowledgeStats{}, fmt.Errorf("knowledge stats returned HTTP %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Data service.KnowledgeStats `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&decoded); err != nil {
+		return service.KnowledgeStats{}, fmt.Errorf("decode knowledge stats: %w", err)
+	}
+	return decoded.Data, nil
+}
+
 func (c *Client) setTrustedHeaders(ctx context.Context, req *http.Request, userID string) {
 	req.Header.Set("X-Service-Token", c.serviceToken)
 	req.Header.Set("X-Caller-Service", "qa")

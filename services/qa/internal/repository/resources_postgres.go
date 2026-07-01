@@ -595,7 +595,7 @@ func (r *Postgres) GetTopQueries(ctx context.Context, days, limit int) ([]servic
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := r.pool.Query(ctx, `SELECT COALESCE(NULLIF(m.content_preview,''),left(mcb.content,80),'(untitled)'),count(*),COALESCE(avg(rr.latency_ms),0)::bigint,max(m.created_at) FROM messages m JOIN conversations c ON c.id=m.conversation_id AND c.deleted_at IS NULL LEFT JOIN response_runs rr ON rr.user_message_id=m.id LEFT JOIN message_content_blocks mcb ON mcb.message_id=m.id AND mcb.block_order=0 WHERE m.role='user' AND m.created_at>=now()-make_interval(days=>$1) GROUP BY COALESCE(NULLIF(m.content_preview,''),left(mcb.content,80),'(untitled)') ORDER BY count(*) DESC,max(m.created_at) DESC LIMIT $2`, days, limit)
+	rows, err := r.pool.Query(ctx, `SELECT COALESCE(mcb.content,''),COALESCE(NULLIF(m.content_preview,''),left(mcb.content,80),'(untitled)'),count(*),COALESCE(avg(rr.latency_ms),0)::bigint,max(m.created_at) FROM messages m JOIN conversations c ON c.id=m.conversation_id AND c.deleted_at IS NULL LEFT JOIN response_runs rr ON rr.user_message_id=m.id LEFT JOIN message_content_blocks mcb ON mcb.message_id=m.id AND mcb.block_order=0 WHERE m.role='user' AND m.created_at>=now()-make_interval(days=>$1) GROUP BY COALESCE(mcb.content,''),COALESCE(NULLIF(m.content_preview,''),left(mcb.content,80),'(untitled)') ORDER BY count(*) DESC,max(m.created_at) DESC LIMIT $2`, days, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -603,7 +603,7 @@ func (r *Postgres) GetTopQueries(ctx context.Context, days, limit int) ([]servic
 	items := []service.TopQuery{}
 	for rows.Next() {
 		var v service.TopQuery
-		if err := rows.Scan(&v.Query, &v.Count, &v.AvgLatencyMS, &v.LastAskedAt); err != nil {
+		if err := rows.Scan(&v.Query, &v.ContentPreview, &v.Count, &v.AvgLatencyMS, &v.LastAskedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, v)

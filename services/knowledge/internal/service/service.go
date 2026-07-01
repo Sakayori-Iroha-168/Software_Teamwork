@@ -555,6 +555,10 @@ func (s *Service) ListDocumentChunks(ctx context.Context, reqCtx RequestContext,
 	return s.ListChunks(ctx, reqCtx, ListChunksInput(input))
 }
 
+func (s *Service) GetStats(ctx context.Context) (KnowledgeBaseStats, error) {
+	return s.repo.GetStats(ctx)
+}
+
 func (s *Service) GetDocumentContent(ctx context.Context, reqCtx RequestContext, id string) (SourceDocument, error) {
 	scope, err := readScope(reqCtx)
 	if err != nil {

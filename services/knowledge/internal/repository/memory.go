@@ -966,6 +966,24 @@ func (r *MemoryRepository) documentChunkCountLocked(documentID string) int64 {
 	return count
 }
 
+func (r *MemoryRepository) GetStats(ctx context.Context) (service.KnowledgeBaseStats, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	kbCount := 0
+	for _, kb := range r.knowledgeBases {
+		if kb.DeletedAt == nil {
+			kbCount++
+		}
+	}
+	docCount := 0
+	for _, doc := range r.documents {
+		if doc.DeletedAt == nil {
+			docCount++
+		}
+	}
+	return service.KnowledgeBaseStats{KnowledgeBaseCount: kbCount, DocumentCount: docCount}, nil
+}
+
 func canRead(createdBy string, scope service.AccessScope) bool {
 	return scope.CanReadAll || createdBy == scope.UserID
 }

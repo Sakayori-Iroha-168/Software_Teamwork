@@ -420,6 +420,11 @@ type DeleteCleanupRequeueResult struct {
 	FailedDependency string
 }
 
+type KnowledgeBaseStats struct {
+	KnowledgeBaseCount int `json:"knowledgeBaseCount"`
+	DocumentCount      int `json:"documentCount"`
+}
+
 type Repository interface {
 	CreateKnowledgeBase(ctx context.Context, input CreateKnowledgeBaseRecord) (KnowledgeBase, error)
 	ListKnowledgeBases(ctx context.Context, scope AccessScope, page PageInput) (KnowledgeBaseList, error)
@@ -448,6 +453,7 @@ type Repository interface {
 	UpdateDocumentProcessingState(ctx context.Context, id string, update DocumentStateUpdate) (KnowledgeDocument, error)
 	CompleteIngestion(ctx context.Context, input CompleteIngestionRecord) (ProcessingJob, error)
 	ListChunks(ctx context.Context, documentID string, scope AccessScope, page PageInput) (ChunkList, error)
+	GetStats(ctx context.Context) (KnowledgeBaseStats, error)
 }
 
 type CreateKnowledgeBaseRecord struct {

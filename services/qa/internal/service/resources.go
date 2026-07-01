@@ -376,10 +376,11 @@ type MetricsTrend struct {
 	Trend30d []MetricsTrendPoint `json:"trend30d"`
 }
 type TopQuery struct {
-	Query        string    `json:"query"`
-	Count        int       `json:"count"`
-	AvgLatencyMS int64     `json:"avgLatencyMs"`
-	LastAskedAt  time.Time `json:"lastAskedAt"`
+	Query          string    `json:"query"`
+	ContentPreview string    `json:"contentPreview"`
+	Count          int       `json:"count"`
+	AvgLatencyMS   int64     `json:"avgLatencyMs"`
+	LastAskedAt    time.Time `json:"lastAskedAt"`
 }
 type IntentDistribution struct {
 	Intent  string  `json:"intent"`
@@ -417,16 +418,26 @@ type CitationSourceChecker interface {
 	CheckCitationSources(context.Context, string, []string) (map[string]bool, error)
 }
 
+type KnowledgeStatsRetriever interface {
+	GetStats(context.Context, string) (KnowledgeStats, error)
+}
+
+type KnowledgeStats struct {
+	KnowledgeBaseCount int `json:"knowledgeBaseCount"`
+	DocumentCount      int `json:"documentCount"`
+}
+
 type ActiveRunCanceller interface{ CancelActiveRun(string) }
 
 type ResourceService struct {
-	repository      ResourceRepository
-	retriever       KnowledgeRetriever
-	sourceChecker   CitationSourceChecker
-	llmTester       LLMConnectionTester
-	bootstrap       RuntimeLLMConfig
-	canceller       ActiveRunCanceller
-	now             func() time.Time
+	repository             ResourceRepository
+	retriever              KnowledgeRetriever
+	sourceChecker          CitationSourceChecker
+	knowledgeStatsRetriever KnowledgeStatsRetriever
+	llmTester              LLMConnectionTester
+	bootstrap              RuntimeLLMConfig
+	canceller              ActiveRunCanceller
+	now                    func() time.Time
 }
 
 func NewResourceService(repository ResourceRepository, retriever KnowledgeRetriever, tester LLMConnectionTester, bootstrap RuntimeLLMConfig, canceller ActiveRunCanceller) (*ResourceService, error) {
@@ -434,7 +445,8 @@ func NewResourceService(repository ResourceRepository, retriever KnowledgeRetrie
 		return nil, errors.New("resource repository, retriever, LLM tester and run canceller are required")
 	}
 	sourceChecker, _ := retriever.(CitationSourceChecker)
-	return &ResourceService{repository: repository, retriever: retriever, sourceChecker: sourceChecker, llmTester: tester, bootstrap: bootstrap, canceller: canceller, now: time.Now}, nil
+	knowledgeStatsRetriever, _ := retriever.(KnowledgeStatsRetriever)
+	return &ResourceService{repository: repository, retriever: retriever, sourceChecker: sourceChecker, knowledgeStatsRetriever: knowledgeStatsRetriever, llmTester: tester, bootstrap: bootstrap, canceller: canceller, now: time.Now}, nil
 }
 
 func (s *ResourceService) GetResponseRun(ctx context.Context, userID, id string) (ResponseRun, error) {
@@ -737,7 +749,18 @@ func (s *ResourceService) GetRetrievalTestRun(ctx context.Context, userID, id st
 	return s.repository.GetRetrievalTestRun(ctx, userID, id)
 }
 func (s *ResourceService) GetMetricsOverview(ctx context.Context, userID string, days int) (MetricsOverview, error) {
-	return s.repository.GetMetricsOverview(ctx, days)
+	overview, err := s.repository.GetMetricsOverview(ctx, days)
+	if err != nil {
+		return overview, err
+	}
+	if s.knowledgeStatsRetriever != nil {
+		stats, err := s.knowledgeStatsRetriever.GetStats(ctx, userID)
+		if err == nil {
+			overview.KnowledgeBaseCount = stats.KnowledgeBaseCount
+			overview.DocumentCount = stats.DocumentCount
+		}
+	}
+	return overview, nil
 }
 func (s *ResourceService) GetMetricsTrend(ctx context.Context, days int) (MetricsTrend, error) {
 	trend, err := s.repository.GetMetricsTrend(ctx, days)

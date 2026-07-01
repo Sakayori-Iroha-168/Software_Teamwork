@@ -56,6 +56,7 @@ func NewServer(knowledge *service.Service, cfg Config) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 	s.mux.HandleFunc("GET /readyz", s.handleReady)
+	s.mux.HandleFunc("GET /internal/v1/stats", s.handleGetStats)
 	s.mux.HandleFunc("GET /internal/v1/knowledge-bases", s.handleListKnowledgeBases)
 	s.mux.HandleFunc("POST /internal/v1/knowledge-bases", s.handleCreateKnowledgeBase)
 	s.mux.HandleFunc("GET /internal/v1/knowledge-bases/{knowledgeBaseId}", s.handleGetKnowledgeBase)
@@ -97,6 +98,15 @@ func (s *Server) handleListParserConfigs(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, parserConfigsFromDomain(result.Items), requestIDFromContext(r.Context()))
+}
+
+func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
+	result, err := s.knowledge.GetStats(r.Context())
+	if err != nil {
+		writeAppError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result, "requestId": requestIDFromContext(r.Context())}, "")
 }
 
 func (s *Server) handleCreateParserConfig(w http.ResponseWriter, r *http.Request) {
