@@ -25,7 +25,7 @@ type openAPIOperation struct {
 func TestQAActiveOpenAPIContractsHaveSchemasAndAuth(t *testing.T) {
 	document := readOpenAPIDocument(t, gatewayOpenAPIPath(t))
 	operations := ownerOpenAPIOperations(t, document, "qa")
-	if got, want := len(operations), 25; got != want {
+	if got, want := len(operations), 29; got != want {
 		t.Fatalf("qa active operations = %d, want %d", got, want)
 	}
 
@@ -53,7 +53,7 @@ func TestQAActiveOpenAPIContractsHaveSchemasAndAuth(t *testing.T) {
 		}
 
 		if operation.Method == http.MethodPost || operation.Method == http.MethodPatch {
-			assertJSONRequestSchema(t, document, operation)
+			assertQARequestSchema(t, document, operation)
 		}
 		assertQASuccessResponseSchemas(t, document, operation)
 		assertQAErrorResponseSchemas(t, document, operation)
@@ -298,14 +298,28 @@ func assertQueryParameterSchema(t *testing.T, operation openAPIOperation, parame
 
 func assertJSONRequestSchema(t *testing.T, document map[string]any, operation openAPIOperation) {
 	t.Helper()
+	assertRequestSchemaForMediaType(t, document, operation, "application/json")
+}
+
+func assertQARequestSchema(t *testing.T, document map[string]any, operation openAPIOperation) {
+	t.Helper()
+	if operation.OperationID == "uploadQASessionAttachment" {
+		assertRequestSchemaForMediaType(t, document, operation, "multipart/form-data")
+		return
+	}
+	assertJSONRequestSchema(t, document, operation)
+}
+
+func assertRequestSchemaForMediaType(t *testing.T, document map[string]any, operation openAPIOperation, mediaTypeName string) {
+	t.Helper()
 	requestBody := resolveOpenAPIMapValue(t, document, operation.Operation["requestBody"])
 	if requestBody == nil {
-		t.Fatalf("%s %s missing JSON request body schema", operation.Method, operation.Path)
+		t.Fatalf("%s %s missing %s request body schema", operation.Method, operation.Path, mediaTypeName)
 	}
 	content := requiredNestedMap(t, requestBody, "content")
-	mediaType := requiredNestedMap(t, content, "application/json")
+	mediaType := requiredNestedMap(t, content, mediaTypeName)
 	if mapValue(mediaType["schema"]) == nil {
-		t.Fatalf("%s %s application/json request body missing schema", operation.Method, operation.Path)
+		t.Fatalf("%s %s %s request body missing schema", operation.Method, operation.Path, mediaTypeName)
 	}
 }
 

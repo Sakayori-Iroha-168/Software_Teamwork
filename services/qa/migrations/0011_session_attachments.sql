@@ -62,7 +62,20 @@ CREATE INDEX idx_message_attachments_attachment
 CREATE INDEX idx_citations_attachment_id
     ON citations(attachment_id);
 
+UPDATE qa_config_versions
+SET enabled_tool_names = enabled_tool_names || '["search_session_attachments"]'::jsonb
+WHERE version_no = 1
+  AND created_by_user_id = 'system'
+  AND enabled_tool_names ? 'search_knowledge'
+  AND NOT (enabled_tool_names ? 'search_session_attachments');
+
 -- +goose Down
+UPDATE qa_config_versions
+SET enabled_tool_names = enabled_tool_names - 'search_session_attachments'
+WHERE version_no = 1
+  AND created_by_user_id = 'system'
+  AND enabled_tool_names ? 'search_session_attachments';
+
 DROP INDEX IF EXISTS idx_citations_attachment_id;
 DROP INDEX IF EXISTS idx_message_attachments_attachment;
 DROP INDEX IF EXISTS idx_session_attachment_chunks_body_fts;

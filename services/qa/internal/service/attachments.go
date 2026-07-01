@@ -234,12 +234,15 @@ func (s *AttachmentService) DeleteSession(ctx context.Context, userID, sessionID
 	if err != nil {
 		return err
 	}
+	var firstErr error
 	for _, attachment := range attachments {
 		if err := s.requestFileDelete(ctx, attachment); err != nil {
-			return err
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (s *AttachmentService) Process(ctx context.Context, attachmentID string) error {

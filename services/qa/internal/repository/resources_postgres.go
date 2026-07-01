@@ -287,37 +287,7 @@ func (r *Postgres) CreateQAConfigVersionResource(ctx context.Context, userID str
 	if retrieval.RerankTopN == 0 {
 		retrieval.RerankTopN = input.RerankTopN
 	}
-	agent := input.Agent
-	if agent.MaxIterations == 0 {
-		agent.MaxIterations = input.MaxIterations
-	}
-	if agent.MaxIterations == 0 {
-		agent.MaxIterations = 5
-	}
-	if agent.ToolTimeoutSeconds == 0 {
-		agent.ToolTimeoutSeconds = input.ToolTimeoutSeconds
-	}
-	if agent.ToolTimeoutSeconds == 0 {
-		agent.ToolTimeoutSeconds = 10
-	}
-	if agent.ModelTimeoutSeconds == 0 {
-		agent.ModelTimeoutSeconds = input.ModelTimeoutSeconds
-	}
-	if agent.ModelTimeoutSeconds == 0 {
-		agent.ModelTimeoutSeconds = 60
-	}
-	if agent.OverallTimeoutSeconds == 0 {
-		agent.OverallTimeoutSeconds = input.OverallTimeoutSeconds
-	}
-	if agent.OverallTimeoutSeconds == 0 {
-		agent.OverallTimeoutSeconds = 120
-	}
-	if len(agent.EnabledToolNames) == 0 {
-		agent.EnabledToolNames = input.EnabledToolNames
-	}
-	if agent.EnabledToolNames == nil {
-		agent.EnabledToolNames = []string{}
-	}
+	agent := agentConfigFromCreateInput(input)
 	activate := input.Activate == nil || *input.Activate
 	kbs := input.KnowledgeBases
 	if len(kbs) == 0 {
@@ -353,6 +323,29 @@ func (r *Postgres) CreateQAConfigVersionResource(ctx context.Context, userID str
 		return service.QAConfigVersion{}, err
 	}
 	return r.getQAConfigVersion(ctx, id, false)
+}
+
+func agentConfigFromCreateInput(input service.CreateQAConfigVersionInput) service.AgentConfig {
+	agent := input.Agent
+	if agent.MaxIterations == 0 {
+		agent.MaxIterations = input.MaxIterations
+	}
+	if agent.ToolTimeoutSeconds == 0 {
+		agent.ToolTimeoutSeconds = input.ToolTimeoutSeconds
+	}
+	if agent.ModelTimeoutSeconds == 0 {
+		agent.ModelTimeoutSeconds = input.ModelTimeoutSeconds
+	}
+	if agent.OverallTimeoutSeconds == 0 {
+		agent.OverallTimeoutSeconds = input.OverallTimeoutSeconds
+	}
+	if agent.EnabledToolNames == nil {
+		agent.EnabledToolNames = input.EnabledToolNames
+	}
+	if agent.EnabledToolNames == nil {
+		agent.EnabledToolNames = service.DefaultAgentConfig().EnabledToolNames
+	}
+	return service.NormalizeAgentConfig(agent)
 }
 
 func (r *Postgres) GetActiveLLMConfigVersion(ctx context.Context) (service.LLMConfigVersion, error) {

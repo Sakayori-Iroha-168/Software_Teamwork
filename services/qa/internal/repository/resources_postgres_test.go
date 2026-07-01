@@ -66,22 +66,6 @@ func TestAgentConfigFromCreateInputUsesDefaultToolNamesWhenUnset(t *testing.T) {
 	}
 }
 
-func TestToolCallAuditSummariesDeriveSourceAndFailure(t *testing.T) {
-	if got := toolSourceName("search_knowledge"); got != "qa_builtin" {
-		t.Fatalf("builtin source=%q", got)
-	}
-	if got := toolSourceName("kbserver__search"); got != "kbserver" {
-		t.Fatalf("prefixed source=%q", got)
-	}
-
-	code, message := toolCallErrorSummary("tool.failed", map[string]any{
-		"raw": `{"error":{"code":"retrieval_failed","message":"knowledge retrieval service failed"}}`,
-	})
-	if code != "retrieval_failed" || message != "knowledge retrieval service failed" {
-		t.Fatalf("error summary code=%q message=%q", code, message)
-	}
-}
-
 func TestToolCallEventPayloadCarriesModelInvocationID(t *testing.T) {
 	payload := map[string]any{
 		"iterationNo":       1,

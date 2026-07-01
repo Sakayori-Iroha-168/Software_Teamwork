@@ -146,6 +146,8 @@ func citationFromRecord(record map[string]any) (Citation, bool) {
 	}
 	if available, ok := firstBool(record, "isSourceAvailable", "sourceAvailable", "source_available"); ok {
 		citation.IsSourceAvailable = available
+	} else if citation.AttachmentID != "" {
+		citation.IsSourceAvailable = true
 	} else {
 		citation.IsSourceAvailable = citation.DocumentID != ""
 	}

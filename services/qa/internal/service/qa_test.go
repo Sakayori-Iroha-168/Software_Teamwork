@@ -931,8 +931,8 @@ func TestAskPersistsSafeAttachmentCitationSnapshots(t *testing.T) {
 	if citation.AttachmentID != "att-1" || citation.AttachmentChunkID != "chunk-1" || citation.AttachmentFilename != "manual.pdf" {
 		t.Fatalf("unexpected attachment citation fields: %+v", citation)
 	}
-	if citation.DocumentID != "" || citation.KnowledgeBaseID != "" || citation.IsSourceAvailable {
-		t.Fatalf("attachment citation should not be treated as knowledge source: %+v", citation)
+	if citation.DocumentID != "" || citation.KnowledgeBaseID != "" || !citation.IsSourceAvailable || citation.Source == nil || !citation.Source.Available || citation.Source.DownloadEndpoint != "" {
+		t.Fatalf("attachment citation should be a display-only available attachment source: %+v", citation)
 	}
 	if citation.ContentPreview != "safe attachment preview" || citation.Text != "safe attachment preview" || citation.Context != "" {
 		t.Fatalf("attachment citation should store only preview: %+v", citation)

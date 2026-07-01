@@ -244,8 +244,7 @@ func (s *Server) handleGetRetrievalTest(w http.ResponseWriter, r *http.Request) 
 	writeData(w, r, http.StatusOK, value)
 }
 func (s *Server) handleMetricsOverview(w http.ResponseWriter, r *http.Request) {
-	userID, ok := s.requireSettingsPermission(w, r, "qa:settings:read")
-	if !ok {
+	if _, ok := s.requireSettingsPermission(w, r, "qa:settings:read"); !ok {
 		return
 	}
 	days, err := metricsDaysQuery(r, "days", 1)
@@ -253,7 +252,7 @@ func (s *Server) handleMetricsOverview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	value, err := s.resources.GetMetricsOverview(r.Context(), userID, days)
+	value, err := s.resources.GetMetricsOverview(r.Context(), days)
 	if err != nil {
 		writeError(w, r, err)
 		return

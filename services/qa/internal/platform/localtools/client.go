@@ -222,6 +222,7 @@ func (c *Client) searchSessionAttachments(ctx context.Context, query string, lim
 		PageNumber        *int   `json:"pageNumber,omitempty"`
 		SectionPath       string `json:"sectionPath,omitempty"`
 		Preview           string `json:"preview"`
+		IsSourceAvailable bool   `json:"isSourceAvailable"`
 	}
 	out := make([]result, 0, len(items))
 	for _, item := range items {
@@ -233,6 +234,7 @@ func (c *Client) searchSessionAttachments(ctx context.Context, query string, lim
 			PageNumber:        item.PageNumber,
 			SectionPath:       item.SectionPath,
 			Preview:           item.Preview,
+			IsSourceAvailable: true,
 		})
 	}
 	payload, _ := json.Marshal(out)

@@ -172,11 +172,12 @@ func (r *fakeAttachmentRepo) MarkAttachmentFileDeleteRequested(_ context.Context
 }
 
 type fakeFileClient struct {
-	id        string
-	data      []byte
-	deleted   []string
-	readErr   error
-	deleteErr error
+	id             string
+	data           []byte
+	deleted        []string
+	readErr        error
+	deleteErr      error
+	deleteErrByRef map[string]error
 }
 
 func (f *fakeFileClient) Upload(_ context.Context, input FileUploadInput) (FileObject, error) {
@@ -195,6 +196,9 @@ func (f *fakeFileClient) Read(context.Context, string) ([]byte, error) {
 }
 func (f *fakeFileClient) Delete(_ context.Context, fileRef string) error {
 	f.deleted = append(f.deleted, fileRef)
+	if f.deleteErrByRef != nil && f.deleteErrByRef[fileRef] != nil {
+		return f.deleteErrByRef[fileRef]
+	}
 	if f.deleteErr != nil {
 		return f.deleteErr
 	}
@@ -298,6 +302,32 @@ func TestAttachmentServiceDeleteSessionCleansAttachments(t *testing.T) {
 	}
 	if repo.items["att-1"].DeletedAt == nil || len(repo.chunks["att-1"]) != 0 || len(file.deleted) != 1 {
 		t.Fatalf("session cleanup incomplete: item=%+v chunks=%+v deleted=%+v", repo.items["att-1"], repo.chunks, file.deleted)
+	}
+}
+
+func TestAttachmentServiceDeleteSessionAttemptsAllFileDeletes(t *testing.T) {
+	repo := newFakeAttachmentRepo()
+	file := &fakeFileClient{deleteErrByRef: map[string]error{"file-1": errors.New("file unavailable")}}
+	svc, err := NewAttachmentService(repo, file, fakeParserClient{}, AttachmentConfig{TTL: time.Hour, MaxBytes: 1024, MaxPerSession: 2, ProcessTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().Add(time.Hour)
+	repo.items["att-1"] = SessionAttachment{ID: "att-1", SessionID: "session-1", OwnerUserID: "user-1", FileRef: "file-1", Status: AttachmentStatusReady, ExpiresAt: expiresAt}
+	repo.items["att-2"] = SessionAttachment{ID: "att-2", SessionID: "session-1", OwnerUserID: "user-1", FileRef: "file-2", Status: AttachmentStatusReady, ExpiresAt: expiresAt}
+
+	err = svc.DeleteSession(context.Background(), "user-1", "session-1")
+	if err == nil {
+		t.Fatal("DeleteSession error = nil")
+	}
+	if len(file.deleted) != 2 {
+		t.Fatalf("deleted refs = %+v, want both files attempted", file.deleted)
+	}
+	if repo.fileDeleteErrors["att-1"] == "" {
+		t.Fatalf("failed file delete was not marked for retry: %+v", repo.fileDeleteErrors)
+	}
+	if repo.fileDeleteErrors["att-2"] != "" {
+		t.Fatalf("successful file delete should clear retry state: %+v", repo.fileDeleteErrors)
 	}
 }
 

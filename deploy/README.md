@@ -180,6 +180,7 @@ Override host ports in `deploy/.env`.
 | `KNOWLEDGE_AI_GATEWAY_BASE_URL` / `AI_GATEWAY_EMBEDDING_PROFILE_ID` | knowledge | no | Optional AI Gateway embedding profile wiring. Requires `--profile ai` and real provider credentials when `EMBEDDING_PROVIDER=ai_gateway`. |
 | `RERANK_MODEL` / `RERANK_PROFILE_ID` | knowledge | no | Optional AI Gateway rerank wiring. Empty `RERANK_MODEL` keeps rerank requests on the local no-op fallback. |
 | `PARSER_BACKEND` | parser | no | Defaults to `ppstructurev3` for structured PDF/image parsing; set `document` only for local text/Office parsing without OCR dependencies. |
+| `PARSER_MAX_DOCUMENT_BYTES` | parser | yes | Parser request document byte limit. Local Compose sets `26214400` to match QA's default session attachment upload limit. |
 | `QA_DATABASE_URL` | qa | yes | QA PostgreSQL DSN. |
 | `KNOWLEDGE_SERVICE_URL` | qa | yes | Internal Knowledge Service URL. |
 | `FILE_SERVICE_URL` | qa | yes | Internal File Service URL for QA session attachment upload/read/delete; Compose sets `http://file:8082`. |
