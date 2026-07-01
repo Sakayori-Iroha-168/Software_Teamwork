@@ -47,10 +47,11 @@
 
 ## 证据记录格式
 
-每个测试 issue 至少保留两类证据：
+每个测试 issue 至少保留一类可复核证据；复杂测试还必须补完整测试报告：
 
-1. 完整测试报告：复制 `docs/testing/templates/test-report-template.md` 到 `docs/testing/reports/YYYY-MM-DD/<scope>-test-report.md`，填写命令、环境、结果、缺陷、未运行项和最终结论。
-2. Issue/PR 快速证据块：使用 `docs/testing/templates/test-evidence-record-template.md` 填写到 issue 评论或 PR body，便于 reviewer 不打开完整报告也能看到已运行命令、未运行原因、截图/日志/trace、失败复现和关联 PR。
+1. 轻量执行记录：纯单元测试、组件测试和静态检查可只使用 `docs/testing/templates/test-evidence-record-template.md` 填写到 issue 评论或 PR body，记录命令、环境、结果、未运行原因、失败证据和缺陷处理。
+2. 完整测试报告：集成测试、E2E、权限/安全边界、文件/Parser 边界、migration、环境验收、人工验收、回归测试或缺陷复现必须复制 `docs/testing/templates/test-report-template.md` 到 `docs/testing/reports/YYYY-MM-DD/<scope>-test-report.md`，填写命令、环境、结果、缺陷、未运行项和最终结论。
+3. 快速证据摘要：复杂测试即使已有完整报告，也应在 issue/PR 中链接报告并保留快速证据摘要，便于 reviewer 不打开完整报告也能看到已运行命令、未运行原因、截图/日志/trace、失败复现和关联 PR。
 
 证据必须区分以下结论：
 
