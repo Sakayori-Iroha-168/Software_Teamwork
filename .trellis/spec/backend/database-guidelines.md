@@ -755,6 +755,13 @@ outline generation -> parse AI response outside transaction -> transaction inser
 - AI generation may call the model outside the database transaction, but the
   final generated content update plus `report_section_versions` insert must run
   in one short `WithinGenerationTx` operation.
+- Before persisting a successful generated section after the model call, re-read
+  and lock the target section inside `WithinGenerationTx`. The current section
+  must still have `last_job_id` equal to the executing job, `generation_status =
+  running`, and the same `version` / `manual_edited` state captured when the job
+  marked the section running. If any of those checks fail, return `409 conflict`
+  and preserve the current section content, tables, version, source, and manual
+  edit state; do not create an AI section-version row from the stale response.
 - If generated content persistence fails after the transaction rolls back,
   failure compensation must use a narrow section status update only
   (`generation_status`, `last_job_id`, `updated_at`). It must not write a stale
@@ -773,6 +780,7 @@ outline generation -> parse AI response outside transaction -> transaction inser
 | Report is soft-deleted by status or `deleted_at` | `409 conflict`; do not create a version or mutate the current section |
 | Target section belongs to another report | `404 not_found` |
 | Target section has `generation_status = running` | `409 conflict`; do not create a version |
+| Successful AI response finds a different `last_job_id`, non-running status, changed version, or changed manual-edit state | `409 conflict`; do not create a version or overwrite current section content |
 | Version insert succeeds but current-section switch fails | Roll back inserted version and return typed dependency/not-found error |
 | AI generated content update succeeds but version insert fails | Roll back the generated content switch; mark the section failed best-effort with a narrow, current-job-matched status update that preserves concurrent edits |
 | Manual edit changes only metadata | Do not create a new section version |
@@ -797,6 +805,9 @@ outline generation -> parse AI response outside transaction -> transaction inser
 - Manual edit snapshot tests for single-section update and bulk save.
 - Generation tests for default preserve behavior, explicit
   `preserveUserEdits=false`, and rollback when version insertion fails.
+- Generation success-path tests must simulate a concurrent manual edit and a
+  superseding generation job after the AI call but before the write transaction;
+  both cases must preserve the current section and create no stale AI version.
 - Generation rollback tests must simulate a concurrent section edit after the
   failed transaction rolls back and assert failure compensation preserves
   `content`, `tables`, `version`, `content_source`, and `manual_edited`.
@@ -833,6 +844,21 @@ generation tx fails -> restore old section snapshot -> UPDATE report_sections SE
 
 ```text
 generation tx fails -> rollback generated content/version -> UPDATE report_sections SET generation_status=failed, updated_at=now WHERE id=$section AND last_job_id=$job
+```
+
+#### Wrong
+
+```text
+AI call returns -> use pre-call section snapshot -> UPDATE report_sections SET content=generated, version=old+1 WHERE id=$section
+```
+
+#### Correct
+
+```text
+AI call returns -> transaction:
+  SELECT report_sections FOR UPDATE
+  require last_job_id=$job, generation_status=running, version/manual_edited unchanged
+  update generated content and insert report_section_versions
 ```
 
 ## Scenario: Document Initial Report Defaults Seed

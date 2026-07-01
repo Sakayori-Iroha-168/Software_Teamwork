@@ -656,6 +656,129 @@ func TestReportGenerationServiceFailureCompensationPreservesConcurrentSectionEdi
 	}
 }
 
+func TestReportGenerationServicePreservesConcurrentSectionEditBeforeSuccessfulWrite(t *testing.T) {
+	repo := newFakeReportGenerationRepository()
+	repo.reports["report-1"] = Report{
+		ID:         "report-1",
+		Name:       "Summer peak inspection",
+		ReportType: "summer_peak_inspection",
+		Topic:      "summer power supply",
+		CreatorID:  "user-1",
+		Status:     ReportStatusOutlineGenerated,
+	}
+	repo.jobs["job-1"] = ReportJob{
+		ID:         "job-1",
+		JobType:    JobTypeSectionRegeneration,
+		ReportID:   "report-1",
+		TargetID:   "section-1",
+		TargetType: "section",
+	}
+	repo.sections["section-1"] = ReportSection{
+		ID:               "section-1",
+		ReportID:         "report-1",
+		Title:            "Pending section",
+		SortOrder:        0,
+		Content:          "previous body",
+		GenerationStatus: JobStatusPending,
+		ContentSource:    ContentSourceManual,
+		Version:          1,
+	}
+	repo.beforeGenerationTx = func(f *fakeReportGenerationRepository) {
+		section := f.sections["section-1"]
+		section.Content = "manual edit during generation"
+		section.Tables = []map[string]any{{"name": "manual table"}}
+		section.GenerationStatus = JobStatusRunning
+		section.ContentSource = ContentSourceManual
+		section.ManualEdited = true
+		section.Version = 2
+		section.LastJobID = "job-1"
+		f.sections["section-1"] = section
+	}
+	chat := &fakeGenerationChatClient{
+		responses: []ChatCompletionResponse{{Content: `{"content":"generated body","tables":[]}`}},
+	}
+	svc := NewReportGenerationService(repo, chat)
+	svc.clock = func() time.Time { return time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC) }
+
+	_, err := svc.ExecuteReportGeneration(context.Background(), ReportGenerationExecutionPayload{
+		RequestID: "req-content",
+		JobType:   JobTypeSectionRegeneration,
+		JobID:     "job-1",
+		UserID:    "user-1",
+	})
+	if code := errorCode(t, err); code != CodeConflict {
+		t.Fatalf("error code = %q, want %q", code, CodeConflict)
+	}
+	got := repo.sections["section-1"]
+	if got.Content != "manual edit during generation" || got.Version != 2 || got.ContentSource != ContentSourceManual || !got.ManualEdited {
+		t.Fatalf("concurrent section edit was overwritten: %+v", got)
+	}
+	if len(got.Tables) != 1 || got.Tables[0]["name"] != "manual table" {
+		t.Fatalf("concurrent section tables were overwritten: %+v", got.Tables)
+	}
+	if len(repo.sectionVersions["section-1"]) != 0 {
+		t.Fatalf("section versions were created from stale generated content: %+v", repo.sectionVersions["section-1"])
+	}
+}
+
+func TestReportGenerationServiceDoesNotOverwriteSupersededGenerationJob(t *testing.T) {
+	repo := newFakeReportGenerationRepository()
+	repo.reports["report-1"] = Report{
+		ID:         "report-1",
+		Name:       "Summer peak inspection",
+		ReportType: "summer_peak_inspection",
+		Topic:      "summer power supply",
+		CreatorID:  "user-1",
+		Status:     ReportStatusOutlineGenerated,
+	}
+	repo.jobs["job-1"] = ReportJob{
+		ID:         "job-1",
+		JobType:    JobTypeSectionRegeneration,
+		ReportID:   "report-1",
+		TargetID:   "section-1",
+		TargetType: "section",
+	}
+	repo.sections["section-1"] = ReportSection{
+		ID:               "section-1",
+		ReportID:         "report-1",
+		Title:            "Pending section",
+		SortOrder:        0,
+		Content:          "previous body",
+		GenerationStatus: JobStatusPending,
+		ContentSource:    ContentSourceManual,
+		Version:          1,
+	}
+	repo.beforeGenerationTx = func(f *fakeReportGenerationRepository) {
+		section := f.sections["section-1"]
+		section.GenerationStatus = JobStatusRunning
+		section.LastJobID = "job-2"
+		section.Content = "newer job owns this section"
+		f.sections["section-1"] = section
+	}
+	chat := &fakeGenerationChatClient{
+		responses: []ChatCompletionResponse{{Content: `{"content":"generated body","tables":[]}`}},
+	}
+	svc := NewReportGenerationService(repo, chat)
+	svc.clock = func() time.Time { return time.Date(2026, 6, 30, 10, 0, 0, 0, time.UTC) }
+
+	_, err := svc.ExecuteReportGeneration(context.Background(), ReportGenerationExecutionPayload{
+		RequestID: "req-content",
+		JobType:   JobTypeSectionRegeneration,
+		JobID:     "job-1",
+		UserID:    "user-1",
+	})
+	if code := errorCode(t, err); code != CodeConflict {
+		t.Fatalf("error code = %q, want %q", code, CodeConflict)
+	}
+	got := repo.sections["section-1"]
+	if got.LastJobID != "job-2" || got.GenerationStatus != JobStatusRunning || got.Content != "newer job owns this section" {
+		t.Fatalf("superseded generation job was overwritten: %+v", got)
+	}
+	if len(repo.sectionVersions["section-1"]) != 0 {
+		t.Fatalf("section versions were created from superseded job: %+v", repo.sectionVersions["section-1"])
+	}
+}
+
 func TestReportGenerationServiceRetrievesKnowledgeContextForOutline(t *testing.T) {
 	repo := newFakeReportGenerationRepository()
 	repo.reports["report-1"] = Report{
@@ -762,6 +885,7 @@ type fakeReportGenerationRepository struct {
 	createSectionErrAfter   int
 	createdSectionCount     int
 	createSectionVersionErr error
+	beforeGenerationTx      func(*fakeReportGenerationRepository)
 	afterGenerationRollback func(*fakeReportGenerationRepository)
 }
 
@@ -780,6 +904,11 @@ func newFakeReportGenerationRepository() *fakeReportGenerationRepository {
 }
 
 func (f *fakeReportGenerationRepository) WithinGenerationTx(ctx context.Context, fn func(ReportGenerationRepository) error) error {
+	if f.beforeGenerationTx != nil {
+		beforeTx := f.beforeGenerationTx
+		f.beforeGenerationTx = nil
+		beforeTx(f)
+	}
 	snapshot := *f
 	snapshot.reports = make(map[string]Report, len(f.reports))
 	for id, report := range f.reports {
@@ -890,6 +1019,14 @@ func (f *fakeReportGenerationRepository) ListReportSections(_ context.Context, r
 		}
 	}
 	return result, nil
+}
+
+func (f *fakeReportGenerationRepository) GetReportSectionByIDForUpdate(_ context.Context, id string) (ReportSection, error) {
+	section, ok := f.sections[id]
+	if !ok {
+		return ReportSection{}, NewError(CodeNotFound, "report section not found", nil)
+	}
+	return section, nil
 }
 
 func (f *fakeReportGenerationRepository) UpdateReportSection(_ context.Context, value ReportSection) (ReportSection, error) {

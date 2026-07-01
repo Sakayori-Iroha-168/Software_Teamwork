@@ -19,6 +19,7 @@ type ReportGenerationRepository interface {
 	ListReportOutlines(ctx context.Context, reportID string) ([]ReportOutline, error)
 	CreateReportSection(ctx context.Context, value ReportSection) (ReportSection, error)
 	ListReportSections(ctx context.Context, reportID string) ([]ReportSection, error)
+	GetReportSectionByIDForUpdate(ctx context.Context, id string) (ReportSection, error)
 	UpdateReportSection(ctx context.Context, value ReportSection) (ReportSection, error)
 	MarkReportSectionGenerationRunning(ctx context.Context, sectionID, jobID string, updatedAt time.Time) (ReportSection, error)
 	MarkReportSectionGenerationFailed(ctx context.Context, sectionID, jobID string, updatedAt time.Time) (ReportSection, error)
@@ -241,21 +242,34 @@ func (s *ReportGenerationService) executeContentGeneration(ctx context.Context, 
 		sectionID := section.ID
 		var updated ReportSection
 		if err := s.repo.WithinGenerationTx(ctx, func(txRepo ReportGenerationRepository) error {
+			currentSection, err := txRepo.GetReportSectionByIDForUpdate(ctx, section.ID)
+			if err != nil {
+				return mapRepositoryReadError(err, "report section not found")
+			}
+			if currentSection.ReportID != report.ID {
+				return NewError(CodeNotFound, "report section not found", nil)
+			}
+			if currentSection.LastJobID != payload.JobID || currentSection.GenerationStatus != JobStatusRunning {
+				return NewError(CodeConflict, "section generation has been superseded", nil)
+			}
+			if currentSection.Version != section.Version || currentSection.ManualEdited != section.ManualEdited {
+				return NewError(CodeConflict, "section changed during generation", nil)
+			}
 			existingVersions, err := txRepo.ListReportSectionVersions(ctx, section.ID)
 			if err != nil {
 				return dependencyError("list report section versions", err)
 			}
-			nextVersion := nextReportSectionVersion(section, existingVersions)
-			section.Content = generated.Content
-			section.Tables = generated.Tables
-			section.GenerationStatus = JobStatusSucceeded
-			section.ContentSource = ContentSourceAI
-			section.ManualEdited = false
-			section.Version = nextVersion
-			section.LastJobID = payload.JobID
-			section.GeneratedAt = &now
-			section.UpdatedAt = now
-			updated, err = txRepo.UpdateReportSection(ctx, section)
+			nextVersion := nextReportSectionVersion(currentSection, existingVersions)
+			currentSection.Content = generated.Content
+			currentSection.Tables = generated.Tables
+			currentSection.GenerationStatus = JobStatusSucceeded
+			currentSection.ContentSource = ContentSourceAI
+			currentSection.ManualEdited = false
+			currentSection.Version = nextVersion
+			currentSection.LastJobID = payload.JobID
+			currentSection.GeneratedAt = &now
+			currentSection.UpdatedAt = now
+			updated, err = txRepo.UpdateReportSection(ctx, currentSection)
 			if err != nil {
 				return dependencyError("update generated report section", err)
 			}
