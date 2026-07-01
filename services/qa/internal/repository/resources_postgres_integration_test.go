@@ -139,6 +139,16 @@ func TestDocumentedResourceRoundTrip(t *testing.T) {
 	if err != nil || llmConfig.ProfileID != "profile-chat" {
 		t.Fatalf("llm config=%+v err=%v", llmConfig, err)
 	}
+	zeroThresholdConfig, err := repo.CreateQAConfigVersionResource(ctx, "integration-user", service.CreateQAConfigVersionInput{
+		Retrieval:      service.RetrievalSettings{TopK: 3, ScoreThreshold: 0}.WithScoreThresholdConfigured(),
+		KnowledgeBases: []service.ConfigKnowledgeBase{{ID: "kb-zero-threshold"}},
+	})
+	if err != nil {
+		t.Fatalf("create explicit zero threshold QA config: %v", err)
+	}
+	if zeroThresholdConfig.Retrieval.ScoreThreshold != 0 {
+		t.Fatalf("explicit zero score threshold stored as %v, want 0", zeroThresholdConfig.Retrieval.ScoreThreshold)
+	}
 	retrievalScore := 0.77
 	retrieval, err := repo.SaveRetrievalTestRun(ctx, "integration-user", service.RetrievalTestInput{Question: "query"}, []service.RetrievalTestResult{{KnowledgeBaseID: "kb-1", DocumentID: "doc-1", ChunkID: "chunk-1", SectionPath: "1 / 2", Score: retrievalScore, RerankScore: &retrievalScore, ContentPreview: "preview", Metadata: map[string]any{"chunkIndex": 2}}}, time.Millisecond, nil)
 	if err != nil {
