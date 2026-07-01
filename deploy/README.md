@@ -180,9 +180,17 @@ Invoke-WebRequest "http://localhost:8080/api/v1/documents/<documentId>/content" 
 Invoke-RestMethod "http://localhost:8080/api/v1/knowledge-queries" -Method Post -Headers $headers -ContentType "application/json" -Body '{"query":"local demo","topK":3}'
 ```
 
-Knowledge routes require the vendor RAGFlow runtime at `VENDOR_RUNTIME_URL`
-(default `http://host.docker.internal:9380`) plus Elasticsearch/MinIO when using
-the `knowledge-v2` compose profile. See `services/knowledge/runtime/README.md`.
+Knowledge routes require the RAGFlow runtime at `VENDOR_RUNTIME_URL`
+(default `http://host.docker.internal:9380`). With the `knowledge-v2` profile you
+can run `knowledge-runtime-api` and `knowledge-runtime-worker` in compose:
+
+```powershell
+cd deploy
+$env:VENDOR_RUNTIME_URL = "http://knowledge-runtime-api:9380"
+docker compose --profile knowledge-v2 up -d elasticsearch knowledge-minio-init knowledge-runtime-api knowledge-runtime-worker knowledge
+```
+
+See `services/knowledge/runtime/README.md` and `services/knowledge-runtime/README.md`.
 
 ## Common Dependency Failures
 
