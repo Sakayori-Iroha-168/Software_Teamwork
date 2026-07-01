@@ -169,7 +169,10 @@ Hardened QA command execution and MCP stdio startup, constrained AI Gateway URLs
 
 ### Main Changes
 
-(Add details)
+- Hardened QA command execution and MCP stdio startup paths.
+- Constrained AI Gateway URL handling and credential fingerprint behavior.
+- Added integer/allocation bounds and workflow permission updates for CodeQL findings.
+- Updated affected docs/specs and fixed the PR CodeQL stdio annotation.
 
 ### Git Commits
 
@@ -179,7 +182,9 @@ Hardened QA command execution and MCP stdio startup, constrained AI Gateway URLs
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] Affected Go service tests and builds were run during the code-scanning fix session.
+- [OK] Workflow and documentation checks were run for the changed security surfaces.
+- [OK] `git diff --check`
 
 ### Status
 
@@ -202,7 +207,9 @@ Added env-gated Gateway to Knowledge to QA RAG smoke for issue #304, documented 
 
 ### Main Changes
 
-(Add details)
+- Added an env-gated Gateway -> Knowledge -> QA RAG smoke for issue #304.
+- Documented the local stack startup order, required environment variables, expected fixture hit and citation proof, plus per-service triage notes.
+- Passed local QA settings/profile environment through root Compose and updated Knowledge/QA capability documentation.
 
 ### Git Commits
 
@@ -212,7 +219,14 @@ Added env-gated Gateway to Knowledge to QA RAG smoke for issue #304, documented 
 
 ### Testing
 
-- [OK] (Add test results)
+- [OK] `cd services/knowledge && go test ./internal/integration`
+- [OK] `cd services/knowledge && go test ./...`
+- [OK] `cd services/knowledge && go build -o /tmp/knowledge-server-check ./cmd/server`
+- [OK] `cd services/qa && go test ./internal/platform/modelclient ./internal/service ./internal/service/tools`
+- [OK] `python3 scripts/check_docker_policy.py`
+- [OK] `docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example config --quiet`
+- [OK] `docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example --profile ai config --quiet`
+- [OK] `git diff --check`
 
 ### Status
 

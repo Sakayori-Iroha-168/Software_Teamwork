@@ -457,8 +457,142 @@ func assertGatewayRAGQueryHit(t *testing.T, query gatewayKnowledgeQuery, knowled
 
 func configureGatewayQAForRAG(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, knowledgeBaseID string) {
 	t.Helper()
+	activeQAConfigs := snapshotGatewayQAActiveConfigs(t, ctx, cfg, session, requestID+"_snapshot")
 	createGatewayQALLMConfig(t, ctx, cfg, session, requestID+"_llm")
+	cleanupGatewayQAActiveConfigs(t, cfg, session, requestID+"_restore", activeQAConfigs)
 	createGatewayQAConfig(t, ctx, cfg, session, requestID+"_retrieval", knowledgeBaseID)
+}
+
+type gatewayQAActiveConfigs struct {
+	LLM gatewayQALLMConfigVersion
+	QA  gatewayQAConfigVersion
+}
+
+type gatewayQALLMConfigVersion struct {
+	Provider       string  `json:"provider"`
+	ProfileID      string  `json:"profileId"`
+	ModelName      string  `json:"modelName"`
+	TimeoutSeconds int     `json:"timeoutSeconds"`
+	Temperature    float64 `json:"temperature"`
+	MaxTokens      int     `json:"maxTokens"`
+}
+
+type gatewayQAConfigVersion struct {
+	DefaultKnowledgeBaseIDs []string                       `json:"defaultKnowledgeBaseIds"`
+	KnowledgeBases          []gatewayQAConfigKnowledgeBase `json:"knowledgeBases"`
+	Retrieval               gatewayQARetrievalSettings     `json:"retrieval"`
+	Agent                   gatewayQAAgentConfig           `json:"agent"`
+}
+
+type gatewayQAConfigKnowledgeBase struct {
+	ID          string `json:"id"`
+	Type        string `json:"type,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	SortOrder   int    `json:"sortOrder,omitempty"`
+}
+
+type gatewayQARetrievalSettings struct {
+	TopK            int     `json:"topK"`
+	ScoreThreshold  float64 `json:"scoreThreshold"`
+	EnableRerank    bool    `json:"enableRerank"`
+	RerankThreshold float64 `json:"rerankThreshold"`
+	RerankTopN      int     `json:"rerankTopN"`
+}
+
+type gatewayQAAgentConfig struct {
+	MaxIterations         int      `json:"maxIterations"`
+	ToolTimeoutSeconds    int      `json:"toolTimeoutSeconds"`
+	ModelTimeoutSeconds   int      `json:"modelTimeoutSeconds"`
+	OverallTimeoutSeconds int      `json:"overallTimeoutSeconds"`
+	EnabledToolNames      []string `json:"enabledToolNames"`
+}
+
+func snapshotGatewayQAActiveConfigs(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string) gatewayQAActiveConfigs {
+	t.Helper()
+	llm := getGatewayQALLMConfig(t, ctx, cfg, session, requestID+"_llm")
+	qa := getGatewayQAConfig(t, ctx, cfg, session, requestID+"_qa")
+	return gatewayQAActiveConfigs{LLM: llm, QA: qa}
+}
+
+func cleanupGatewayQAActiveConfigs(t *testing.T, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, configs gatewayQAActiveConfigs) {
+	t.Helper()
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := restoreGatewayQALLMConfig(cleanupCtx, cfg, session, requestID+"_llm", configs.LLM); err != nil {
+			t.Errorf("cleanup Gateway RAG smoke LLM config: %v", err)
+		}
+		if err := restoreGatewayQAConfig(cleanupCtx, cfg, session, requestID+"_qa", configs.QA); err != nil {
+			t.Errorf("cleanup Gateway RAG smoke QA config: %v", err)
+		}
+	})
+}
+
+func getGatewayQALLMConfig(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string) gatewayQALLMConfigVersion {
+	t.Helper()
+	var decoded struct {
+		Data      gatewayQALLMConfigVersion `json:"data"`
+		RequestID string                    `json:"requestId"`
+	}
+	getGatewayJSON(t, ctx, cfg, session, requestID, "/api/v1/llm-config-versions/current", &decoded, "QA stage")
+	if strings.TrimSpace(decoded.Data.Provider) == "" || strings.TrimSpace(decoded.Data.ModelName) == "" {
+		t.Fatal("QA stage: active LLM config response is missing provider or modelName")
+	}
+	return decoded.Data
+}
+
+func getGatewayQAConfig(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string) gatewayQAConfigVersion {
+	t.Helper()
+	var decoded struct {
+		Data      gatewayQAConfigVersion `json:"data"`
+		RequestID string                 `json:"requestId"`
+	}
+	getGatewayJSON(t, ctx, cfg, session, requestID, "/api/v1/qa-config-versions/current", &decoded, "QA stage")
+	if decoded.Data.Retrieval.TopK <= 0 {
+		t.Fatal("QA stage: active QA config response is missing retrieval.topK; run the local QA seed or create an active QA config before this smoke")
+	}
+	return decoded.Data
+}
+
+func getGatewayJSON(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, path string, target any, stage string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.gatewayBaseURL+path, nil)
+	if err != nil {
+		t.Fatalf("%s: build GET %s request: %v", stage, path, err)
+	}
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	req.Header.Set("X-Request-Id", requestID)
+	res, err := smokeHTTPClient().Do(req)
+	if err != nil {
+		t.Fatalf("%s: gateway GET %s request failed: %v", stage, path, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		discardResponse(res.Body)
+		t.Fatalf("%s: gateway GET %s returned HTTP %d, want 200; run the local QA seed or create active QA/LLM config before this smoke", stage, path, res.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(target); err != nil {
+		t.Fatalf("%s: decode GET %s response: %v", stage, path, err)
+	}
+	requestIDValue := extractGatewayResponseRequestID(t, target)
+	if requestIDValue != requestID {
+		t.Fatalf("%s: GET %s response requestId = %q, want %q", stage, path, requestIDValue, requestID)
+	}
+}
+
+func extractGatewayResponseRequestID(t *testing.T, target any) string {
+	t.Helper()
+	data, err := json.Marshal(target)
+	if err != nil {
+		t.Fatalf("QA stage: re-encode gateway response envelope: %v", err)
+	}
+	var envelope struct {
+		RequestID string `json:"requestId"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatalf("QA stage: decode gateway response requestId: %v", err)
+	}
+	return strings.TrimSpace(envelope.RequestID)
 }
 
 func createGatewayQALLMConfig(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string) {
@@ -510,24 +644,62 @@ func createGatewayQAConfig(t *testing.T, ctx context.Context, cfg gatewayRAGSmok
 	postGatewayJSON(t, ctx, cfg, session, requestID, "/api/v1/qa-config-versions", payload, http.StatusCreated, "QA stage")
 }
 
+func restoreGatewayQALLMConfig(ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, config gatewayQALLMConfigVersion) error {
+	payload, err := json.Marshal(map[string]any{
+		"provider":       config.Provider,
+		"profileId":      config.ProfileID,
+		"modelName":      config.ModelName,
+		"timeoutSeconds": config.TimeoutSeconds,
+		"temperature":    config.Temperature,
+		"maxTokens":      config.MaxTokens,
+		"activate":       true,
+	})
+	if err != nil {
+		return fmt.Errorf("encode LLM config restore request: %w", err)
+	}
+	return postGatewayJSONRequest(ctx, cfg, session, requestID, "/api/v1/llm-config-versions", payload, http.StatusCreated, "QA cleanup")
+}
+
+func restoreGatewayQAConfig(ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, config gatewayQAConfigVersion) error {
+	payload, err := json.Marshal(map[string]any{
+		"defaultKnowledgeBaseIds": config.DefaultKnowledgeBaseIDs,
+		"knowledgeBases":          config.KnowledgeBases,
+		"retrieval":               config.Retrieval,
+		"agent":                   config.Agent,
+		"activate":                true,
+	})
+	if err != nil {
+		return fmt.Errorf("encode QA config restore request: %w", err)
+	}
+	return postGatewayJSONRequest(ctx, cfg, session, requestID, "/api/v1/qa-config-versions", payload, http.StatusCreated, "QA cleanup")
+}
+
 func postGatewayJSON(t *testing.T, ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, path string, payload []byte, wantStatus int, stage string) {
 	t.Helper()
+	if err := postGatewayJSONRequest(ctx, cfg, session, requestID, path, payload, wantStatus, stage); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func postGatewayJSONRequest(ctx context.Context, cfg gatewayRAGSmokeConfig, session gatewaySmokeSession, requestID string, path string, payload []byte, wantStatus int, stage string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+path, bytes.NewReader(payload))
 	if err != nil {
-		t.Fatalf("%s: build POST %s request: %v", stage, path, err)
+		return fmt.Errorf("%s: build POST %s request: %w", stage, path, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Request-Id", requestID)
 	res, err := smokeHTTPClient().Do(req)
 	if err != nil {
-		t.Fatalf("%s: gateway POST %s request failed: %v", stage, path, err)
+		return fmt.Errorf("%s: gateway POST %s request failed: %w", stage, path, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != wantStatus {
 		discardResponse(res.Body)
-		t.Fatalf("%s: gateway POST %s returned HTTP %d, want %d; check QA_SETTINGS_OPEN or qa:settings permissions and AI Gateway profile/model exact-match", stage, path, res.StatusCode, wantStatus)
+		return fmt.Errorf("%s: gateway POST %s returned HTTP %d, want %d; check QA_SETTINGS_OPEN or qa:settings permissions and AI Gateway profile/model exact-match", stage, path, res.StatusCode, wantStatus)
 	}
+	discardResponse(res.Body)
+	return nil
 }
 
 type gatewayQASession struct {

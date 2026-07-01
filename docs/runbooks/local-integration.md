@@ -350,8 +350,9 @@ PASS
 测试会创建 run-scoped knowledge base 和文档，并在清理阶段先调用 Gateway
 `DELETE /api/v1/documents/{documentId}` 触发 File/vector cleanup，再按
 chunks、jobs、documents、knowledge base 的顺序删除本轮 Knowledge PostgreSQL 行。
-QA config versions 会作为本地运行记录留存，因为它们是 QA settings 的真实业务资源；
-只在临时本地栈运行该 smoke。
+测试开始前会读取当前 active QA config 和 LLM config，结束时通过 Gateway settings API
+重新创建并激活一份等价恢复版本。本轮 smoke 创建的 QA config versions 仍会作为本地运行
+记录留存，因为它们是 QA settings 的真实业务资源；只在临时本地栈运行该 smoke。
 
 常见失败和定位：
 
