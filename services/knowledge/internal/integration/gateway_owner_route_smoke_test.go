@@ -38,8 +38,9 @@ func TestGatewayKnowledgeOwnerRouteSmoke(t *testing.T) {
 
 	requestID := "req_gateway_knowledge_owner_smoke_" + safeIdentifierSuffix(newSmokeRunID(t))
 	assertGatewayRejectsSpoofedKnowledgeContext(t, ctx, cfg, requestID+"_spoofed")
-	accessToken := createGatewaySession(t, ctx, cfg, requestID)
-	assertGatewayKnowledgeBases(t, ctx, cfg, accessToken, requestID)
+	session := createGatewaySession(t, ctx, cfg, requestID)
+	assertGatewayKnowledgeBases(t, ctx, cfg, session, requestID)
+	assertGatewayKnowledgeBaseOwnerContext(t, ctx, cfg, session, requestID)
 }
 
 type gatewayOwnerSmokeConfig struct {
@@ -51,6 +52,11 @@ type gatewayOwnerSmokeConfig struct {
 	redisAddr               string
 	username                string
 	password                string
+}
+
+type gatewaySmokeSession struct {
+	AccessToken string
+	UserID      string
 }
 
 func loadGatewayOwnerSmokeConfig(t *testing.T) gatewayOwnerSmokeConfig {
@@ -140,7 +146,7 @@ func assertRedisReady(t *testing.T, ctx context.Context, addr string) {
 	}
 }
 
-func createGatewaySession(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, requestID string) string {
+func createGatewaySession(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, requestID string) gatewaySmokeSession {
 	t.Helper()
 	payload, err := json.Marshal(map[string]string{
 		"username": cfg.username,
@@ -168,6 +174,9 @@ func createGatewaySession(t *testing.T, ctx context.Context, cfg gatewayOwnerSmo
 
 	var decoded struct {
 		Data struct {
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
 			Session struct {
 				AccessToken string `json:"accessToken"`
 				TokenType   string `json:"tokenType"`
@@ -184,7 +193,13 @@ func createGatewaySession(t *testing.T, ctx context.Context, cfg gatewayOwnerSmo
 	if strings.TrimSpace(decoded.Data.Session.AccessToken) == "" || !strings.EqualFold(decoded.Data.Session.TokenType, "Bearer") {
 		t.Fatal("gateway session response did not include a bearer access token")
 	}
-	return strings.TrimSpace(decoded.Data.Session.AccessToken)
+	if strings.TrimSpace(decoded.Data.User.ID) == "" {
+		t.Fatal("gateway session response did not include user id")
+	}
+	return gatewaySmokeSession{
+		AccessToken: strings.TrimSpace(decoded.Data.Session.AccessToken),
+		UserID:      strings.TrimSpace(decoded.Data.User.ID),
+	}
 }
 
 func assertGatewayRejectsSpoofedKnowledgeContext(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, requestID string) {
@@ -221,15 +236,15 @@ func assertGatewayRejectsSpoofedKnowledgeContext(t *testing.T, ctx context.Conte
 	}
 }
 
-func assertGatewayKnowledgeBases(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, accessToken string, requestID string) {
+func assertGatewayKnowledgeBases(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, session gatewaySmokeSession, requestID string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.gatewayBaseURL+"/api/v1/knowledge-bases?page=1&pageSize=5", nil)
 	if err != nil {
 		t.Fatalf("build gateway knowledge bases request: %v", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
 	req.Header.Set("X-Request-Id", requestID)
-	req.Header.Set("X-User-Id", "spoofed-user-ignored-by-gateway")
+	req.Header.Set("X-User-Id", spoofedGatewayUserID(session.UserID))
 
 	res, err := smokeHTTPClient().Do(req)
 	if err != nil {
@@ -254,6 +269,138 @@ func assertGatewayKnowledgeBases(t *testing.T, ctx context.Context, cfg gatewayO
 	if decoded.Data == nil {
 		t.Fatal("gateway knowledge bases response data is nil, want array")
 	}
+}
+
+func assertGatewayKnowledgeBaseOwnerContext(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, session gatewaySmokeSession, requestID string) {
+	t.Helper()
+	runID := safeIdentifierSuffix(newSmokeRunID(t))
+	knowledgeBaseID := "kb_gateway_owner_smoke_" + runID
+	cleanupGatewaySmokeKnowledgeBase(t, cfg, knowledgeBaseID)
+
+	created := createGatewayKnowledgeBase(t, ctx, cfg, session, requestID+"_create", knowledgeBaseID)
+	if created.ID != knowledgeBaseID {
+		t.Fatalf("created knowledge base id = %q, want %q", created.ID, knowledgeBaseID)
+	}
+	assertCreatedByRealSessionUser(t, "created knowledge base", created.CreatedBy, session.UserID)
+
+	got := getGatewayKnowledgeBase(t, ctx, cfg, session, requestID+"_get", knowledgeBaseID)
+	assertCreatedByRealSessionUser(t, "loaded knowledge base", got.CreatedBy, session.UserID)
+}
+
+type gatewayKnowledgeBaseSummary struct {
+	ID        string `json:"id"`
+	CreatedBy string `json:"createdBy"`
+}
+
+func createGatewayKnowledgeBase(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, session gatewaySmokeSession, requestID string, knowledgeBaseID string) gatewayKnowledgeBaseSummary {
+	t.Helper()
+	payload, err := json.Marshal(map[string]string{
+		"id":          knowledgeBaseID,
+		"name":        "Gateway owner smoke " + knowledgeBaseID,
+		"description": "A-021 owner context smoke",
+		"docType":     "SMOKE",
+	})
+	if err != nil {
+		t.Fatalf("encode gateway knowledge base create request: %v", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/knowledge-bases", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("build gateway knowledge base create request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-Id", requestID)
+	req.Header.Set("X-User-Id", spoofedGatewayUserID(session.UserID))
+
+	res, err := smokeHTTPClient().Do(req)
+	if err != nil {
+		t.Fatalf("gateway knowledge base create request failed: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1024))
+		t.Fatalf("gateway knowledge base create returned HTTP %d", res.StatusCode)
+	}
+	return decodeGatewayKnowledgeBaseResponse(t, res.Body, requestID)
+}
+
+func getGatewayKnowledgeBase(t *testing.T, ctx context.Context, cfg gatewayOwnerSmokeConfig, session gatewaySmokeSession, requestID string, knowledgeBaseID string) gatewayKnowledgeBaseSummary {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.gatewayBaseURL+"/api/v1/knowledge-bases/"+url.PathEscape(knowledgeBaseID), nil)
+	if err != nil {
+		t.Fatalf("build gateway knowledge base get request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	req.Header.Set("X-Request-Id", requestID)
+	req.Header.Set("X-User-Id", spoofedGatewayUserID(session.UserID))
+
+	res, err := smokeHTTPClient().Do(req)
+	if err != nil {
+		t.Fatalf("gateway knowledge base get request failed: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1024))
+		t.Fatalf("gateway knowledge base get returned HTTP %d", res.StatusCode)
+	}
+	return decodeGatewayKnowledgeBaseResponse(t, res.Body, requestID)
+}
+
+func decodeGatewayKnowledgeBaseResponse(t *testing.T, body io.Reader, requestID string) gatewayKnowledgeBaseSummary {
+	t.Helper()
+	var decoded struct {
+		Data      gatewayKnowledgeBaseSummary `json:"data"`
+		RequestID string                      `json:"requestId"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&decoded); err != nil {
+		t.Fatalf("decode gateway knowledge base response: %v", err)
+	}
+	if strings.TrimSpace(decoded.RequestID) != requestID {
+		t.Fatalf("gateway knowledge base requestId = %q, want %q", decoded.RequestID, requestID)
+	}
+	if strings.TrimSpace(decoded.Data.ID) == "" {
+		t.Fatal("gateway knowledge base response id is empty")
+	}
+	if strings.TrimSpace(decoded.Data.CreatedBy) == "" {
+		t.Fatal("gateway knowledge base response createdBy is empty")
+	}
+	return decoded.Data
+}
+
+func assertCreatedByRealSessionUser(t *testing.T, subject string, got string, realUserID string) {
+	t.Helper()
+	got = strings.TrimSpace(got)
+	if got != realUserID {
+		t.Fatalf("%s createdBy = %q, want real session user %q", subject, got, realUserID)
+	}
+	if got == spoofedGatewayUserID(realUserID) {
+		t.Fatalf("%s createdBy used spoofed gateway user id %q", subject, got)
+	}
+}
+
+func cleanupGatewaySmokeKnowledgeBase(t *testing.T, cfg gatewayOwnerSmokeConfig, knowledgeBaseID string) {
+	t.Helper()
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		pool, err := pgxpool.New(cleanupCtx, cfg.knowledgeDatabaseURL)
+		if err != nil {
+			t.Errorf("cleanup gateway smoke knowledge base: connect PostgreSQL: %v", err)
+			return
+		}
+		defer pool.Close()
+		if _, err := pool.Exec(cleanupCtx, "DELETE FROM knowledge_bases WHERE id = $1", knowledgeBaseID); err != nil {
+			t.Errorf("cleanup gateway smoke knowledge base %q: %v", knowledgeBaseID, err)
+		}
+	})
+}
+
+func spoofedGatewayUserID(realUserID string) string {
+	const spoofed = "usr_spoofed_gateway_owner_smoke"
+	if strings.TrimSpace(realUserID) == spoofed {
+		return spoofed + "_other"
+	}
+	return spoofed
 }
 
 func trimHTTPBaseURL(t *testing.T, key string, raw string) string {

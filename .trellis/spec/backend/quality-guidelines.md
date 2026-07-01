@@ -527,8 +527,12 @@ go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -cou
 - The positive path must create a real Gateway session through
   `POST /api/v1/sessions`, use the returned Bearer token, and call the owner
   route through Gateway with a request id.
-- The positive path may also send a spoofed inbound `X-User-*` header; Gateway
-  must ignore it and inject authenticated context from Auth/session cache.
+- The positive path must use an observable owner-context assertion, such as
+  creating a resource through Gateway and verifying `createdBy` equals the real
+  session user.
+- The positive path should also send a spoofed inbound `X-User-*` header;
+  Gateway must ignore it and inject authenticated context from Auth/session
+  cache.
 - The smoke must not import Gateway/Auth internals or another service's
   `internal` package. Use HTTP/TCP/database boundaries only.
 - Do not print passwords, bearer tokens, session hashes, service tokens, DSNs,
@@ -544,14 +548,15 @@ go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -cou
 | Spoofed `X-User-*` headers without Bearer token | Gateway returns `401 unauthorized` with the request id. |
 | Gateway session creation fails | Fail without printing credentials or token material. |
 | Authenticated owner route returns non-2xx | Fail with status and request id, then inspect Gateway/owner logs by request id. |
-| Response envelope malformed | Fail on stable fields such as `data`, `page`, `requestId`, or owner-specific IDs. |
+| Authenticated route records spoofed owner context | Fail when `createdBy` or an equivalent owner field differs from the real session user. |
+| Response envelope malformed | Fail on stable fields such as `data`, `page`, `requestId`, owner fields, or owner-specific IDs. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a smoke starts the documented local stack, checks owner dependencies,
   rejects a spoofed unauthenticated request, creates a real session, calls the
-  public Gateway route, and asserts request-id propagation and a minimal stable
-  response shape.
+  public Gateway route with spoofed inbound user headers, and asserts request-id
+  propagation plus an observable owner field such as `createdBy`.
 - Base: the smoke is documented but skipped locally because a required image or
   seeded credential is unavailable; PR verification records the exact blocker.
 - Bad: a smoke directly calls the owner service with `X-User-Id`, trusts a
@@ -565,6 +570,8 @@ go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -cou
   command.
 - Confirm owner dependency prechecks run before the authenticated Gateway route.
 - Confirm the spoofed unauthenticated route returns `401`.
+- Confirm the authenticated route ignores spoofed `X-User-*` headers by checking
+  an owner field such as `createdBy` against the real session user.
 - Run the changed service's `go test ./...` and `go build ./cmd/server` with the
   gate unset.
 - Run Compose config parsing when the smoke docs reference local Compose

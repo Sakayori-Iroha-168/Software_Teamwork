@@ -207,9 +207,10 @@ PostgreSQL, and Redis readiness, verifies that unauthenticated caller-supplied
 `X-User-*` headers are rejected, then creates a real Gateway session and calls
 `GET /api/v1/knowledge-bases` through Gateway. Knowledge rejects missing trusted
 user context, so the spoofed-header `401` plus authenticated `200` response with
-the supplied request id proves Gateway authenticated through Auth/session cache
-and injected owner-service context into Knowledge instead of trusting inbound
-`X-User-*` headers.
+the supplied request id proves Gateway authenticated through Auth/session cache.
+The positive path also creates and reads a run-scoped knowledge base while
+sending a spoofed `X-User-Id`, then asserts `createdBy` equals the real session
+user rather than the spoofed header value.
 
 Parser image availability is a precondition when starting the local stack with
 `--no-build`. If `software-teamwork-local-parser:latest` is absent, Docker

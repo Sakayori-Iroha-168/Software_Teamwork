@@ -67,7 +67,7 @@
 | Contract tests | Gateway active API verifier、route coverage tests。 | OpenAPI、owner map、active path 和 RESTful path 规则。 |
 | Parser runtime tests | OpenAPI schema review、文档一致性检查、FastAPI handler/service tests、fake OCR backend 和可选 env-gated PaddleOCR model smoke。 | Parser API/runtime 变更；真实 PaddleOCR 模型、OCR 质量和部署资源需要具备模型环境后单独记录。 |
 | Knowledge ingestion real deps smoke | `KNOWLEDGE_INGESTION_SMOKE=1` 显式启用；使用真实 File Service、Parser Service、PostgreSQL 和 Qdrant，默认 local hashing embedding。 | 验证 Knowledge 上传 fixture、worker handler、解析、切片、embedding metadata、Qdrant point 写入和状态更新；不替代 retrieval/rerank/MCP/Gateway 总入口。 |
-| Gateway -> Knowledge owner route smoke | `GATEWAY_KNOWLEDGE_OWNER_SMOKE=1` 显式启用；使用真实 Gateway/Auth/session cache、Knowledge、File/Parser ready、PostgreSQL 和 Redis。 | 先验证无 Bearer token 的伪造 `X-User-*` 请求被 Gateway 拒绝，再验证 Gateway 创建 session 后能把 Auth context 注入 Knowledge owner route `GET /api/v1/knowledge-bases`；不替代完整 Gateway route matrix。 |
+| Gateway -> Knowledge owner route smoke | `GATEWAY_KNOWLEDGE_OWNER_SMOKE=1` 显式启用；使用真实 Gateway/Auth/session cache、Knowledge、File/Parser ready、PostgreSQL 和 Redis。 | 先验证无 Bearer token 的伪造 `X-User-*` 请求被 Gateway 拒绝，再通过 Gateway 创建/读取 KB 并断言 `createdBy` 是真实 session user；不替代完整 Gateway route matrix。 |
 | Cross-service smoke | 当前缺失统一脚本。 | Auth -> Gateway -> Domain、Document -> File/AI Gateway、QA -> Knowledge/AI Gateway 等链路。 |
 
 env-gated repository tests：

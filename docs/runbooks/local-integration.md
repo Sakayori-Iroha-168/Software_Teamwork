@@ -258,6 +258,8 @@ go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -cou
 - `POST /api/v1/sessions` 创建真实 Gateway session。
 - 带 Bearer token 调用 `GET /api/v1/knowledge-bases`，同时发送一个伪造的
   `X-User-Id`；Gateway 应忽略该伪造 header 并注入 Auth/session cache 中的上下文。
+- 通过 Gateway 创建并读取一个 run-scoped knowledge base，断言 `createdBy` 等于真实
+  session user，而不是伪造的 `X-User-Id`。
 
 常见失败：
 
@@ -353,7 +355,7 @@ go run ./cmd/server
 | Parser PaddleOCR model | `PARSER_PADDLEOCR_SMOKE=1 PARSER_PADDLEOCR_ALLOW_DOWNLOAD=1 uv run pytest -m paddleocr_smoke -s` | 只在本机具备 PaddleOCR extra 和可用模型下载/缓存时运行；验证真实模型加载和最小 fixture OCR 非空。 |
 | File PostgreSQL + MinIO | `FILE_MINIO_POSTGRES_SMOKE=1 ... go test ./internal/integration -run TestFileMinIOPostgresSmoke -count=1 -v` | 只在真实 PostgreSQL/MinIO 可用时运行；验证 upload、metadata、content read、delete 和清理状态。 |
 | Knowledge ingestion real deps | `KNOWLEDGE_INGESTION_SMOKE=1 ... go test ./internal/integration -run '^TestKnowledgeIngestionRealDepsSmoke$' -count=1 -v` | 只在 PostgreSQL/File/Parser/Qdrant 可用时运行；验证 fixture 上传、解析、切片、embedding、Qdrant point 写入和状态更新。 |
-| Gateway -> Knowledge owner route | `GATEWAY_KNOWLEDGE_OWNER_SMOKE=1 ... go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -count=1 -v` | 只在 Gateway/Auth/Redis/Knowledge/File/Parser/PostgreSQL 可用时运行；验证伪造 `X-User-*` 未认证请求被拒绝、Gateway session 与 Knowledge owner route auth context 注入。 |
+| Gateway -> Knowledge owner route | `GATEWAY_KNOWLEDGE_OWNER_SMOKE=1 ... go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -count=1 -v` | 只在 Gateway/Auth/Redis/Knowledge/File/Parser/PostgreSQL 可用时运行；验证伪造 `X-User-*` 未认证请求被拒绝，并用 KB `createdBy` 断言 Gateway 注入真实 session user。 |
 | 前端 Gateway 类型 | `bun run --cwd apps/web api:generate` 后检查 diff | 生成类型应与 Gateway OpenAPI 保持同步。 |
 
 ## 已知缺口
