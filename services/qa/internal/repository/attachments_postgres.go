@@ -423,7 +423,10 @@ func (r *Postgres) ListAttachmentsPendingFileDeleteRetry(ctx context.Context, li
 	}
 	rows, err := r.pool.Query(ctx, attachmentSelect+`
 WHERE a.deleted_at IS NOT NULL
-    AND a.file_delete_error_summary IS NOT NULL
+    AND (
+        a.file_delete_requested_at IS NULL
+        OR a.file_delete_error_summary IS NOT NULL
+    )
 ORDER BY a.updated_at
 LIMIT $1`, limit)
 	if err != nil {

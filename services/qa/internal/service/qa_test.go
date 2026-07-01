@@ -16,6 +16,7 @@ type fakeRepository struct {
 	conversation             Conversation
 	getConversationErr       error
 	deleteErr                error
+	deleteCalls              int
 	messages                 []Message
 	listMessagesErr          error
 	messageOptions           MessageListOptions
@@ -53,6 +54,7 @@ func (r *fakeRepository) UpdateConversation(_ context.Context, _ string, value C
 	return value, nil
 }
 func (r *fakeRepository) DeleteConversation(context.Context, string, string) error {
+	r.deleteCalls++
 	return r.deleteErr
 }
 func (r *fakeRepository) ListMessages(_ context.Context, _ string, _ string, options MessageListOptions) (Page[Message], error) {
@@ -152,6 +154,20 @@ func (r *fakeRepository) SaveModelInvocation(ctx context.Context, _ string, invo
 }
 func (r *fakeRepository) SaveCitations(_ context.Context, _, _ string, _ []Citation) error {
 	return nil
+}
+
+type fakeSessionAttachmentCleaner struct {
+	err       error
+	calls     int
+	userID    string
+	sessionID string
+}
+
+func (c *fakeSessionAttachmentCleaner) DeleteSession(_ context.Context, userID, sessionID string) error {
+	c.calls++
+	c.userID = userID
+	c.sessionID = sessionID
+	return c.err
 }
 
 type fakeAgentRunner struct {
@@ -568,6 +584,26 @@ func TestSessionOperationsPropagateForbidden(t *testing.T) {
 				t.Fatalf("error=%v, want forbidden", appErr)
 			}
 		})
+	}
+}
+
+func TestDeleteConversationIgnoresAttachmentCleanupFailure(t *testing.T) {
+	repository := &fakeRepository{}
+	cleaner := &fakeSessionAttachmentCleaner{err: NewError(CodeDependency, "file delete request failed", nil)}
+	qa, err := NewQAService(repository, fakeRuntimeProvider{runner: &fakeAgentRunner{}, prompt: "system"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	qa.SetAttachmentCleaner(cleaner)
+
+	if err := qa.DeleteConversation(context.Background(), "user-id", "conversation-id"); err != nil {
+		t.Fatalf("delete conversation should not fail on attachment cleanup error: %v", err)
+	}
+	if repository.deleteCalls != 1 {
+		t.Fatalf("delete calls=%d, want 1", repository.deleteCalls)
+	}
+	if cleaner.calls != 1 || cleaner.userID != "user-id" || cleaner.sessionID != "conversation-id" {
+		t.Fatalf("cleanup call=%d user=%q session=%q", cleaner.calls, cleaner.userID, cleaner.sessionID)
 	}
 }
 

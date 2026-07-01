@@ -341,7 +341,7 @@ func (r *Postgres) FinalizeResponseRun(ctx context.Context, userID string, final
 	if err := replaceReasoningSteps(ctx, q, final.RunID, final.ReasoningSteps); err != nil {
 		return service.ResponseRun{}, err
 	}
-	if err := replaceStreamEvents(ctx, q, final.RunID, final.StreamEvents); err != nil {
+	if err := replaceStreamEvents(ctx, tx, q, final.RunID, final.StreamEvents); err != nil {
 		return service.ResponseRun{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -391,7 +391,7 @@ func (r *Postgres) SaveStreamEvents(ctx context.Context, userID, runID string, e
 	} else if err != nil {
 		return fmt.Errorf("authorize stream events: %w", err)
 	}
-	if err := replaceStreamEvents(ctx, q, runID, events); err != nil {
+	if err := replaceStreamEvents(ctx, tx, q, runID, events); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -415,7 +415,7 @@ func replaceReasoningSteps(ctx context.Context, q *sqlc.Queries, runID string, s
 	return nil
 }
 
-func replaceStreamEvents(ctx context.Context, q *sqlc.Queries, runID string, events []service.StreamEvent) error {
+func replaceStreamEvents(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, runID string, events []service.StreamEvent) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -436,7 +436,7 @@ func replaceStreamEvents(ctx context.Context, q *sqlc.Queries, runID string, eve
 		}); err != nil {
 			return fmt.Errorf("insert stream event: %w", err)
 		}
-		iteration, _ := event.Payload["iterationNo"].(int)
+		iteration := streamPayloadInt(event.Payload, "iterationNo")
 		if event.EventType == "agent.iteration.started" && iteration > 0 {
 			if err := q.UpdateResponseRunIteration(ctx, int32(iteration), runID); err != nil {
 				return fmt.Errorf("update response run iteration: %w", err)
@@ -455,15 +455,103 @@ func replaceStreamEvents(ctx context.Context, q *sqlc.Queries, runID string, eve
 			if event.EventType == "tool.failed" {
 				status = "failed"
 			}
+			argumentsSummary, err := streamPayloadJSON(event.Payload, "arguments")
+			if err != nil {
+				return fmt.Errorf("encode tool arguments summary: %w", err)
+			}
+			resultSummary, err := streamPayloadJSON(event.Payload, "result")
+			if err != nil {
+				return fmt.Errorf("encode tool result summary: %w", err)
+			}
 			if err := q.UpsertAgentToolCall(ctx, sqlc.UpsertAgentToolCallParams{
 				ResponseRunID: runID, IterationNo: int32(iteration), ToolCallID: toolCallID,
-				ToolName: toolName, Status: status, StartedAt: event.CreatedAt,
+				ToolName: toolName, Status: status, ArgumentsSummary: argumentsSummary, ResultSummary: resultSummary, StartedAt: event.CreatedAt,
 			}); err != nil {
 				return fmt.Errorf("save tool call summary: %w", err)
+			}
+			errorCode, errorMessage := "", ""
+			if status == "failed" {
+				errorCode, errorMessage = toolCallErrorSummary(event.Payload)
+			}
+			if _, err := tx.Exec(ctx, `
+UPDATE agent_tool_calls
+SET mcp_server_name=NULLIF($3, ''),
+    error_code=NULLIF($4, ''),
+    error_message=NULLIF($5, '')
+WHERE response_run_id=$1::uuid AND tool_call_id=$2`, runID, toolCallID, streamPayloadString(event.Payload, "mcpServerName"), errorCode, errorMessage); err != nil {
+				return fmt.Errorf("update tool call fields: %w", err)
 			}
 		}
 	}
 	return nil
+}
+
+func streamPayloadJSON(payload map[string]any, key string) ([]byte, error) {
+	value, ok := payload[key]
+	if !ok || value == nil {
+		return []byte(`{}`), nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	if string(encoded) == "null" {
+		return []byte(`{}`), nil
+	}
+	return encoded, nil
+}
+
+func streamPayloadString(payload map[string]any, key string) string {
+	value, _ := payload[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func streamPayloadInt(payload map[string]any, key string) int {
+	switch value := payload[key].(type) {
+	case int:
+		return value
+	case int32:
+		return int(value)
+	case int64:
+		return int(value)
+	case float64:
+		return int(value)
+	default:
+		return 0
+	}
+}
+
+func toolCallErrorSummary(payload map[string]any) (string, string) {
+	if payload == nil {
+		return "", ""
+	}
+	result, _ := payload["result"].(map[string]any)
+	code, _ := result["error"].(string)
+	message, _ := result["message"].(string)
+	if strings.TrimSpace(code) == "" && strings.TrimSpace(message) == "" {
+		if summary, ok := payload["summary"].(string); ok {
+			message = summary
+		}
+	}
+	if strings.TrimSpace(code) == "" && strings.TrimSpace(message) == "" {
+		return "", ""
+	}
+	if strings.TrimSpace(code) == "" {
+		code = "tool_execution_failed"
+	}
+	if strings.TrimSpace(message) == "" {
+		message = "tool execution failed"
+	}
+	return truncateSummaryString(code, 128), truncateSummaryString(message, 512)
+}
+
+func truncateSummaryString(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }
 
 func (r *Postgres) replaceCitations(ctx context.Context, tx pgx.Tx, runID, messageID string, citations []service.Citation, useSnapshot bool) error {

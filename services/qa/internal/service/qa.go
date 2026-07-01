@@ -368,12 +368,13 @@ func (s *QAService) UpdateConversation(ctx context.Context, userID, id, title, s
 }
 
 func (s *QAService) DeleteConversation(ctx context.Context, userID, id string) error {
-	if s.attachmentCleaner != nil {
-		if err := s.attachmentCleaner.DeleteSession(ctx, userID, id); err != nil {
-			return err
-		}
+	if err := s.repository.DeleteConversation(ctx, userID, id); err != nil {
+		return err
 	}
-	return s.repository.DeleteConversation(ctx, userID, id)
+	if s.attachmentCleaner != nil {
+		_ = s.attachmentCleaner.DeleteSession(ctx, userID, id)
+	}
+	return nil
 }
 
 func (s *QAService) ListMessages(ctx context.Context, userID, conversationID string, options MessageListOptions) (Page[Message], error) {
@@ -526,6 +527,7 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 		profileID = "default"
 	}
 	toolObservations := map[string]agent.ToolObservation{}
+	citationSeen := map[string]struct{}{}
 	onToolObservation := func(observation agent.ToolObservation) {
 		toolObservations[observation.ToolCallID] = observation
 	}
@@ -539,19 +541,30 @@ func (s *QAService) Ask(ctx context.Context, userID, conversationID string, inpu
 				startNo = 1
 			}
 			extracted := extractCitationsFromToolResult(observation.Result, startNo)
+			newCitations := make([]Citation, 0, len(extracted))
+			for _, existing := range citations {
+				citationSeen[citationSnapshotKey(NormalizeCitation(existing))] = struct{}{}
+			}
 			for _, citation := range extracted {
 				citation.MessageID = assistantMessage.ID
 				citation.ResponseRunID = run.ID
 				citation = NormalizeCitation(citation)
+				key := citationSnapshotKey(citation)
+				if _, ok := citationSeen[key]; ok {
+					continue
+				}
+				citationSeen[key] = struct{}{}
+				newCitations = append(newCitations, citation)
 				citations = append(citations, citation)
 			}
+			if len(newCitations) == 0 {
+				return
+			}
 			citations = revalidateCitationSources(ctx, userID, s.sourceChecker, citations)
-			for _, citation := range citations[len(citations)-len(extracted):] {
+			for _, citation := range citations[len(citations)-len(newCitations):] {
 				emit("citation.delta", map[string]any{"citation": citation})
 			}
-			if len(extracted) > 0 {
-				contextutil.AddCitationNo(runCtx, len(extracted))
-			}
+			contextutil.AddCitationNo(runCtx, len(newCitations))
 		}
 	}
 	result, runErr := runtime.Runner.RunWithToolResultCallback(runCtx, messages, func(event agent.Event) {
