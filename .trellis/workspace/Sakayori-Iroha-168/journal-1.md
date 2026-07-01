@@ -188,3 +188,36 @@ Hardened QA command execution and MCP stdio startup, constrained AI Gateway URLs
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Knowledge QA RAG smoke
+
+**Date**: 2026-07-01
+**Task**: Knowledge QA RAG smoke
+**Branch**: `Special/test/rag-e2e-smoke`
+
+### Summary
+
+Added env-gated Gateway to Knowledge to QA RAG smoke for issue #304, documented local runbook, Compose QA settings passthrough, and updated Knowledge/QA capability docs.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b4acb18` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
