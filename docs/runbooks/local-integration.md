@@ -12,7 +12,7 @@
 | QA 服务 Compose | partial | `services/qa/docker-compose.yml` 会启动 QA PostgreSQL、Auth PostgreSQL、Redis、Auth、QA 和 Gateway；不包含 Knowledge、Document、File、AI Gateway。 |
 | Document 服务 Compose | partial | `services/document/docker-compose.yml` 会启动 Document PostgreSQL、Redis、migration 和 Document；不包含 File、AI Gateway。 |
 | AI Gateway 本地运行 | root profile / host-run | 根级 `docker compose --profile ai` 会启动 AI Gateway、migration 和 placeholder profile seed；单独调试时也可 host-run，真实 provider smoke 仍需配置有效 provider key。 |
-| File / Knowledge 独立运行 | host-run / smoke | 需要手动准备各自依赖；File 已有 env-gated PostgreSQL + MinIO 联合 smoke，Knowledge 已有 env-gated ingestion 真实依赖 smoke，覆盖 File Service、Parser Service、PostgreSQL、local hashing embedding 和 Qdrant 写入。Knowledge retrieval/rerank、MCP 和完整 Gateway 端到端仍由后续任务覆盖。 |
+| File / Knowledge 独立运行 | host-run / smoke | 需要手动准备各自依赖；File 已有 env-gated PostgreSQL + MinIO 联合 smoke，Knowledge 已有 env-gated ingestion 真实依赖 smoke，覆盖 File Service、Parser Service、PostgreSQL、local hashing embedding 和 Qdrant 写入。另有 env-gated Gateway -> Knowledge -> QA RAG smoke，可在配置可用 AI Gateway chat profile 后验收上传、入库、`knowledge-queries`、QA answer 和 citations；MCP 和完整 #125 一键跨服务 smoke 仍由后续任务覆盖。 |
 | Parser Runtime | partial | `services/parser/` 已提供 Python/FastAPI runtime、内部 HTTP API、Dockerfile、service-token auth、可选 PaddleOCR extra 和 env-gated 真实 PaddleOCR 模型 smoke；CI 仍只用 fake OCR backend 覆盖 lint/test/compile，不要求普通开发者安装模型。 |
 | 前端联调入口 | host-run | 前端只调用 public Gateway `/api/v1/**`；不要直连内部服务。 |
 
@@ -276,6 +276,97 @@ go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -cou
 - Gateway Knowledge route 返回 `502`：Knowledge owner route 或 service token 配置异常；
   查 `docker compose logs gateway knowledge` 并用相同 `X-Request-Id` 搜索。
 
+### Gateway -> Knowledge -> QA RAG 端到端 smoke
+
+该 smoke 是 Issue #304 的最小 RAG 验收样例。它通过 Gateway public
+`/api/v1/**` 创建 session、创建知识库、上传文档、轮询 Knowledge ingestion、
+调用 `knowledge-queries`，再配置 QA 的临时 LLM/retrieval config，创建 QA session/message，
+并断言 answer 和 citation 摘要。它不替代 #125 的完整跨服务/MCP smoke。
+
+样例固定在测试代码中：
+
+| 项目 | 值 |
+| --- | --- |
+| 文档文件名 | `gateway-rag-e2e-smoke.md` |
+| 样例问题 | `What calibration marker must be checked for the RAG E2E smoke?` |
+| 预期命中 | `calibrate relay RAG-E2E-304` |
+| 预期 citation 字段 | `knowledgeBaseId`、`documentId`、`chunkId` 非空且匹配本轮资源；`contentPreview` 或 `text` 包含预期命中。 |
+
+前置要求：
+
+- 根级 Compose 需要带 `--profile ai` 启动，使 AI Gateway、migration 和 placeholder
+  profile seed 可用。
+- `QA_SETTINGS_OPEN=true` 只建议在本地 smoke 环境启用，用于允许测试通过 Gateway
+  创建本轮 QA/LLM config versions。也可改用具备 `qa:settings:write` 权限或
+  `QA_ADMIN_USER_IDS` 的账号。
+- `QA_SMOKE_CHAT_PROFILE_ID` 和 `QA_SMOKE_CHAT_MODEL` 必须指向 AI Gateway 中可实际
+  调用的 chat profile/model。`.env.example` 的 `default-chat` /
+  `local-placeholder-chat` 只在 `host.docker.internal:11434/v1` 后面有可用
+  OpenAI-compatible provider 时可用；真实 provider 或受控 stub provider 仍需显式配置。
+- 默认 Knowledge 使用 local hashing embedding 和 in-memory vector index。需要证明
+  Qdrant runtime 查询时，在启动前设置 `KNOWLEDGE_QDRANT_URL=http://qdrant:6333`。
+  需要真实 AI Gateway embedding/rerank 时，再设置 `EMBEDDING_PROVIDER=ai_gateway`、
+  `KNOWLEDGE_AI_GATEWAY_BASE_URL=http://ai-gateway:8086`、embedding profile/model
+  和 `RERANK_MODEL` / `RERANK_PROFILE_ID`。
+
+启动本地栈：
+
+```bash
+cd deploy
+cp .env.example .env
+# 可选：中国大陆 Docker 构建 overlay
+# cat .env.china.example >> .env
+QA_SETTINGS_OPEN=true DOCKER_BUILDKIT=1 docker compose --env-file .env --profile ai up -d --build gateway ai-gateway
+```
+
+运行 smoke：
+
+```bash
+cd ../services/knowledge
+GATEWAY_RAG_E2E_SMOKE=1 \
+GATEWAY_BASE_URL='http://127.0.0.1:8080' \
+FILE_SERVICE_BASE_URL='http://127.0.0.1:8082' \
+PARSER_SERVICE_BASE_URL='http://127.0.0.1:8087' \
+KNOWLEDGE_SERVICE_BASE_URL='http://127.0.0.1:8083' \
+QA_SERVICE_BASE_URL='http://127.0.0.1:8084' \
+AI_GATEWAY_BASE_URL='http://127.0.0.1:8086' \
+KNOWLEDGE_TEST_DATABASE_URL='postgres://knowledge_app:knowledge_app_dev@127.0.0.1:5432/knowledge_system?sslmode=disable' \
+KNOWLEDGE_REDIS_ADDR='127.0.0.1:6379' \
+GATEWAY_SMOKE_USERNAME='admin' \
+GATEWAY_SMOKE_PASSWORD='LocalDemoAdmin#12345' \
+QA_SMOKE_CHAT_PROFILE_ID='default-chat' \
+QA_SMOKE_CHAT_MODEL='local-placeholder-chat' \
+go test ./internal/integration -run '^TestGatewayRAGE2ESmoke$' -count=1 -v
+```
+
+预期结果：
+
+```text
+=== RUN   TestGatewayRAGE2ESmoke
+--- PASS: TestGatewayRAGE2ESmoke (...s)
+PASS
+```
+
+测试会创建 run-scoped knowledge base 和文档，并在清理阶段先调用 Gateway
+`DELETE /api/v1/documents/{documentId}` 触发 File/vector cleanup，再按
+chunks、jobs、documents、knowledge base 的顺序删除本轮 Knowledge PostgreSQL 行。
+QA config versions 会作为本地运行记录留存，因为它们是 QA settings 的真实业务资源；
+只在临时本地栈运行该 smoke。
+
+常见失败和定位：
+
+| 阶段 | 典型失败 | 排查 |
+| --- | --- | --- |
+| File | `File stage: gateway document upload returned HTTP ...` | 查 `docker compose logs gateway file`，确认 File ready、`INTERNAL_SERVICE_TOKEN` 一致、上传大小未超限。不要打印 multipart body 或 object key。 |
+| Parser | `Parser stage: ready document did not record parserBackend` 或文档状态 `failed` | 查 `docker compose logs knowledge parser`，确认 Parser ready、`PARSER_SERVICE_TOKEN` 一致；Markdown fixture 不需要真实 OCR 模型下载。 |
+| Knowledge ingestion | `document ... did not become ready` 或 `chunkCount = 0` | 查 `docker compose logs knowledge redis postgres qdrant`；检查 `processing_jobs` 状态、Redis/asynq 投递和 Qdrant/local vector 配置。 |
+| Knowledge retrieval | `Knowledge retrieval stage: ...`、无 expected hit 或 rerank trace 异常 | 查 `docker compose logs gateway knowledge ai-gateway qdrant`；确认 `knowledge-queries` 返回 ready 文档 chunk，`rerank=true` 在无 `RERANK_MODEL` 时只证明 no-op fallback trace。 |
+| AI Gateway | QA message 返回 `502`、model error 或 provider unavailable | 查 `docker compose logs qa ai-gateway`；确认 chat profile enabled、model exact-match、credential/provider 可用。不要粘贴 provider 原始错误 body 或 API key。 |
+| QA | QA config POST `403/400`、answer 未完成、无 citation | 确认 `QA_SETTINGS_OPEN=true` 或账号具备 `qa:settings:write`；确认模型支持 OpenAI-compatible tool/function calling，并且 QA config 只启用 `search_knowledge`。 |
+
+如果只需要验证 Knowledge ingestion 和 retrieval，不要运行本 RAG smoke；先使用上面的
+`KNOWLEDGE_INGESTION_SMOKE` 或 `GATEWAY_KNOWLEDGE_OWNER_SMOKE` 缩小范围。
+
 ### QA + Auth + Gateway 局部环境
 
 ```bash
@@ -358,6 +449,7 @@ go run ./cmd/server
 | File PostgreSQL + MinIO | `FILE_MINIO_POSTGRES_SMOKE=1 ... go test ./internal/integration -run TestFileMinIOPostgresSmoke -count=1 -v` | 只在真实 PostgreSQL/MinIO 可用时运行；验证 upload、metadata、content read、delete 和清理状态。 |
 | Knowledge ingestion real deps | `KNOWLEDGE_INGESTION_SMOKE=1 ... go test ./internal/integration -run '^TestKnowledgeIngestionRealDepsSmoke$' -count=1 -v` | 只在 PostgreSQL/File/Parser/Qdrant 可用时运行；验证 fixture 上传、解析、切片、embedding、Qdrant point 写入和状态更新。 |
 | Gateway -> Knowledge owner route | `GATEWAY_KNOWLEDGE_OWNER_SMOKE=1 ... go test ./internal/integration -run '^TestGatewayKnowledgeOwnerRouteSmoke$' -count=1 -v` | 只在 Gateway/Auth/Redis/Knowledge/File/Parser/PostgreSQL 可用时运行；验证伪造 `X-User-*` 未认证请求被拒绝，并用 KB `createdBy` 断言 Gateway 注入真实 session user。 |
+| Gateway -> Knowledge -> QA RAG | `GATEWAY_RAG_E2E_SMOKE=1 ... go test ./internal/integration -run '^TestGatewayRAGE2ESmoke$' -count=1 -v` | 只在 Gateway/Auth/Redis/File/Parser/Knowledge/QA/AI Gateway 和可用 chat profile/provider 可用时运行；验证上传、ingestion ready、`knowledge-queries` 命中、QA answer 和 citation 摘要。 |
 | 前端 Gateway 类型 | `bun run --cwd apps/web api:generate` 后检查 diff | 生成类型应与 Gateway OpenAPI 保持同步。 |
 
 ## 已知缺口
@@ -367,7 +459,7 @@ go run ./cmd/server
 | 根级跨服务 smoke 缺失 | 即使使用 `deploy/docker-compose.yml` 启动本地/演示基线，也不能自动证明 Auth/Gateway/File/Knowledge/QA/Document/AI Gateway 链路可用。 | #125 |
 | 跨服务契约测试和 E2E smoke 缺失 | 不能自动证明前端 -> Gateway -> 多服务链路可用。 | #125 |
 | Parser 真实 OCR smoke 不在普通 CI 中运行 | Parser 已有 env-gated 真实 PaddleOCR 模型 smoke，但 CI 仍使用 fake OCR backend；真实模型、OCR 质量和部署资源需要在具备模型的本地或部署环境手动记录。 | #125 |
-| Knowledge retrieval/rerank 与完整跨服务 smoke 缺失 | File 自身 PostgreSQL + MinIO smoke 已有；Knowledge ingestion 真实依赖 smoke 已覆盖 File/Parser/PostgreSQL/Qdrant 写入和状态更新，但 `knowledge-queries`、rerank、MCP/Gateway 总入口和真实 AI Gateway provider 仍需后续 smoke。 | #125、#152、#154 |
+| Knowledge/QA RAG smoke 仍为显式 opt-in | File 自身 PostgreSQL + MinIO smoke 已有；Knowledge ingestion 真实依赖 smoke 已覆盖 File/Parser/PostgreSQL/Qdrant 写入和状态更新；Gateway -> Knowledge -> QA RAG smoke 已提供最小验收样例，但依赖可用 AI Gateway chat profile/provider，且不覆盖 MCP、前端或 #125 完整一键 E2E。 | #125、#152、#154、#304 |
 | 生产部署基线缺失 | 当前 `deploy/docker-compose.yml` 是本地/演示基线，不能直接当生产部署。 | #150 |
 | Document 真实 AI 生成和富 DOCX 工具链未落地 | 报告 job 状态机和基础 DOCX 导出可用；真实大纲/正文生成、Pandoc/LibreOffice 富 DOCX 转换和跨服务内容读取 smoke 仍需补齐。 | #160、#223 |
 | Document 跨服务 smoke 仍缺失 | settings/statistics/logs 已在服务端落地，但管理端、Gateway、File Service、Document worker 串联 smoke 仍未一键化。 | #159、#221 |

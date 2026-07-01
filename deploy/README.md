@@ -197,6 +197,8 @@ Override host ports in `deploy/.env`.
 | `QA_DATABASE_URL` | qa | yes | QA PostgreSQL DSN. |
 | `KNOWLEDGE_SERVICE_URL` | qa | yes | Internal Knowledge Service URL. |
 | `AI_GATEWAY_URL` | qa | yes | Internal chat completions URL; QA real model calls require `--profile ai`. |
+| `AI_GATEWAY_PROFILE_ID` / `MODEL_ID` | qa | no | Optional default QA AI Gateway chat profile/model. QA settings versions can override these; model must exactly match the selected AI Gateway profile. |
+| `QA_SETTINGS_OPEN` / `QA_ADMIN_USER_IDS` | qa | no | Local QA settings-write allowance. Keep closed by default; enable only for trusted local smoke or configure explicit admin user ids. |
 | `DOCUMENT_DATABASE_URL` | document | yes | Document PostgreSQL DSN. |
 | `DOCUMENT_REDIS_ADDR` | document | yes | Redis/asynq endpoint. |
 | `DOCUMENT_FILE_SERVICE_URL` | document | yes | Internal File Service URL. |
