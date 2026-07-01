@@ -166,6 +166,7 @@ Override host ports in `deploy/.env`.
 | `GATEWAY_QA_BASE_URL` | gateway | set in Compose | Internal QA base URL. |
 | `GATEWAY_DOCUMENT_BASE_URL` | gateway | set in Compose | Internal document base URL. |
 | `GATEWAY_AI_GATEWAY_BASE_URL` | gateway | set in Compose | Internal AI Gateway base URL; route calls require optional profile to run. |
+| `GATEWAY_MAX_BODY_BYTES` | gateway | yes | Gateway request body limit. Local Compose sets `26214400` to match QA's default session attachment upload limit. |
 | `AUTH_DATABASE_URL` | auth | yes | Auth PostgreSQL DSN. |
 | `FILE_DATABASE_URL` | file | yes | File metadata PostgreSQL DSN. |
 | `FILE_STORAGE_BACKEND` | file | no | `local` in Compose for durable local smoke tests. |

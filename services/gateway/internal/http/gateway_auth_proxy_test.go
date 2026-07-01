@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -720,6 +721,73 @@ func TestProxyStreamsSSEWithoutFixedTimeout(t *testing.T) {
 	}
 }
 
+func TestQAAttachmentUploadAllowsDefaultAttachmentSize(t *testing.T) {
+	hasher := testHasher(t)
+	store := newMemorySessionStore()
+	accessToken := "valid-token"
+	store.putToken(t, hasher, accessToken, service.SessionCacheEntry{
+		SessionID:   "sess_1",
+		UserID:      "usr_1",
+		Username:    "alice",
+		Roles:       []string{},
+		Permissions: []string{"qa:write"},
+		TokenType:   "Bearer",
+		ExpiresAt:   time.Now().Add(time.Hour).UTC(),
+	})
+
+	const payloadBytes = (10 << 20) + 1024
+	var capturedPath string
+	var capturedBytes int64
+	downstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		var err error
+		capturedBytes, err = io.Copy(io.Discard, r.Body)
+		if err != nil {
+			t.Fatalf("read downstream body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"id":"att_1"},"requestId":"req_upload"}`))
+	}))
+	defer downstream.Close()
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	part, err := writer.CreateFormFile("file", "attachment.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(part, io.LimitReader(zeroReader{}, payloadBytes)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	server := newGatewayTestServer(t, gatewayDeps{
+		store:         store,
+		hasher:        hasher,
+		ownerBaseURLs: map[string]string{"qa": downstream.URL},
+		maxBodyBytes:  25 << 20,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/qa-sessions/sess_1/attachments", body)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-Request-Id", "req_upload")
+	res := httptest.NewRecorder()
+
+	server.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", res.Code, res.Body.String())
+	}
+	if capturedPath != "/internal/v1/qa-sessions/sess_1/attachments" {
+		t.Fatalf("downstream path = %q", capturedPath)
+	}
+	if capturedBytes <= 10<<20 {
+		t.Fatalf("downstream received %d bytes, want more than old 10MiB gateway limit", capturedBytes)
+	}
+}
+
 func TestDocumentPatchRouteProxiesToKnowledge(t *testing.T) {
 	hasher := testHasher(t)
 	store := newMemorySessionStore()
@@ -898,30 +966,30 @@ func TestProxyMapsDownstreamErrorCodes(t *testing.T) {
 			bodyMustAbsent: "service unavailable from upstream",
 		},
 		{
-			name:          "downstream 403 yields 403 forbidden",
+			name:           "downstream 403 yields 403 forbidden",
 			downstreamCode: http.StatusForbidden,
-			wantCode:      http.StatusForbidden,
-			wantErrorCode: "forbidden",
+			wantCode:       http.StatusForbidden,
+			wantErrorCode:  "forbidden",
 		},
 		{
-			name:          "downstream 409 yields 409 conflict",
+			name:           "downstream 409 yields 409 conflict",
 			downstreamCode: http.StatusConflict,
-			wantCode:      http.StatusConflict,
-			wantErrorCode: "conflict",
+			wantCode:       http.StatusConflict,
+			wantErrorCode:  "conflict",
 		},
 		{
-			name:          "downstream 429 yields 429 rate_limited",
+			name:           "downstream 429 yields 429 rate_limited",
 			downstreamCode: http.StatusTooManyRequests,
-			wantCode:      http.StatusTooManyRequests,
-			wantErrorCode: "rate_limited",
+			wantCode:       http.StatusTooManyRequests,
+			wantErrorCode:  "rate_limited",
 		},
 		{
 			// covers the 401 branch in downstreamErrorCode when a business service (not auth)
 			// returns 401 — gateway transparently passes it through as unauthorized.
-			name:          "downstream 401 yields 401 unauthorized",
+			name:           "downstream 401 yields 401 unauthorized",
 			downstreamCode: http.StatusUnauthorized,
-			wantCode:      http.StatusUnauthorized,
-			wantErrorCode: "unauthorized",
+			wantCode:       http.StatusUnauthorized,
+			wantErrorCode:  "unauthorized",
 		},
 	}
 
@@ -984,6 +1052,7 @@ type gatewayDeps struct {
 	hasher        service.TokenHasher
 	ownerBaseURLs map[string]string
 	serviceToken  string
+	maxBodyBytes  int64
 }
 
 func newGatewayTestServer(t *testing.T, deps gatewayDeps) http.Handler {
@@ -991,12 +1060,16 @@ func newGatewayTestServer(t *testing.T, deps gatewayDeps) http.Handler {
 	if deps.ownerBaseURLs == nil {
 		deps.ownerBaseURLs = map[string]string{}
 	}
+	maxBodyBytes := deps.maxBodyBytes
+	if maxBodyBytes == 0 {
+		maxBodyBytes = 1024 * 1024
+	}
 	return gatewayhttp.NewServer(gatewayhttp.Config{
 		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
 		ServiceVersion:       "test",
 		Environment:          "test",
 		RequestTimeout:       time.Second,
-		MaxBodyBytes:         1024 * 1024,
+		MaxBodyBytes:         maxBodyBytes,
 		CORSAllowedOrigins:   []string{"*"},
 		DownstreamTimeout:    time.Second,
 		AuthClient:           deps.auth,
@@ -1005,6 +1078,15 @@ func newGatewayTestServer(t *testing.T, deps gatewayDeps) http.Handler {
 		OwnerBaseURLs:        deps.ownerBaseURLs,
 		InternalServiceToken: deps.serviceToken,
 	})
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
 }
 
 func testHasher(t *testing.T) service.TokenHasher {

@@ -13,7 +13,7 @@ const (
 	DefaultMetricsAddr       = ":9091"
 	DefaultServiceVersion    = "0.1.0"
 	DefaultEnvironment       = "local"
-	DefaultMaxBodyBytes      = int64(10 << 20)
+	DefaultMaxBodyBytes      = int64(25 << 20)
 	DefaultRequestTimeout    = 30 * time.Second
 	DefaultShutdownTimeout   = 10 * time.Second
 	DefaultDownstreamTimeout = 10 * time.Second

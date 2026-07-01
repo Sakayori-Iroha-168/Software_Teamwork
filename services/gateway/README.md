@@ -56,7 +56,7 @@ Both endpoints return the project success envelope and include `X-Request-Id`:
 | `GATEWAY_METRICS_ADDR` | `:9091` | Internal Prometheus metrics listen address. Not exposed via the public gateway port. |
 | `GATEWAY_SERVICE_VERSION` | `0.1.0` | Version reported by health checks and startup logs. |
 | `GATEWAY_ENV` | `local` | Runtime environment label. |
-| `GATEWAY_MAX_BODY_BYTES` | `10485760` | Maximum request body size enforced at the gateway edge. |
+| `GATEWAY_MAX_BODY_BYTES` | `26214400` | Maximum request body size enforced at the gateway edge; aligned with QA's default session attachment upload limit. |
 | `GATEWAY_REQUEST_TIMEOUT` | `30s` | Per-request context timeout. |
 | `GATEWAY_SHUTDOWN_TIMEOUT` | `10s` | Graceful shutdown timeout. |
 | `GATEWAY_DOWNSTREAM_TIMEOUT` | `10s` | Timeout for auth and owner-service HTTP calls. |
