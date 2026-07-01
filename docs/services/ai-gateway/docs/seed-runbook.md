@@ -148,7 +148,7 @@ curl -s "$AI_GATEWAY_BASE_URL/readyz" | jq .
 
 ```bash
 cd services/ai-gateway
-AI_GATEWAY_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable" \
+AI_GATEWAY_TEST_DATABASE_URL="postgres://postgres:postgres@localhost:5432/ai_gateway_test?sslmode=disable" \
 go test ./internal/repository -run '^TestPostgresRepositoryDBSmoke$' -count=1 -v
 ```
 

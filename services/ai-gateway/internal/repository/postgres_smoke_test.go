@@ -227,18 +227,32 @@ func applySmokeMigrations(t *testing.T, ctx context.Context, db *sql.DB) {
 		if err != nil {
 			t.Fatalf("read migration %s: %v", file, err)
 		}
-		up := strings.Split(string(raw), "-- +goose Down")[0]
-		up = strings.TrimPrefix(up, "-- +goose Up")
-		for _, statement := range strings.Split(up, ";") {
-			statement = strings.TrimSpace(statement)
-			if statement == "" || strings.HasPrefix(statement, "--") {
-				continue
-			}
-			if _, err := db.ExecContext(ctx, statement); err != nil {
-				t.Fatalf("apply migration %s statement %q: %v", file, statement, err)
-			}
+		upSQL, ok := gooseUpSQL(string(raw))
+		if !ok || strings.TrimSpace(upSQL) == "" {
+			t.Fatalf("migration %s has no goose Up SQL", file)
+		}
+		if _, err := db.ExecContext(ctx, upSQL); err != nil {
+			t.Fatalf("apply migration %s: %v", filepath.Base(file), err)
 		}
 	}
+}
+
+func gooseUpSQL(raw string) (string, bool) {
+	var builder strings.Builder
+	inUp := false
+	for _, line := range strings.SplitAfter(raw, "\n") {
+		switch strings.TrimSpace(line) {
+		case "-- +goose Up":
+			inUp = true
+			continue
+		case "-- +goose Down":
+			return builder.String(), inUp
+		}
+		if inUp {
+			builder.WriteString(line)
+		}
+	}
+	return builder.String(), inUp
 }
 
 func assertCredentialStatus(t *testing.T, ctx context.Context, pool *pgxpool.Pool, credentialID, want string) {

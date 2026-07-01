@@ -721,8 +721,8 @@ func TestRealProviderSmoke_ExplicitEnvOnly(t *testing.T) {
 	server, repo := newTestServerWithProvidersAndRepo(t, provider.NewHTTPChatClient(httpClient), provider.NewHTTPClient(httpClient))
 
 	if chatModel := strings.TrimSpace(os.Getenv("AI_GATEWAY_REAL_CHAT_MODEL")); chatModel != "" {
+		registerProfile(t, server, realChatProfileBody(baseURL, chatModel, apiKey))
 		t.Run("chat", func(t *testing.T) {
-			registerProfile(t, server, realChatProfileBody(baseURL, chatModel, apiKey))
 			body := `{"model":` + jsonQuote(chatModel) + `,"messages":[{"role":"user","content":"Return the single word ok."}],"temperature":0}`
 			req := authedRequest(http.MethodPost, "/internal/v1/chat/completions", strings.NewReader(body))
 			req.Header.Set("X-Caller-Service", "qa")
