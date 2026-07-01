@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # run_local_smoke.sh — Run all cross-service end-to-end smoke tests.
 #
-# Prerequisites:
-#   docker compose up -d && docker compose --profile ai up -d
-#   docker compose run --rm migrate-all
-#   docker compose run --rm seed-all
+# Prerequisites (from repo root):
+#   cd deploy && docker compose up -d && docker compose --profile ai up -d
+#   cd deploy && docker compose run --rm seed-local
 #
 # Usage:
 #   bash services/deploy/smoke/run_local_smoke.sh          # run all
