@@ -15,6 +15,7 @@ type routeSpec struct {
 
 var modelProfileAdminPermissions = []string{"system:admin", "admin:model-profile:write"}
 var parserConfigAdminPermissions = []string{"system:admin", "knowledge:admin", "admin:parser-config:write"}
+var dashboardAdminPermissions = []string{"system:admin"}
 
 var activeProxyRoutes = []routeSpec{
 	{Method: "GET", Pattern: "/api/v1/knowledge-bases", Owner: "knowledge", OperationID: "listKnowledgeBases"},
@@ -108,6 +109,8 @@ var activeProxyRoutes = []routeSpec{
 	{Method: "GET", Pattern: "/api/v1/qa-metrics/trend", Owner: "qa", OperationID: "getQAMetricsTrend"},
 	{Method: "GET", Pattern: "/api/v1/qa-metrics/top-queries", Owner: "qa", OperationID: "listQATopQueries"},
 	{Method: "GET", Pattern: "/api/v1/qa-metrics/intent-distribution", Owner: "qa", OperationID: "listQAIntentDistribution"},
+	{Method: "GET", Pattern: "/api/v1/admin/overview", Owner: "gateway", OperationID: "getAdminOverview", NotImplemented: true, AdminPermissions: dashboardAdminPermissions},
+	{Method: "GET", Pattern: "/api/v1/admin/metrics", Owner: "gateway", OperationID: "getAdminMetrics", NotImplemented: true, AdminPermissions: dashboardAdminPermissions},
 }
 
 var activeDirectRoutes = []routeSpec{
