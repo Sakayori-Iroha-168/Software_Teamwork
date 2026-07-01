@@ -380,3 +380,51 @@ go run ./cmd/server
 - 改 Parser 契约或运行时：检查 `docs/services/parser/api/internal.openapi.yaml`、`services/parser/api/openapi.yaml`（实现本地副本）、Parser README、Knowledge ingestion 文档和 `parser-service.yml` 是否一致；运行 `cd services/parser && uv run ruff check . && uv run pytest && uv run python -m compileall src tests`。如触碰 PaddleOCR runtime 或部署资源，尽量追加 `PARSER_PADDLEOCR_SMOKE=1` 的真实模型 smoke，并在 PR 记录中区分 fake OCR 与真实模型结果。
 - 改 Gateway OpenAPI：执行 `python3 scripts/verify_gateway_active_api.py`，前端类型相关改动还要执行 `bun run --cwd apps/web api:generate` 并检查生成 diff。
 - 改前端：执行 `bun install --frozen-lockfile`、`bun run --cwd apps/web check`、`bun run --cwd apps/web build`、`bun run --cwd apps/web test:unit`；关键页面改动再跑 `bun run --cwd apps/web test:e2e`。
+
+## Appendix: AI Gateway real-provider cross-service acceptance
+
+Use this checklist only in a protected local or shared environment that can hold
+real provider credentials. Do not commit `.env` values, provider keys, service
+tokens, full prompts, document text, embedding payloads, or provider raw error
+bodies.
+
+1. Start the local AI profile stack:
+   `cd deploy && docker compose --profile ai up -d --build`.
+2. Check AI Gateway readiness:
+   `curl -s http://127.0.0.1:8086/readyz`.
+   `missing` means the profile or active credential is absent; `placeholder`
+   means the seeded local fake credential is still present; `ok` means a
+   non-placeholder credential is configured, not that the external provider has
+   accepted it.
+3. Create or patch chat, embedding, and rerank profiles through
+   `/internal/v1/model-profiles` with `X-Service-Token`,
+   `X-Caller-Service`, and `X-Request-Id`. The `model` in smoke requests must
+   exactly match the selected profile.
+4. Run direct AI Gateway smoke with
+   `AI_GATEWAY_REAL_PROVIDER_SMOKE=1`. Chat is the minimum; embedding and rerank
+   run only when the provider and env vars support them.
+5. Run QA validation by creating a Gateway session, creating a QA session, and
+   sending a message through Gateway public `/api/v1/**` or the documented
+   `QA_AI_GATEWAY_SMOKE=1` service-client test. Use the same request id to
+   search `docker compose logs gateway qa ai-gateway`.
+6. Run Document validation for `summer_peak_inspection`: create a report,
+   create an `outline_generation` or `content_generation` job, poll jobs,
+   events, and sections until terminal state, then search
+   `docker compose logs gateway document ai-gateway` by request id. Rich DOCX
+   Pandoc/LibreOffice worker validation is not part of this checklist.
+7. Run Knowledge validation in the intended mode. The default local path uses
+   local hashing embeddings and no-op/empty rerank configuration; do not count
+   it as real AI Gateway embedding/rerank. For real provider validation set
+   `EMBEDDING_PROVIDER=ai_gateway`,
+   `KNOWLEDGE_AI_GATEWAY_BASE_URL=http://ai-gateway:8086`, and the embedding or
+   rerank profile/model env vars, then inspect Knowledge and AI Gateway logs by
+   request id.
+
+Acceptance record template:
+
+| Area | Command or request | Expected proof | Logs |
+| --- | --- | --- | --- |
+| AI Gateway | `/readyz` + real provider smoke | profile status is not `placeholder`; smoke succeeds for configured operations | `docker compose logs ai-gateway` |
+| QA | session/message or `QA_AI_GATEWAY_SMOKE=1` | answer path reaches AI Gateway and returns normalized response/error | `docker compose logs gateway qa ai-gateway` |
+| Knowledge | local hashing or AI Gateway embedding/rerank path | selected path is explicitly named; real provider path has profile/model env | `docker compose logs gateway knowledge ai-gateway qdrant` |
+| Document | `summer_peak_inspection` report job flow | job/events/sections reach expected terminal state | `docker compose logs gateway document ai-gateway redis` |

@@ -18,6 +18,12 @@ const (
 	MaxDefaultParametersBytes = 8192
 )
 
+var localPlaceholderCredentialFingerprints = map[string]struct{}{
+	"01db0178d97656cc4638023b711d331d4c59cf16a35126e175d9b39bc9c2eb20": {},
+	"0414096c78c0e78770fec2d48abcb0f63efe39dbebf004721399574aa0cd6699": {},
+	"02ac3f5104fd2d3ab39f8c3fb853076726633b2864077e43c96ebc9a9167057c": {},
+}
+
 type Service struct {
 	repo             Repository
 	encryptor        *CredentialEncryptor
@@ -270,12 +276,16 @@ func (s *Service) CheckReady(ctx context.Context) (Readiness, error) {
 	status := "ok"
 	for _, purpose := range []Purpose{PurposeChat, PurposeEmbedding, PurposeRerank} {
 		name := string(purpose) + "_profile"
-		if hasReadyProfile(profiles, purpose) {
-			checks = append(checks, ReadinessCheck{Name: name, Status: "ok"})
-			continue
+		check := s.readinessCheckForPurpose(ctx, name, profiles, purpose)
+		checks = append(checks, check)
+		switch check.Status {
+		case "failed":
+			status = "unavailable"
+		case "missing", "placeholder":
+			if status == "ok" {
+				status = "degraded"
+			}
 		}
-		status = "degraded"
-		checks = append(checks, ReadinessCheck{Name: name, Status: "missing"})
 	}
 	return Readiness{Status: status, Checks: checks}, nil
 }
@@ -435,13 +445,35 @@ func hasUpdateField(input UpdateModelProfileInput) bool {
 		input.Dimensions != nil || input.TopN != nil || input.DefaultParameters != nil
 }
 
-func hasReadyProfile(profiles []ModelProfile, purpose Purpose) bool {
+func (s *Service) readinessCheckForPurpose(ctx context.Context, name string, profiles []ModelProfile, purpose Purpose) ReadinessCheck {
 	for _, profile := range profiles {
-		if profile.Purpose == purpose && profile.Enabled && profile.APIKeyConfigured && profile.DeletedAt == nil {
-			return true
+		if profile.Purpose != purpose || !profile.Enabled || profile.DeletedAt != nil {
+			continue
 		}
+		if !profile.APIKeyConfigured {
+			return ReadinessCheck{Name: name, Status: "missing", Message: "model profile credential is not configured"}
+		}
+		credential, err := s.repo.GetActiveCredential(ctx, profile.ID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return ReadinessCheck{Name: name, Status: "missing", Message: "model profile credential is not configured"}
+			}
+			return ReadinessCheck{Name: name, Status: "failed", Message: "model profile credential query failed"}
+		}
+		if isLocalPlaceholderCredential(credential) {
+			return ReadinessCheck{Name: name, Status: "placeholder", Message: "local placeholder credential is configured; replace it before real provider smoke"}
+		}
+		return ReadinessCheck{Name: name, Status: "ok"}
 	}
-	return false
+	return ReadinessCheck{Name: name, Status: "missing"}
+}
+
+func isLocalPlaceholderCredential(credential ProviderCredential) bool {
+	if credential.KeyLast4 != "-key" {
+		return false
+	}
+	_, ok := localPlaceholderCredentialFingerprints[strings.ToLower(strings.TrimSpace(credential.FingerprintSHA256))]
+	return ok
 }
 
 func revisionFor(profile ModelProfile, changeType RevisionChangeType, req RequestContext, now time.Time, fields []string) ModelProfileRevision {

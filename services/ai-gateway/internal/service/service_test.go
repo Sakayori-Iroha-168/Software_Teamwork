@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -178,6 +179,67 @@ func TestDefaultProfileConstraint(t *testing.T) {
 				t.Fatalf("enabled %s defaults = %d, want 1", tc.purpose, defaults)
 			}
 		})
+	}
+}
+
+func TestCheckReadyReportsAllProfilesOKWhenCredentialsAreConfigured(t *testing.T) {
+	repo := newMemoryRepository()
+	svc := New(repo, mustEncryptor(t), 60000)
+	seedReadyProfile(repo, "ready-chat", PurposeChat, "fingerprint-chat", "chat")
+	seedReadyProfile(repo, "ready-embedding", PurposeEmbedding, "fingerprint-embedding", "ding")
+	seedReadyProfile(repo, "ready-rerank", PurposeRerank, "fingerprint-rerank", "rank")
+
+	ready, err := svc.CheckReady(context.Background())
+	if err != nil {
+		t.Fatalf("CheckReady() error = %v", err)
+	}
+	if ready.Status != "ok" {
+		t.Fatalf("ready status = %q, want ok: %#v", ready.Status, ready.Checks)
+	}
+	for _, name := range []string{"chat_profile", "embedding_profile", "rerank_profile"} {
+		if got := readinessStatus(ready, name); got != "ok" {
+			t.Fatalf("%s status = %q, want ok: %#v", name, got, ready.Checks)
+		}
+	}
+}
+
+func TestCheckReadyReportsSeedPlaceholderCredential(t *testing.T) {
+	repo := newMemoryRepository()
+	svc := New(repo, mustEncryptor(t), 60000)
+	seedReadyProfile(repo, "default-chat", PurposeChat, "01db0178d97656cc4638023b711d331d4c59cf16a35126e175d9b39bc9c2eb20", "-key")
+
+	ready, err := svc.CheckReady(context.Background())
+	if err != nil {
+		t.Fatalf("CheckReady() error = %v", err)
+	}
+	if ready.Status != "degraded" {
+		t.Fatalf("ready status = %q, want degraded: %#v", ready.Status, ready.Checks)
+	}
+	if got := readinessStatus(ready, "chat_profile"); got != "placeholder" {
+		t.Fatalf("chat_profile status = %q, want placeholder: %#v", got, ready.Checks)
+	}
+	if msg := readinessMessage(ready, "chat_profile"); strings.Contains(msg, "01db") || strings.Contains(msg, "-key") {
+		t.Fatalf("placeholder readiness message leaked credential metadata: %q", msg)
+	}
+}
+
+func TestCheckReadyReportsMissingCredential(t *testing.T) {
+	repo := newMemoryRepository()
+	svc := New(repo, mustEncryptor(t), 60000)
+	repo.profiles["missing-chat"] = ModelProfile{
+		ID:               "missing-chat",
+		Name:             "missing chat",
+		Purpose:          PurposeChat,
+		Enabled:          true,
+		APIKeyConfigured: true,
+	}
+
+	ready, err := svc.CheckReady(context.Background())
+	if err != nil {
+		t.Fatalf("CheckReady() error = %v", err)
+	}
+	if got := readinessStatus(ready, "chat_profile"); got != "missing" {
+		t.Fatalf("chat_profile status = %q, want missing: %#v", got, ready.Checks)
 	}
 }
 
@@ -844,6 +906,42 @@ func embeddingVectorForTest(index int) EmbeddingVector {
 		Index:     index,
 		Embedding: json.RawMessage(`[0.1,0.2]`),
 	}
+}
+
+func seedReadyProfile(repo *memoryRepository, id string, purpose Purpose, fingerprint, keyLast4 string) {
+	repo.profiles[id] = ModelProfile{
+		ID:               id,
+		Name:             id,
+		Purpose:          purpose,
+		Enabled:          true,
+		APIKeyConfigured: true,
+		CredentialID:     "cred-" + id,
+	}
+	repo.credentials["cred-"+id] = ProviderCredential{
+		ID:                "cred-" + id,
+		ProfileID:         id,
+		FingerprintSHA256: fingerprint,
+		KeyLast4:          keyLast4,
+		Status:            CredentialActive,
+	}
+}
+
+func readinessStatus(ready Readiness, name string) string {
+	for _, check := range ready.Checks {
+		if check.Name == name {
+			return check.Status
+		}
+	}
+	return ""
+}
+
+func readinessMessage(ready Readiness, name string) string {
+	for _, check := range ready.Checks {
+		if check.Name == name {
+			return check.Message
+		}
+	}
+	return ""
 }
 
 func mustEncryptor(t *testing.T) *CredentialEncryptor {

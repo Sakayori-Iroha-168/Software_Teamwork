@@ -138,7 +138,7 @@ curl -s "$AI_GATEWAY_BASE_URL/readyz" | jq .
 }
 ```
 
-如果任一 profile 缺失，`status` 为 `"degraded"`，对应的 `check.status` 为 `"missing"`。
+如果任一 profile 缺失或没有 active credential，`status` 为 `"degraded"`，对应的 `check.status` 为 `"missing"`。根级本地 seed 写入的占位 provider key 会显示为 `"placeholder"`，也会使整体状态降级；这只说明需要替换为真实 credential，不会解密或调用 provider。
 
 ---
 
@@ -307,6 +307,7 @@ go test ./internal/http -run TestRealProviderSmoke_ExplicitEnvOnly -count=1 -v
 | `X-Caller-Service` 缺失或不允许 | 返回 `unauthorized` 或 `permission_error` / `forbidden`。 | 使用 `gateway` 创建 profile；模型调用使用 `qa`、`knowledge` 或 `document` 等允许值。 |
 | 默认 profile 缺失 | 模型调用返回 `not_found` / `default model profile not found`；`/readyz` 中对应 check 为 `missing`。 | 按第 2 节创建默认 profile，或在请求中传入正确 `profile_id`。 |
 | credential 未配置或被禁用 | 返回 `dependency_error` / `model profile credential is not configured`。 | 重新写入 profile `apiKey`，确认 credential 状态为 active。 |
+| 本地占位 credential 未替换 | `/readyz` 中对应 check 为 `placeholder`；真实 provider smoke 不应视为已完成。 | 通过 Gateway admin profile API 或 AI Gateway 内部 profile API 写入真实 provider key，再运行显式 real-provider smoke。 |
 | provider 认证失败 | fake/真实 provider smoke 返回 `authentication_error` 或 `dependency_error`，不会透传 provider 原始 body。 | 检查 provider API key、baseUrl 和账号权限；测试响应中不应出现 API key 或 provider 原始错误。 |
 | provider 响应格式不匹配 | 返回 `dependency_error` / `provider returned an invalid response`，调用摘要 status 为 failed。 | Chat 需 `object=chat.completion` 且 `choices` 非空；embedding 需 `object=list`、数量和 index 与输入一致；rerank 需合法 `data[]` 或 `results[]`、score 和 index。 |
 | 真实 provider smoke 被跳过 | `go test -v` 显示 skip real provider smoke。 | 设置 `AI_GATEWAY_REAL_PROVIDER_SMOKE=1`、base URL、API key 和至少一个 operation model 环境变量。 |
@@ -445,3 +446,16 @@ curl -s "$AI_GATEWAY_BASE_URL/internal/v1/model-profiles/mp_chat_default" \
 - `data.enabled` 必须为 `true`。
 - `data.apiKeyConfigured` 只能表示配置状态，不返回明文 key。
 - 缺失或 disabled profile 应由 Document 映射为设置校验失败，不应继续创建报告生成任务。
+
+## Appendix: `/readyz` and real-provider proof
+
+`/readyz` is a configuration readiness signal, not a provider ping. Seeded local
+placeholder credentials are reported as `check.status = "placeholder"` and make
+the overall status `degraded`; replace them with a non-placeholder credential
+before treating the profile as ready for real-provider smoke.
+
+A non-placeholder `ok` check means the profile has an active credential that no
+longer matches the known local seed placeholders. It still does not prove the
+external provider accepts the key. Run `AI_GATEWAY_REAL_PROVIDER_SMOKE=1` with
+the provider base URL, API key, and at least one operation model to prove real
+provider availability.

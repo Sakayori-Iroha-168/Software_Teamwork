@@ -490,14 +490,14 @@ AI Gateway 只返回排序分数和原输入文档 ID/index，不返回额外业
 
 ## 配置与就绪语义
 
-`GET /readyz` 应体现 AI Gateway 是否具备处理请求的最低条件：
+`GET /readyz` 应体现 AI Gateway 是否具备处理请求的最低配置条件：
 
-- 至少存在一个 enabled chat profile，且已配置 API key。
-- 至少存在一个 enabled embedding profile，且已配置 API key。
-- 至少存在一个 enabled rerank profile，且已配置 API key。
+- 至少存在一个 enabled chat profile，且已配置 active credential。
+- 至少存在一个 enabled embedding profile，且已配置 active credential。
+- 至少存在一个 enabled rerank profile，且已配置 active credential。
 - 配置存储可读。
 
-如果某类 profile 缺失，`readyz` 可以返回 `503`，并在 `data.checks` 中标记具体缺失项。检查结果不得包含 API key 明文。
+`check.status` 使用 `ok`、`missing`、`placeholder` 或 `failed`。`missing` 表示缺少对应 profile 或 active credential；`placeholder` 表示根级本地 seed 仍使用占位 provider key；`ok` 只表示已配置非占位 credential，不代表真实 provider 已接受该 key。检查结果不得包含 API key 明文、fingerprint、key last4 或 provider 原始错误体；真实 provider 可用性必须通过显式 env-gated smoke 验证。
 
 示例：
 
@@ -512,7 +512,7 @@ AI Gateway 只返回排序分数和原输入文档 ID/index，不返回额外业
       },
       {
         "name": "embedding_profile",
-        "status": "missing"
+        "status": "placeholder"
       }
     ]
   },

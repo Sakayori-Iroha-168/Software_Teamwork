@@ -242,6 +242,18 @@ Their default provider URL is `http://host.docker.internal:11434/v1`; Compose
 maps that hostname to the Docker host for Linux engines with
 `host.docker.internal:host-gateway`.
 
+`ai-gateway /readyz` distinguishes these states per purpose:
+
+- `missing`: the chat, embedding, or rerank profile/active credential is absent.
+- `placeholder`: the seeded local fake credential is still configured.
+- `ok`: a non-placeholder credential is configured for the profile.
+
+`ok` only means the profile configuration no longer matches the known local
+placeholder. It does not prove the external provider accepted the key; run the
+env-gated real-provider smoke in
+`docs/services/ai-gateway/docs/seed-runbook.md` before recording cross-service
+AI validation.
+
 ## Request Id Troubleshooting
 
 Every service returns or propagates `X-Request-Id`.
@@ -282,6 +294,10 @@ embedding or rerank smoke, start `docker compose --profile ai up -d --build`,
 replace the seeded fake provider credential with a usable one, then set
 `EMBEDDING_PROVIDER=ai_gateway`, `KNOWLEDGE_AI_GATEWAY_BASE_URL=http://ai-gateway:8086`,
 and the relevant profile/model variables.
+
+Knowledge's default local path uses deterministic local hashing embeddings and
+empty rerank configuration. Do not count that path as real AI Gateway
+embedding/rerank validation.
 
 ## Common Dependency Failures
 

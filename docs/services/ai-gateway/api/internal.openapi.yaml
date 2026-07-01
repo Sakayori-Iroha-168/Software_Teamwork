@@ -449,6 +449,7 @@ components:
           type: string
           enum:
           - ok
+          - placeholder
           - missing
           - failed
         message:

@@ -133,6 +133,25 @@ func TestReadyReturnsDegradedWhenProfilesMissing(t *testing.T) {
 	}
 }
 
+func TestReadyReportsPlaceholderCredential(t *testing.T) {
+	server, repo := newTestServerWithChatProviderAndRepo(t, nil)
+	seedHTTPReadyProfile(repo, "default-chat", service.PurposeChat, "01db0178d97656cc4638023b711d331d4c59cf16a35126e175d9b39bc9c2eb20", "-key")
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusServiceUnavailable)
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"status":"placeholder"`)) {
+		t.Fatalf("ready body missing placeholder status: %s", rec.Body.String())
+	}
+	if bytes.Contains(rec.Body.Bytes(), []byte("01db")) || bytes.Contains(rec.Body.Bytes(), []byte("-key")) {
+		t.Fatalf("ready body leaked credential metadata: %s", rec.Body.String())
+	}
+}
+
 func TestCreateEmbeddingsReturnsOpenAIShapeAndDoesNotLeakSecrets(t *testing.T) {
 	invoker := &fakeModelInvoker{
 		embeddingFn: func(service.ProviderEmbeddingRequest) (service.EmbeddingResponse, service.ProviderCallMetadata, error) {
@@ -538,4 +557,22 @@ func authedRequest(method, target string, body io.Reader) *http.Request {
 	req.Header.Set("X-Caller-Service", "gateway")
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func seedHTTPReadyProfile(repo *memoryRepository, id string, purpose service.Purpose, fingerprint, keyLast4 string) {
+	repo.profiles[id] = service.ModelProfile{
+		ID:               id,
+		Name:             id,
+		Purpose:          purpose,
+		Enabled:          true,
+		APIKeyConfigured: true,
+		CredentialID:     "cred-" + id,
+	}
+	repo.credentials["cred-"+id] = service.ProviderCredential{
+		ID:                "cred-" + id,
+		ProfileID:         id,
+		FingerprintSHA256: fingerprint,
+		KeyLast4:          keyLast4,
+		Status:            service.CredentialActive,
+	}
 }

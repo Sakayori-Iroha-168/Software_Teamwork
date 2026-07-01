@@ -160,6 +160,24 @@ cd services/qa
 go test ./internal/service -run 'AskSSEPayloads|AskToolProgress|AskPersistsCitation|NormalizeCitation|PreservesGatewayValidation'
 ```
 
+env-gated AI Gateway real provider smoke:
+
+```bash
+cd services/ai-gateway
+AI_GATEWAY_REAL_PROVIDER_SMOKE=1 \
+AI_GATEWAY_REAL_PROVIDER_BASE_URL='https://api.example.com/v1' \
+AI_GATEWAY_REAL_PROVIDER_API_KEY="$PROVIDER_API_KEY" \
+AI_GATEWAY_REAL_CHAT_MODEL='provider-chat-model' \
+go test ./internal/http -run '^TestRealProviderSmoke_ExplicitEnvOnly$' -count=1 -v
+```
+
+Set `AI_GATEWAY_REAL_EMBEDDING_MODEL`,
+`AI_GATEWAY_REAL_EMBEDDING_DIMENSIONS`, and/or `AI_GATEWAY_REAL_RERANK_MODEL`
+only when the selected provider supports those operations. With the gate unset,
+ordinary `go test ./...` must skip the external provider path. With the gate
+enabled, failures must report request IDs and key names only, not secret values,
+prompts, document text, embedding payloads, or provider raw bodies.
+
 ## 前端测试层级
 
 | 层级 | 当前状态 | 说明 |
