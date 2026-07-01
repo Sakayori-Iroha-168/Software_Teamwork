@@ -421,6 +421,12 @@ func (r *MemoryRepository) MarkDocumentJobFailed(ctx context.Context, documentID
 	if !jobExists {
 		return service.ErrNotFound
 	}
+	if job.DocumentID == nil || *job.DocumentID != documentID {
+		return service.ErrNotFound
+	}
+	if terminalProcessingJobStatus(job.Status) {
+		return service.ErrConflict
+	}
 	if expectedAttempts != nil && (job.Attempts != *expectedAttempts || job.Status != service.JobStatusRunning) {
 		return service.ErrConflict
 	}
@@ -439,6 +445,15 @@ func (r *MemoryRepository) MarkDocumentJobFailed(ctx context.Context, documentID
 		r.documents[documentID] = doc
 	}
 	return nil
+}
+
+func terminalProcessingJobStatus(status string) bool {
+	switch status {
+	case service.JobStatusSucceeded, service.JobStatusCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *MemoryRepository) GetProcessingJob(ctx context.Context, id string) (service.ProcessingJob, error) {

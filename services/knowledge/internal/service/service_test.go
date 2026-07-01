@@ -862,6 +862,85 @@ func TestDeleteCleanupReconcilerRequeuesExhaustedStaleRunningJobForTerminalizati
 	}
 }
 
+func TestDeleteCleanupReconcilerDoesNotOverwriteSucceededJobWhenQueueHandoffFails(t *testing.T) {
+	now := time.Date(2026, 6, 30, 8, 50, 0, 0, time.UTC)
+	repo := repository.NewMemoryRepository()
+	fileRef := "file_1"
+	repo.SeedKnowledgeBase(service.KnowledgeBase{
+		ID:                "kb_1",
+		Name:              "规程库",
+		Description:       "",
+		DocType:           "GENERAL",
+		ChunkStrategy:     json.RawMessage(`{}`),
+		RetrievalStrategy: json.RawMessage(`{}`),
+		CreatedBy:         "usr_1",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	repo.SeedDocument(service.KnowledgeDocument{
+		ID:              "doc_1",
+		KnowledgeBaseID: "kb_1",
+		FileRef:         &fileRef,
+		Name:            "规程.pdf",
+		Status:          service.DocumentStatusReady,
+		CreatedBy:       "usr_1",
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	})
+	if err := repo.SoftDeleteDocument(context.Background(), service.DeleteDocumentRecord{
+		DocumentID:  "doc_1",
+		JobID:       "job_cleanup",
+		JobType:     service.JobTypeDeleteCleanup,
+		JobStatus:   service.JobStatusQueued,
+		JobStage:    "delete_cleanup",
+		JobMessage:  "document marked deleted; cleanup is pending",
+		MaxAttempts: service.DefaultIngestionMaxAttempts,
+		DeletedAt:   now,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}, service.AccessScope{UserID: "usr_1", CanWrite: true}); err != nil {
+		t.Fatalf("SoftDeleteDocument() error = %v", err)
+	}
+	queue := &uploadQueue{
+		err: errors.New("redis unavailable"),
+		cleanupHook: func(ctx context.Context, task service.DocumentDeleteCleanupTask) {
+			finishedAt := now.Add(time.Minute)
+			stage := "completed"
+			message := "document delete cleanup completed"
+			if _, err := repo.UpdateJobState(ctx, task.JobID, service.JobStateUpdate{
+				Status:          service.JobStatusSucceeded,
+				CurrentStage:    &stage,
+				ProgressPercent: 100,
+				Message:         &message,
+				FinishedAt:      &finishedAt,
+				UpdatedAt:       finishedAt,
+			}); err != nil {
+				t.Fatalf("UpdateJobState(succeeded) error = %v", err)
+			}
+		},
+	}
+	svc := service.NewWithDependencies(repo, nil, queue, func() time.Time {
+		return now.Add(2 * time.Minute)
+	}, func(prefix string) string {
+		return prefix + "_unused"
+	})
+
+	result, err := svc.RequeueDeleteCleanupTasks(context.Background(), service.RequestContext{RequestID: "req_reconcile"}, 10)
+	if !hasCode(err, service.CodeDependency) {
+		t.Fatalf("RequeueDeleteCleanupTasks() error = %v, want dependency", err)
+	}
+	if result.Scanned != 1 || result.Enqueued != 0 || result.Failed != 1 || queue.cleanupCalls != 1 {
+		t.Fatalf("result = %+v cleanupCalls=%d", result, queue.cleanupCalls)
+	}
+	job, err := repo.GetProcessingJob(context.Background(), "job_cleanup")
+	if err != nil {
+		t.Fatalf("GetProcessingJob() error = %v", err)
+	}
+	if job.Status != service.JobStatusSucceeded || job.ErrorCode != nil || job.ErrorMessage != nil {
+		t.Fatalf("succeeded cleanup job was overwritten: %+v", job)
+	}
+}
+
 func TestDeleteCleanupReconcilerReportsRepositoryDependency(t *testing.T) {
 	repo := &uploadRepository{
 		MemoryRepository: repository.NewMemoryRepository(),
@@ -1067,6 +1146,7 @@ type uploadQueue struct {
 	calls        int
 	cleanupCalls int
 	err          error
+	cleanupHook  func(context.Context, service.DocumentDeleteCleanupTask)
 }
 
 func (q *uploadQueue) EnqueueDocumentIngestion(ctx context.Context, task service.DocumentIngestionTask) error {
@@ -1078,6 +1158,9 @@ func (q *uploadQueue) EnqueueDocumentIngestion(ctx context.Context, task service
 func (q *uploadQueue) EnqueueDocumentDeleteCleanup(ctx context.Context, task service.DocumentDeleteCleanupTask) error {
 	q.cleanupCalls++
 	q.cleanupTask = task
+	if q.cleanupHook != nil {
+		q.cleanupHook(ctx, task)
+	}
 	return q.err
 }
 

@@ -669,6 +669,7 @@ SET status = 'failed',
     updated_at = $5
 WHERE id = $1
   AND document_id = $2
+  AND status NOT IN ('succeeded', 'cancelled')
   AND ($6::int4 IS NULL OR (attempts = $6 AND status = 'running'))`,
 		jobID,
 		documentID,
@@ -681,10 +682,27 @@ WHERE id = $1
 		return wrapPostgresError("mark processing job failed", err)
 	}
 	if jobRows.RowsAffected() == 0 {
-		if expectedAttempts != nil {
+		var currentStatus string
+		statusErr := tx.QueryRow(ctx, `
+SELECT status
+FROM processing_jobs
+WHERE id = $1
+  AND document_id = $2`,
+			jobID,
+			documentID,
+		).Scan(&currentStatus)
+		if errors.Is(statusErr, pgx.ErrNoRows) {
+			return service.ErrNotFound
+		}
+		if statusErr != nil {
+			return wrapPostgresError("check processing job status after failed mark", statusErr)
+		}
+		// Queue handoff/reconciler failures are best-effort failure summaries; they
+		// must never rewrite an already terminal durable cleanup fact.
+		if terminalProcessingJobStatus(currentStatus) || expectedAttempts != nil {
 			return service.ErrConflict
 		}
-		return service.ErrNotFound
+		return service.ErrConflict
 	}
 	if _, err := tx.Exec(ctx, `
 UPDATE knowledge_documents

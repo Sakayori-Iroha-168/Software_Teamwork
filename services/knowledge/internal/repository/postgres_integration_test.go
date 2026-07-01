@@ -111,6 +111,55 @@ func TestPostgresRepositoryDocumentUploadLifecycle(t *testing.T) {
 		t.Fatalf("failed job status = %q errorCode = %q errorMessage = %q finishedAt = %s updatedAt = %s",
 			jobStatus, jobErrorCode, jobErrorMessage, jobFinishedAt, jobUpdatedAt)
 	}
+
+	_, succeededJob, err := repo.CreateDocumentWithJob(ctx, service.CreateDocumentWithJobRecord{
+		DocumentID:      "doc_terminal",
+		KnowledgeBaseID: kb.ID,
+		FileRef:         "file_terminal",
+		Name:            "terminal.pdf",
+		ContentType:     "application/pdf",
+		SizeBytes:       9,
+		Status:          service.DocumentStatusUploaded,
+		CurrentJobID:    "job_terminal",
+		CreatedBy:       "usr_1",
+		JobID:           "job_terminal",
+		JobType:         service.JobTypeDeleteCleanup,
+		JobStatus:       service.JobStatusQueued,
+		JobStage:        "delete_cleanup",
+		JobMessage:      "document marked deleted; cleanup is pending",
+		MaxAttempts:     3,
+		CreatedAt:       now.Add(2 * time.Minute),
+		UpdatedAt:       now.Add(2 * time.Minute),
+	}, scope)
+	if err != nil {
+		t.Fatalf("CreateDocumentWithJob(terminal) error = %v", err)
+	}
+	completedStage := "completed"
+	completedMessage := "document delete cleanup completed"
+	completedAt := now.Add(3 * time.Minute)
+	if _, err := repo.UpdateJobState(ctx, succeededJob.ID, service.JobStateUpdate{
+		Status:          service.JobStatusSucceeded,
+		CurrentStage:    &completedStage,
+		ProgressPercent: 100,
+		Message:         &completedMessage,
+		FinishedAt:      &completedAt,
+		UpdatedAt:       completedAt,
+	}); err != nil {
+		t.Fatalf("UpdateJobState(succeeded) error = %v", err)
+	}
+	if err := repo.MarkDocumentJobFailed(ctx, "doc_terminal", succeededJob.ID, nil, string(service.CodeDependency), "delete cleanup queue handoff failed", now.Add(4*time.Minute)); err != service.ErrConflict {
+		t.Fatalf("MarkDocumentJobFailed(succeeded) error = %v, want ErrConflict", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT status, COALESCE(error_code, ''), COALESCE(error_message, '')
+		FROM processing_jobs
+		WHERE id = $1
+	`, succeededJob.ID).Scan(&jobStatus, &jobErrorCode, &jobErrorMessage); err != nil {
+		t.Fatalf("query succeeded processing job: %v", err)
+	}
+	if jobStatus != string(service.JobStatusSucceeded) || jobErrorCode != "" || jobErrorMessage != "" {
+		t.Fatalf("terminal job was overwritten: status=%q errorCode=%q errorMessage=%q", jobStatus, jobErrorCode, jobErrorMessage)
+	}
 }
 
 func TestPostgresRepositoryDocumentLifecycleUpdateAndDelete(t *testing.T) {

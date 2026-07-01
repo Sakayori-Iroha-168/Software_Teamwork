@@ -161,6 +161,70 @@ func TestMemoryRepositoryMarkFailedKeepsJobTerminalWhenDocumentWasDeleted(t *tes
 	}
 }
 
+func TestMemoryRepositoryMarkFailedDoesNotOverwriteSucceededJob(t *testing.T) {
+	repo := repository.NewMemoryRepository()
+	now := time.Date(2026, 6, 29, 14, 30, 0, 0, time.UTC)
+	scope := service.AccessScope{UserID: "usr_1", CanWrite: true}
+	repo.SeedKnowledgeBase(service.KnowledgeBase{
+		ID:                "kb_1",
+		Name:              "规程库",
+		Description:       "",
+		DocType:           "GENERAL",
+		ChunkStrategy:     json.RawMessage(`{}`),
+		RetrievalStrategy: json.RawMessage(`{}`),
+		CreatedBy:         "usr_1",
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	})
+	_, job, err := repo.CreateDocumentWithJob(context.Background(), service.CreateDocumentWithJobRecord{
+		DocumentID:      "doc_1",
+		KnowledgeBaseID: "kb_1",
+		FileRef:         "file_1",
+		Name:            "规程.pdf",
+		ContentType:     "application/pdf",
+		SizeBytes:       9,
+		Status:          service.DocumentStatusUploaded,
+		CurrentJobID:    "job_1",
+		CreatedBy:       "usr_1",
+		JobID:           "job_1",
+		JobType:         service.JobTypeDeleteCleanup,
+		JobStatus:       service.JobStatusQueued,
+		JobStage:        "delete_cleanup",
+		JobMessage:      "document marked deleted; cleanup is pending",
+		MaxAttempts:     3,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}, scope)
+	if err != nil {
+		t.Fatalf("CreateDocumentWithJob() error = %v", err)
+	}
+	finishedAt := now.Add(time.Minute)
+	stage := "completed"
+	message := "document delete cleanup completed"
+	if _, err := repo.UpdateJobState(context.Background(), job.ID, service.JobStateUpdate{
+		Status:          service.JobStatusSucceeded,
+		CurrentStage:    &stage,
+		ProgressPercent: 100,
+		Message:         &message,
+		FinishedAt:      &finishedAt,
+		UpdatedAt:       finishedAt,
+	}); err != nil {
+		t.Fatalf("UpdateJobState(succeeded) error = %v", err)
+	}
+
+	err = repo.MarkDocumentJobFailed(context.Background(), "doc_1", "job_1", nil, string(service.CodeDependency), "delete cleanup queue handoff failed", now.Add(2*time.Minute))
+	if err != service.ErrConflict {
+		t.Fatalf("MarkDocumentJobFailed() error = %v, want ErrConflict", err)
+	}
+	loaded, err := repo.GetProcessingJob(context.Background(), "job_1")
+	if err != nil {
+		t.Fatalf("GetProcessingJob() error = %v", err)
+	}
+	if loaded.Status != service.JobStatusSucceeded || loaded.ErrorCode != nil || loaded.ErrorMessage != nil {
+		t.Fatalf("terminal job was overwritten: %+v", loaded)
+	}
+}
+
 func TestMemoryRepositoryDeletedDocumentCleanupTargetReadsSoftDeletedDocumentOnly(t *testing.T) {
 	repo := repository.NewMemoryRepository()
 	now := time.Date(2026, 6, 29, 15, 0, 0, 0, time.UTC)
