@@ -68,7 +68,6 @@ jobs:
               'services/file/Dockerfile',
               'services/gateway/Dockerfile',
               'services/knowledge/Dockerfile',
-              'services/parser/Dockerfile',
               'services/qa/Dockerfile',
               'services/qa/Dockerfile.host',
               'services/qa/Dockerfile.migrate',
@@ -80,7 +79,6 @@ jobs:
               'services/file/Dockerfile',
               'services/gateway/Dockerfile',
               'services/knowledge/Dockerfile',
-              'services/parser/Dockerfile',
               'services/qa/Dockerfile',
               'services/qa/Dockerfile.host',
             ]);
