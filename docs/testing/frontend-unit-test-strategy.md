@@ -27,19 +27,18 @@ Out of scope:
 
 ## Command Matrix
 
-Run commands from `apps/web`.
+Run default commands from the repository root. Windows local verification may use the fallback command from `apps/web` when Bun cannot write its temp directory or native dependency cache. The evidence must state which runner was used.
 
-| Check           | Command                      | Tool                           | What It Proves                                                                                   | Evidence Required                                                         |
-| --------------- | ---------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
-| App type check  | `npm.cmd run typecheck`      | TypeScript                     | Frontend source files have no TypeScript errors.                                                 | Pass/fail and error summary.                                              |
-| Test type check | `npm.cmd run typecheck:test` | TypeScript                     | Test files and test config type-check.                                                           | Pass/fail and error summary.                                              |
-| Lint            | `npm.cmd run lint`           | ESLint                         | Code follows configured lint rules.                                                              | Pass/fail and warning summary.                                            |
-| Format check    | `npm.cmd run format:check`   | Prettier                       | Files match repository formatting rules.                                                         | Pass/fail and list of unformatted files.                                  |
-| Build           | `npm.cmd run build`          | TypeScript + Vite              | Frontend can be bundled for production.                                                          | Pass/fail and build warnings/errors.                                      |
-| Unit tests      | `npm.cmd run test:unit`      | Vitest + React Testing Library | API clients, hooks, UI components, and pages behave as expected in mocked/local test conditions. | Test count, pass/fail count, failed test names.                           |
-| Dev smoke       | `npm.cmd run dev`            | Vite + browser                 | App can start locally and render basic pages.                                                    | URL, screenshots, and whether backend-dependent calls failed as expected. |
-
-CI may use Bun commands, but Windows local verification may use `npm.cmd` when Bun cannot write its temp directory or native dependency cache. The evidence must state which runner was used.
+| Check           | Default Command                         | Windows Fallback             | Tool                           | What It Proves                                                                                   | Evidence Required                                                         |
+| --------------- | --------------------------------------- | ---------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| App type check  | `bun run --cwd apps/web typecheck`      | `npm.cmd run typecheck`      | TypeScript                     | Frontend source files have no TypeScript errors.                                                 | Pass/fail and error summary.                                              |
+| Test type check | `bun run --cwd apps/web typecheck:test` | `npm.cmd run typecheck:test` | TypeScript                     | Test files and test config type-check.                                                           | Pass/fail and error summary.                                              |
+| Lint            | `bun run --cwd apps/web lint`           | `npm.cmd run lint`           | ESLint                         | Code follows configured lint rules.                                                              | Pass/fail and warning summary.                                            |
+| Format check    | `bun run --cwd apps/web format:check`   | `npm.cmd run format:check`   | Prettier                       | Files match repository formatting rules.                                                         | Pass/fail and list of unformatted files.                                  |
+| Build           | `bun run --cwd apps/web build`          | `npm.cmd run build`          | TypeScript + Vite              | Frontend can be bundled for production.                                                          | Pass/fail and build warnings/errors.                                      |
+| Unit tests      | `bun run --cwd apps/web test:unit`      | `npm.cmd run test:unit`      | Vitest + React Testing Library | API clients, hooks, UI components, and pages behave as expected in mocked/local test conditions. | Test count, pass/fail count, failed test names.                           |
+| Dev smoke       | `bun run --cwd apps/web dev`            | `npm.cmd run dev`            | Vite + browser                 | App can start locally and render basic pages.                                                    | URL, screenshots, and whether backend-dependent calls failed as expected. |
+| Frontend check  | `bun run --cwd apps/web check`          | run fallback checks above    | Bun + project scripts          | Runs typecheck, test typecheck, lint, and format check as the repository baseline.               | Pass/fail and failed subcommand.                                          |
 
 ## Current Unit Test Coverage
 

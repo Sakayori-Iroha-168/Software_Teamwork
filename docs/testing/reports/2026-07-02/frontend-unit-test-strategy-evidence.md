@@ -4,8 +4,9 @@
 
 - Issue：`T-009` / 待回填 GitHub issue 编号
 - 被测分支：`Test/docs/frontend-unit-test-strategy`
-- 被测 commit：`f70652e`
+- 被测 commit：`9d4fb24`
 - Base branch：`origin/develop @ f70652e`
+- PR head：`9d4fb24`
 - 测试负责人：待回填 GitHub 用户名
 - 测试环境：本地 Windows PowerShell；Node `v24.11.1`；npm `11.6.2`
 - 测试层级：本地自动化；前端静态检查；前端单元测试
@@ -15,7 +16,7 @@
 | 命令或操作                                              | 结果 | 证据                                                                                                                                                                                                                                             |
 | ------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `git pull --ff-only origin develop`                     | pass | 已从 `8d226de` fast-forward 到 `f70652e`。                                                                                                                                                                                                       |
-| `git checkout -B Test/docs/frontend-unit-test-strategy` | pass | 已基于最新 `develop` 创建/重置任务分支。                                                                                                                                                                                                         |
+| `git checkout -B Test/docs/frontend-unit-test-strategy` | pass | 已基于最新 `develop` 创建/重置任务分支，当前 PR head 为 `9d4fb24`。                                                                                                                                                                              |
 | `npm.cmd run typecheck`                                 | pass | `tsc --noEmit` 通过。                                                                                                                                                                                                                            |
 | `npm.cmd run typecheck:test`                            | pass | `tsc -p tsconfig.test.json --noEmit` 通过。                                                                                                                                                                                                      |
 | `npm.cmd run lint`                                      | pass | `eslint .` 通过。                                                                                                                                                                                                                                |
