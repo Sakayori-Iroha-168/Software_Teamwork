@@ -910,7 +910,8 @@ Deployment rules:
 - Store runtime secrets outside the repository.
 - Use `.env.example` for required variable names only.
 - Use named volumes for PostgreSQL, Qdrant, MinIO, and Redis when persistence is required.
-- Expose only frontend and gateway publicly by default.
+- Production/staging Compose should expose only the ingress service publicly by
+  default; frontend, gateway, and internal services stay on the Compose network.
 - Keep internal services on the Compose network.
 - Add health checks for infrastructure and services before relying on automated deployment.
 

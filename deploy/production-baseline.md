@@ -11,6 +11,7 @@ data.
 | --- | --- |
 | `deploy/docker-compose.production.yml` | Production/staging Compose skeleton. Uses published service images, persistent volumes, migrations, and internal service networking. |
 | `deploy/.env.production.example` | Required variable names and safe placeholders. Copy it outside git before filling real values. |
+| `deploy/nginx/production.conf` | Public ingress contract. Routes `/api/v1`, `/healthz`, and `/readyz` to gateway and all other browser paths to frontend. |
 | `deploy/postgres/init-production/001-create-service-databases.sh` | Empty-volume PostgreSQL initializer that creates service databases and roles from env-injected passwords. |
 
 Do not use `deploy/.env.example`, `deploy/postgres/init/`, or `deploy/seeds/`
@@ -21,6 +22,7 @@ for production/staging. Those files are local/demo only.
 This baseline covers:
 
 - frontend, gateway, auth, file, parser, knowledge, qa, document, ai-gateway;
+- a single public ingress that keeps frontend and gateway on one browser origin;
 - PostgreSQL, Redis, Qdrant, and MinIO;
 - service migrations before service startup;
 - persistent Docker volumes;
@@ -31,12 +33,17 @@ It does not deploy to a real cloud provider, create DNS/TLS certificates, add a
 GitHub Actions deploy workflow, or replace the future #125 full cross-service
 smoke.
 
+Long-running services use `restart: unless-stopped` so they recover after a
+process crash or Docker daemon restart. One-shot initialization and migration
+jobs keep `restart: "no"` so failed setup remains visible to operators.
+
 ## Image Strategy
 
 Production/staging should run immutable, prebuilt image tags:
 
 ```bash
 FRONTEND_IMAGE=registry.example.com/software-teamwork/frontend:<git-sha-or-release>
+NGINX_IMAGE=nginx:<pinned-alpine-tag>
 GATEWAY_IMAGE=registry.example.com/software-teamwork/gateway:<git-sha-or-release>
 AUTH_IMAGE=registry.example.com/software-teamwork/auth:<git-sha-or-release>
 FILE_IMAGE=registry.example.com/software-teamwork/file:<git-sha-or-release>
@@ -52,9 +59,16 @@ Do not use `latest`. Rollback depends on being able to identify the previous
 image tags.
 
 The current repository has backend/parser Dockerfiles and no frontend Dockerfile
-yet. Publish a frontend static-server image before enabling the `frontend`
-service in a shared environment, or terminate frontend hosting outside this
-Compose stack while keeping browser API calls routed through gateway `/api/v1`.
+yet. Before enabling the `frontend` service in a shared environment, publish a
+frontend static-server image that listens on port 80 and serves the built SPA.
+The Compose `ingress` service is the only public HTTP entrypoint: it proxies
+`/api/v1`, `/healthz`, and `/readyz` to `gateway:8080`, and proxies all other
+browser paths to `frontend:80`. This preserves the frontend client contract that
+browser API calls use same-origin `/api/v1`.
+
+If frontend hosting is terminated outside this Compose stack, keep the same
+ingress contract at the external edge: browser `/api/v1/**` traffic must still
+route to gateway, and browsers must not call service containers directly.
 
 ## First-Time Build Or Pull
 
@@ -170,7 +184,7 @@ does not re-run the initializer on an existing volume.
    ```bash
    docker compose -f deploy/docker-compose.production.yml \
      --env-file deploy/.env.production \
-     up -d auth file parser ai-gateway knowledge qa document gateway frontend
+     up -d auth file parser ai-gateway knowledge qa document gateway frontend ingress
    ```
 
 4. Configure AI Gateway provider credentials and model profiles through the
@@ -188,14 +202,14 @@ and incident recovery.
 
 ## Readiness Checks
 
-Only frontend and gateway expose host ports by default. Internal service ports
-stay on the Compose network.
+Only `ingress` exposes a host port by default. Frontend, gateway, and internal
+service ports stay on the Compose network.
 
 Host checks:
 
 ```bash
-curl -fsS http://localhost:${GATEWAY_HTTP_PORT:-8080}/healthz
-curl -fsS http://localhost:${GATEWAY_HTTP_PORT:-8080}/readyz
+curl -fsS http://localhost:${INGRESS_HTTP_PORT:-80}/healthz
+curl -fsS http://localhost:${INGRESS_HTTP_PORT:-80}/readyz
 ```
 
 Container-network checks:
@@ -205,7 +219,7 @@ docker compose -f deploy/docker-compose.production.yml \
   --env-file deploy/.env.production ps
 
 docker compose -f deploy/docker-compose.production.yml \
-  --env-file deploy/.env.production logs gateway auth file parser knowledge qa document ai-gateway
+  --env-file deploy/.env.production logs ingress gateway auth file parser knowledge qa document ai-gateway
 ```
 
 Service readiness endpoints inside containers:
@@ -219,12 +233,13 @@ qa         http://qa:8084/readyz
 document   http://document:8085/readyz
 ai-gateway http://ai-gateway:8086/readyz
 gateway    http://gateway:8080/readyz
+ingress    http://ingress/readyz
 ```
 
-`gateway /readyz` does not prove external provider credentials are accepted.
-Use the AI Gateway provider smoke and the Gateway -> Knowledge -> QA RAG smoke
-from `docs/runbooks/local-integration.md` when provider/profile validation is
-required.
+`ingress /readyz` delegates to `gateway /readyz`; neither proves external
+provider credentials are accepted. Use the AI Gateway provider smoke and the
+Gateway -> Knowledge -> QA RAG smoke from `docs/runbooks/local-integration.md`
+when provider/profile validation is required.
 
 ## Persistence And Backup
 

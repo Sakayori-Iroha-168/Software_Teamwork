@@ -104,7 +104,7 @@ jobs:
             const rootDeployComposeDependencyPattern =
               /^deploy\/(?:\.env\.example|postgres\/init\/.+|seeds\/.+)$/u;
             const productionDeployComposeDependencyPattern =
-              /^deploy\/(?:\.env\.production\.example|postgres\/init-production\/.+)$/u;
+              /^deploy\/(?:\.env\.production\.example|postgres\/init-production\/.+|nginx\/production\.conf)$/u;
             const workflowPath = '.github/workflows/docker-deploy-checks.yml';
             const dockerPolicyPaths = new Set([
               'README.md',

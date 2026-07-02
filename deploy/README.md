@@ -6,9 +6,12 @@ production deployment baseline.
 
 Production or staging uses a separate baseline:
 [`production-baseline.md`](./production-baseline.md),
-`docker-compose.production.yml`, and `.env.production.example`. Do not promote
-the local `.env.example`, local seed data, or local demo credentials into shared
-or long-lived environments.
+`docker-compose.production.yml`, `.env.production.example`, and
+`nginx/production.conf`. Do not promote the local `.env.example`, local seed
+data, or local demo credentials into shared or long-lived environments. The
+production baseline exposes only the `ingress` service publicly; it routes
+browser `/api/v1/**` calls to gateway and keeps frontend/gateway service ports
+inside the Compose network.
 
 ## Entry Points
 
