@@ -188,3 +188,36 @@ Hardened QA command execution and MCP stdio startup, constrained AI Gateway URLs
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Adapt RAGFlow parser config mapping
+
+**Date**: 2026-07-02
+**Task**: Adapt RAGFlow parser config mapping
+**Branch**: `fix/ragflow-parser-config-adapter`
+
+### Summary
+
+Mapped Knowledge parser configs to RAGFlow parser_config on knowledge-base creation, added adapter tests, and passed OCR provider env vars through the knowledge-v2 runtime compose services.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `daf787b0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
