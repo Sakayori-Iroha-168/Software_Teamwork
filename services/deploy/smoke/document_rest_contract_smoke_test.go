@@ -12,11 +12,11 @@ import (
 	"time"
 )
 
-const documentMCPSmokeGate = "DOCUMENT_MCP_SMOKE"
+const documentMCPSmokeGate = "DOCUMENT_REST_SMOKE"
 
-func TestDocumentMCPToolSmoke(t *testing.T) {
+func TestDocumentRESTContractSmoke(t *testing.T) {
 	if os.Getenv(documentMCPSmokeGate) != "1" {
-		t.Skip("set DOCUMENT_MCP_SMOKE=1 to run the Document MCP tool smoke")
+		t.Skip("set DOCUMENT_REST_SMOKE=1 to run the Document REST contract smoke")
 	}
 
 	cfg := loadDocumentSmokeConfig(t)
@@ -26,7 +26,7 @@ func TestDocumentMCPToolSmoke(t *testing.T) {
 	assertHTTPReady(t, ctx, "gateway", cfg.gatewayBaseURL)
 	assertHTTPReady(t, ctx, "document", cfg.documentBaseURL)
 
-	requestID := "req_document_mcp_smoke_" + shortID(newSmokeRunID())
+	requestID := "req_document_rest_smoke_" + shortID(newSmokeRunID())
 	client := smokeHTTPClient()
 	session := createSmokeSession(t, ctx, client, cfg.gatewayBaseURL, cfg.username, cfg.password, requestID)
 

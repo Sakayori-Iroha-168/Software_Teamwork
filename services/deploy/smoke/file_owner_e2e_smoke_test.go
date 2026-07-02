@@ -50,12 +50,12 @@ func TestFileOwnerE2ESmoke(t *testing.T) {
 }
 
 type fileOwnerSmokeConfig struct {
-	gatewayBaseURL  string
+	gatewayBaseURL   string
 	knowledgeBaseURL string
-	documentBaseURL string
-	fileBaseURL     string
-	username        string
-	password        string
+	documentBaseURL  string
+	fileBaseURL      string
+	username         string
+	password         string
 }
 
 func loadFileOwnerSmokeConfig(t *testing.T) fileOwnerSmokeConfig {
@@ -79,12 +79,12 @@ func loadFileOwnerSmokeConfig(t *testing.T) fileOwnerSmokeConfig {
 		t.Fatalf("missing required environment variables:\n - %s", strings.Join(missing, "\n - "))
 	}
 	return fileOwnerSmokeConfig{
-		gatewayBaseURL:  trimBaseURL(t, "GATEWAY_BASE_URL", required["GATEWAY_BASE_URL"]),
+		gatewayBaseURL:   trimBaseURL(t, "GATEWAY_BASE_URL", required["GATEWAY_BASE_URL"]),
 		knowledgeBaseURL: trimBaseURL(t, "KNOWLEDGE_SERVICE_BASE_URL", required["KNOWLEDGE_SERVICE_BASE_URL"]),
-		documentBaseURL: trimBaseURL(t, "DOCUMENT_SERVICE_BASE_URL", required["DOCUMENT_SERVICE_BASE_URL"]),
-		fileBaseURL:     trimBaseURL(t, "FILE_SERVICE_BASE_URL", required["FILE_SERVICE_BASE_URL"]),
-		username:        strings.TrimSpace(required["GATEWAY_SMOKE_USERNAME or LOCAL_ADMIN_USERNAME"]),
-		password:        strings.TrimSpace(required["GATEWAY_SMOKE_PASSWORD or LOCAL_ADMIN_PASSWORD"]),
+		documentBaseURL:  trimBaseURL(t, "DOCUMENT_SERVICE_BASE_URL", required["DOCUMENT_SERVICE_BASE_URL"]),
+		fileBaseURL:      trimBaseURL(t, "FILE_SERVICE_BASE_URL", required["FILE_SERVICE_BASE_URL"]),
+		username:         strings.TrimSpace(required["GATEWAY_SMOKE_USERNAME or LOCAL_ADMIN_USERNAME"]),
+		password:         strings.TrimSpace(required["GATEWAY_SMOKE_PASSWORD or LOCAL_ADMIN_PASSWORD"]),
 	}
 }
 
@@ -174,8 +174,12 @@ func createSmokeSession(t *testing.T, ctx context.Context, client *http.Client, 
 	}
 	var envelope struct {
 		Data struct {
-			Session struct{ AccessToken string `json:"accessToken"` } `json:"session"`
-			User    struct{ ID string `json:"id"` }                   `json:"user"`
+			Session struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"session"`
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
 		} `json:"data"`
 		RequestID string `json:"requestId"`
 	}
@@ -302,7 +306,9 @@ func assertKnowledgeUploadAndReadViaGateway(t *testing.T, ctx context.Context, c
 
 	// Parse the real document ID from the upload response envelope.
 	var uploadEnv struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(uploadBody, &uploadEnv); err != nil || uploadEnv.Data.ID == "" {
 		t.Fatalf("failed to extract document ID from upload response")
@@ -328,7 +334,9 @@ func assertKnowledgeUploadAndReadViaGateway(t *testing.T, ctx context.Context, c
 func extractFirstKnowledgeBaseID(t *testing.T, body []byte) string {
 	t.Helper()
 	var envelope struct {
-		Data []struct{ ID string `json:"id"` } `json:"data"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Data) == 0 {
 		t.Skip("no knowledge bases available; seed-local required")

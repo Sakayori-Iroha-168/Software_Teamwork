@@ -46,11 +46,11 @@ func TestQAMCPRAGSmoke(t *testing.T) {
 }
 
 type qaSmokeConfig struct {
-	gatewayBaseURL  string
-	qaBaseURL       string
+	gatewayBaseURL   string
+	qaBaseURL        string
 	knowledgeBaseURL string
-	username        string
-	password        string
+	username         string
+	password         string
 }
 
 func loadQASmokeConfig(t *testing.T) qaSmokeConfig {
@@ -73,11 +73,11 @@ func loadQASmokeConfig(t *testing.T) qaSmokeConfig {
 		t.Fatalf("missing required env vars:\n - %s", strings.Join(missing, "\n - "))
 	}
 	return qaSmokeConfig{
-		gatewayBaseURL:  trimBaseURL(t, "GATEWAY_BASE_URL", required["GATEWAY_BASE_URL"]),
-		qaBaseURL:       trimBaseURL(t, "QA_SERVICE_BASE_URL", required["QA_SERVICE_BASE_URL"]),
+		gatewayBaseURL:   trimBaseURL(t, "GATEWAY_BASE_URL", required["GATEWAY_BASE_URL"]),
+		qaBaseURL:        trimBaseURL(t, "QA_SERVICE_BASE_URL", required["QA_SERVICE_BASE_URL"]),
 		knowledgeBaseURL: trimBaseURL(t, "KNOWLEDGE_SERVICE_BASE_URL", required["KNOWLEDGE_SERVICE_BASE_URL"]),
-		username:        strings.TrimSpace(required["GATEWAY_SMOKE_USERNAME or LOCAL_ADMIN_USERNAME"]),
-		password:        strings.TrimSpace(required["GATEWAY_SMOKE_PASSWORD or LOCAL_ADMIN_PASSWORD"]),
+		username:         strings.TrimSpace(required["GATEWAY_SMOKE_USERNAME or LOCAL_ADMIN_USERNAME"]),
+		password:         strings.TrimSpace(required["GATEWAY_SMOKE_PASSWORD or LOCAL_ADMIN_PASSWORD"]),
 	}
 }
 
@@ -98,7 +98,9 @@ func assertKnowledgeToolAvailable(t *testing.T, ctx context.Context, client *htt
 		t.Fatalf("expected 200 listing knowledge bases, got %d: %s", resp.StatusCode, string(body))
 	}
 	var envelope struct {
-		Data []struct{ ID string `json:"id"` } `json:"data"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		t.Fatalf("decode knowledge bases: %v", err)
@@ -129,7 +131,9 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 		t.Fatalf("create qa session returned %d", sessionResp.StatusCode)
 	}
 	var created struct {
-		Data struct{ ID string `json:"id"` } `json:"data"`
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(sessionResp.Body).Decode(&created); err != nil {
 		t.Fatalf("decode created qa session: %v", err)
@@ -198,7 +202,7 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 			t.Errorf("SSE stream is missing expected event %q, seen=%v", event, seen)
 		}
 	}
-		if responseRunID == "" {
+	if responseRunID == "" {
 		t.Fatal("SSE stream did not include a responseRunId; cannot verify tool-calls")
 	}
 	assertToolCallsRecorded(t, ctx, client, cfg, session, responseRunID, requestID)
@@ -250,7 +254,11 @@ func assertQAResponseEnvelope(t *testing.T, ctx context.Context, client *http.Cl
 	if cr.StatusCode != http.StatusCreated {
 		t.Fatalf("create qa session returned %d", cr.StatusCode)
 	}
-	var created struct{ Data struct{ ID string `json:"id"` } `json:"data"` }
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
 	if err := json.NewDecoder(cr.Body).Decode(&created); err != nil {
 		t.Fatalf("decode created session: %v", err)
 	}
@@ -272,7 +280,9 @@ func assertQAResponseEnvelope(t *testing.T, ctx context.Context, client *http.Cl
 	}
 	var envelope struct {
 		Data struct {
-			ResponseRun struct{ ID string `json:"id"` } `json:"responseRun"`
+			ResponseRun struct {
+				ID string `json:"id"`
+			} `json:"responseRun"`
 		} `json:"data"`
 		RequestID string `json:"requestId"`
 	}
@@ -305,7 +315,11 @@ func assertQANoSensitiveLeaks(t *testing.T, ctx context.Context, client *http.Cl
 	if cr.StatusCode != http.StatusCreated {
 		t.Fatalf("create qa session returned %d", cr.StatusCode)
 	}
-	var created struct{ Data struct{ ID string `json:"id"` } `json:"data"` }
+	var created struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
 	if err := json.NewDecoder(cr.Body).Decode(&created); err != nil {
 		t.Fatalf("decode created session: %v", err)
 	}
