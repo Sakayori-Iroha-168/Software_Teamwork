@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -251,44 +252,88 @@ func assertFileEndpointRejectsUnauthorized(t *testing.T, ctx context.Context, cl
 func assertKnowledgeUploadAndReadViaGateway(t *testing.T, ctx context.Context, client *http.Client, cfg fileOwnerSmokeConfig, session smokeSession, requestID string) {
 	t.Helper()
 
-	// List knowledge bases through Gateway — must be able to reach Knowledge -> File
-	req := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/knowledge-bases?page=1&pageSize=5", session.AccessToken, requestID, nil)
-	resp, err := client.Do(req)
+	// 1. List knowledge bases — must be able to reach Knowledge through Gateway
+	kbs := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/knowledge-bases?page=1&pageSize=5", session.AccessToken, requestID, nil)
+	kbResp, err := client.Do(kbs)
 	if err != nil {
 		t.Fatalf("list knowledge bases: %v", err)
 	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("list knowledge bases returned %d: %s", resp.StatusCode, string(body))
+	defer kbResp.Body.Close()
+	kbBody, _ := io.ReadAll(io.LimitReader(kbResp.Body, 65536))
+	if kbResp.StatusCode != http.StatusOK {
+		t.Fatalf("list knowledge bases returned %d: %s", kbResp.StatusCode, string(kbBody))
 	}
-	assertNoLeakedInternals(t, body)
+	assertNoLeakedInternals(t, kbBody)
 
-	var kbEnvelope struct {
-		Data      json.RawMessage `json:"data"`
-		RequestID string          `json:"requestId"`
-	}
-	if err := json.Unmarshal(body, &kbEnvelope); err != nil {
-		t.Fatalf("decode kb list: %v", err)
-	}
-	if kbEnvelope.RequestID != requestID {
-		t.Fatalf("list kb requestId mismatch: want=%q got=%q", requestID, kbEnvelope.RequestID)
-	}
+	// 2. Get the first knowledge base ID to use for a test document upload
+	firstKBID := extractFirstKnowledgeBaseID(t, kbBody)
 
-	// Read a known seed document through Gateway.
-// Note: content endpoints require a real file_ref; seed docs use null
-// file_ref (local_seed parser_backend), so we validate metadata access here.
-	docReq := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/documents/doc_local_demo_seed", session.AccessToken, requestID+"_doc", nil)
-	docResp, err := client.Do(docReq)
+	// 3. Upload a small text file through Gateway -> Knowledge -> File
+	uploadRunID := shortID(newSmokeRunID())
+	docID := "doc_smoke_file_e2e_" + uploadRunID
+	docName := "smoke-test-file.txt"
+
+	var mpBuf bytes.Buffer
+	mpWriter := multipart.NewWriter(&mpBuf)
+	mpWriter.WriteField("id", docID)
+	mpWriter.WriteField("name", docName)
+	mpWriter.WriteField("docType", "text")
+	filePart, _ := mpWriter.CreateFormFile("file", docName)
+	filePart.Write([]byte("Smoke test content for File E2E validation.\n"))
+	mpWriter.Close()
+
+	uploadReq, _ := http.NewRequestWithContext(ctx, http.MethodPost,
+		cfg.gatewayBaseURL+"/api/v1/knowledge-bases/"+firstKBID+"/documents",
+		bytes.NewReader(mpBuf.Bytes()))
+	uploadReq.Header.Set("Authorization", "Bearer "+session.AccessToken)
+	uploadReq.Header.Set("Content-Type", mpWriter.FormDataContentType())
+	uploadReq.Header.Set("X-Request-Id", requestID+"_upload")
+	uploadResp, err := client.Do(uploadReq)
 	if err != nil {
-		t.Fatalf("get document: %v", err)
+		t.Fatalf("document upload request failed (Gateway -> Knowledge -> File): %v", err)
 	}
-	defer docResp.Body.Close()
-	docBody, _ := io.ReadAll(io.LimitReader(docResp.Body, 65536))
-	if docResp.StatusCode != http.StatusOK {
-		t.Fatalf("get document returned %d: %s", docResp.StatusCode, string(docBody))
+	defer uploadResp.Body.Close()
+	uploadBody, _ := io.ReadAll(io.LimitReader(uploadResp.Body, 65536))
+	if uploadResp.StatusCode != http.StatusCreated && uploadResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("document upload returned %d (expected 201/202): %s", uploadResp.StatusCode, string(uploadBody))
 	}
-	assertNoLeakedInternals(t, docBody)
+	assertNoLeakedInternals(t, uploadBody)
+	assertResponseEnvelope(t, uploadBody, requestID+"_upload")
+
+	// Parse the real document ID from the upload response envelope.
+	var uploadEnv struct {
+		Data struct{ ID string `json:"id"` } `json:"data"`
+	}
+	if err := json.Unmarshal(uploadBody, &uploadEnv); err != nil || uploadEnv.Data.ID == "" {
+		t.Fatalf("failed to extract document ID from upload response")
+	}
+	realDocID := uploadEnv.Data.ID
+
+	// Read back the uploaded document metadata through Gateway to verify the full round-trip.
+	readReq := gatewayAuthRequest(http.MethodGet,
+		cfg.gatewayBaseURL+"/api/v1/documents/"+realDocID,
+		session.AccessToken, requestID+"_readback", nil)
+	readResp, err := client.Do(readReq)
+	if err != nil {
+		t.Fatalf("read back document: %v", err)
+	}
+	defer readResp.Body.Close()
+	readBody, _ := io.ReadAll(io.LimitReader(readResp.Body, 65536))
+	if readResp.StatusCode != http.StatusOK {
+		t.Fatalf("read back document returned %d: %s", readResp.StatusCode, string(readBody))
+	}
+	assertNoLeakedInternals(t, readBody)
+}
+
+func extractFirstKnowledgeBaseID(t *testing.T, body []byte) string {
+	t.Helper()
+	var envelope struct {
+		Data []struct{ ID string `json:"id"` } `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Data) == 0 {
+		t.Skip("no knowledge bases available; seed-local required")
+	}
+	return envelope.Data[0].ID
 }
 
 func assertDocumentReportReadViaGateway(t *testing.T, ctx context.Context, client *http.Client, cfg fileOwnerSmokeConfig, session smokeSession, requestID string) {

@@ -50,10 +50,15 @@ esac
 
 case "$SMOKE" in
   document|all)
-    echo "=== Document MCP Tool Smoke ==="
-    DOCUMENT_MCP_SMOKE=1 go test -v -count=1 -timeout=120s ./... -run TestDocumentMCPToolSmoke
+    echo "=== Document REST Smoke ==="
+    DOCUMENT_REST_SMOKE=1 go test -v -count=1 -timeout=120s ./... -run TestDocumentRESTContractSmoke
     ;;
 esac
+
+if [ "$SMOKE" != "file" ] && [ "$SMOKE" != "qa" ] && [ "$SMOKE" != "document" ] && [ "$SMOKE" != "all" ]; then
+  echo "Usage: $0 {file|qa|document|all}"
+  exit 1
+fi
 
 echo ""
 echo "Smoke run complete."

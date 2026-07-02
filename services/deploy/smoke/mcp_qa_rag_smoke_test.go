@@ -33,11 +33,9 @@ func TestQAMCPRAGSmoke(t *testing.T) {
 	client := smokeHTTPClient()
 	session := createSmokeSession(t, ctx, client, cfg.gatewayBaseURL, cfg.username, cfg.password, requestID)
 
-	t.Run("knowledge_tool_discovery", func(t *testing.T) {
-		assertKnowledgeToolAvailable(t, ctx, client, cfg, session, requestID)
-	})
+	kbID := assertKnowledgeToolAvailable(t, ctx, client, cfg, session, requestID)
 	t.Run("qa_rag_knowledge_response", func(t *testing.T) {
-		assertQAKnowledgeRAGResponse(t, ctx, client, cfg, session, requestID)
+		assertQAKnowledgeRAGResponse(t, ctx, client, cfg, session, kbID, requestID)
 	})
 	t.Run("qa_response_envelope", func(t *testing.T) {
 		assertQAResponseEnvelope(t, ctx, client, cfg, session, requestID)
@@ -86,8 +84,8 @@ func loadQASmokeConfig(t *testing.T) qaSmokeConfig {
 // ---- QA-specific helpers ----
 
 // assertKnowledgeToolAvailable verifies that the knowledge base list endpoint
-// returns data, confirming seed data exists and the Gateway routes correctly.
-func assertKnowledgeToolAvailable(t *testing.T, ctx context.Context, client *http.Client, cfg qaSmokeConfig, session smokeSession, requestID string) {
+// returns data and returns the first KB ID for use in RAG requests.
+func assertKnowledgeToolAvailable(t *testing.T, ctx context.Context, client *http.Client, cfg qaSmokeConfig, session smokeSession, requestID string) string {
 	t.Helper()
 	req := gatewayAuthRequest(http.MethodGet, cfg.gatewayBaseURL+"/api/v1/knowledge-bases?page=1&pageSize=5", session.AccessToken, requestID+"_tools", nil)
 	resp, err := client.Do(req)
@@ -95,14 +93,25 @@ func assertKnowledgeToolAvailable(t *testing.T, ctx context.Context, client *htt
 		t.Fatalf("list knowledge bases: %v", err)
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 listing knowledge bases, got %d", resp.StatusCode)
+		t.Fatalf("expected 200 listing knowledge bases, got %d: %s", resp.StatusCode, string(body))
 	}
+	var envelope struct {
+		Data []struct{ ID string `json:"id"` } `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode knowledge bases: %v", err)
+	}
+	if len(envelope.Data) == 0 {
+		t.Skip("no knowledge bases available; seed-local required for RAG smoke")
+	}
+	return envelope.Data[0].ID
 }
 
 // assertQAKnowledgeRAGResponse sends a QA message in knowledge_qa mode and
 // waits for the full SSE stream or non-streaming response.
-func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *http.Client, cfg qaSmokeConfig, session smokeSession, requestID string) {
+func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *http.Client, cfg qaSmokeConfig, session smokeSession, kbID, requestID string) {
 	t.Helper()
 
 	// Create a QA session and use its ID for subsequent requests
@@ -138,8 +147,9 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 
 	// Send a message to the newly created session — accept SSE stream
 	msgBody, _ := json.Marshal(map[string]any{
-		"message": "根据规程，锅炉巡检时油温正常范围是多少？",
-		"mode":    "knowledge_qa",
+		"message":          "根据规程，锅炉巡检时油温正常范围是多少？",
+		"mode":             "knowledge_qa",
+		"knowledgeBaseIds": []string{kbID},
 	})
 	sendReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, cfg.gatewayBaseURL+"/api/v1/qa-sessions/"+createdSessionID+"/messages", bytes.NewReader(msgBody))
 	sendReq.Header.Set("Authorization", "Bearer "+session.AccessToken)
@@ -156,8 +166,9 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 		t.Fatalf("send qa message returned %d: %s", r.StatusCode, string(data))
 	}
 
-	// Parse SSE stream — verify expected event types appear
+	// Parse SSE stream — verify expected event types appear.
 	seen := map[string]bool{}
+	var responseRunID string
 	scanner := bufio.NewScanner(r.Body)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -167,6 +178,15 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 		if strings.HasPrefix(line, "event: ") {
 			eventType := strings.TrimPrefix(line, "event: ")
 			seen[eventType] = true
+		}
+		if strings.HasPrefix(line, "data: ") && responseRunID == "" {
+			dataStr := strings.TrimPrefix(line, "data: ")
+			var payload struct {
+				ResponseRunID string `json:"responseRunId"`
+			}
+			if err := json.Unmarshal([]byte(dataStr), &payload); err == nil && payload.ResponseRunID != "" {
+				responseRunID = payload.ResponseRunID
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -178,6 +198,38 @@ func assertQAKnowledgeRAGResponse(t *testing.T, ctx context.Context, client *htt
 			t.Errorf("SSE stream is missing expected event %q, seen=%v", event, seen)
 		}
 	}
+		if responseRunID == "" {
+		t.Fatal("SSE stream did not include a responseRunId; cannot verify tool-calls")
+	}
+	assertToolCallsRecorded(t, ctx, client, cfg, session, responseRunID, requestID)
+}
+
+func assertToolCallsRecorded(t *testing.T, ctx context.Context, client *http.Client, cfg qaSmokeConfig, session smokeSession, responseRunID, requestID string) {
+	t.Helper()
+	req := gatewayAuthRequest(http.MethodGet,
+		cfg.gatewayBaseURL+"/api/v1/response-runs/"+responseRunID+"/tool-calls",
+		session.AccessToken, requestID+"_tc", nil)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("tool-calls request failed: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 65536))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tool-calls returned %d: %s", resp.StatusCode, string(body))
+	}
+	assertNoLeakedInternals(t, body)
+	// Verify at least one tool call is recorded.
+	var tcEnvelope struct {
+		Data []map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(body, &tcEnvelope); err != nil {
+		t.Fatalf("decode tool-calls: %v", err)
+	}
+	if len(tcEnvelope.Data) == 0 {
+		t.Fatal("tool-calls response is empty; expected at least one knowledge search tool call")
+	}
+	t.Logf("tool-calls recorded for response run %s (count=%d)", responseRunID, len(tcEnvelope.Data))
 }
 
 // assertQAResponseEnvelope creates a new QA session, sends a non-streaming
