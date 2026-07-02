@@ -4,6 +4,12 @@ This directory is the S-05 local/demo integration baseline. It starts shared
 infrastructure plus the backend service loop through gateway. It is not a
 production deployment baseline.
 
+Production or staging uses a separate baseline:
+[`production-baseline.md`](./production-baseline.md),
+`docker-compose.production.yml`, and `.env.production.example`. Do not promote
+the local `.env.example`, local seed data, or local demo credentials into shared
+or long-lived environments.
+
 ## Entry Points
 
 - Browser/frontend entrypoint: `http://localhost:8080` through gateway only.

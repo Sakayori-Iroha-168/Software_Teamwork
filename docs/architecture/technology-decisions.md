@@ -328,6 +328,7 @@ services/<service>/
 - Go Service CI 按服务路径选择受影响服务，执行 `go test ./...` 和 `go build ./cmd/server`；QA 额外执行 `go build ./cmd/agent`。
 - Goose migration CI 对有 SQL migration 的服务执行 `goose@v3.27.1` apply 校验。
 - Docker / Deploy Checks 对受影响服务的已有可构建 Dockerfile 执行 `docker build`，对服务 Compose 执行 `docker compose config --quiet`；PR 不 push 镜像、不部署。
+- 生产/准生产单机 Compose 基线使用 `deploy/docker-compose.production.yml`、`deploy/.env.production.example` 和 `deploy/production-baseline.md`，与本地/演示 `deploy/docker-compose.yml` 分离；生产模板必须使用明确镜像 tag、持久化卷和外部 secret 注入，不得复用本地 demo seed 或弱口令。
 
 ## 后续需要同步的实现任务
 

@@ -873,7 +873,8 @@ Rules:
 - Docker environment diagnostics belong in `scripts/check_docker_environment.py`.
   CI may run it with `--skip-network`; local investigations may run manifest
   probes with `--profile all --clean-env`.
-- Docker policy docs/spec changes should trigger the lightweight policy checker
+- Docker policy docs/spec changes, including `deploy/README.md` and
+  `deploy/production-baseline.md`, should trigger the lightweight policy checker
   even when no Dockerfile changed. Do not force full image builds for docs-only
   policy edits unless the workflow detection logic itself changed.
 - Build images for changed services on PRs.
