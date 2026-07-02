@@ -362,7 +362,10 @@ services:
       AI_GATEWAY_URL: http://ai-gateway:8086/internal/v1/chat/completions
       AI_GATEWAY_TOKEN: ${INTERNAL_SERVICE_TOKEN:-local-dev-internal-service-token-change-me}
       AI_GATEWAY_TOKEN_HEADER: X-Service-Token
+      AI_GATEWAY_PROFILE_ID: ${AI_GATEWAY_PROFILE_ID:-}
       MODEL_ID: ${MODEL_ID:-local-placeholder-chat}
+      QA_SETTINGS_OPEN: ${QA_SETTINGS_OPEN:-false}
+      QA_ADMIN_USER_IDS: ${QA_ADMIN_USER_IDS:-}
       MCP_TRANSPORT: disabled
       QA_CONFIG_ENCRYPTION_KEY: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
       AGENT_WORKDIR: /workspace
